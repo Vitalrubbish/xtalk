@@ -56,18 +56,14 @@ async function ensureOrtVad() {
     }
 }
 
-// The second argument accepts a boolean or options object:
-// - A boolean maps to { simGen: <bool> }
-// - Objects may include { simGen?: bool, sim_gen?: bool, pureFrontend?: bool, pure_frontend?: bool }
+// The second argument accepts an options object:
+// - Objects may include { pureFrontend?: bool, pure_frontend?: bool }
 //   pureFrontend = true enables "pure front-end mode": skip VAD/enhancer and only capture+forward raw audio.
-// simGen: when true, never auto-stop/pause TTS except via toggleStreaming().
 function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     const scriptUrl = new URL(import.meta.url);
     if (typeof onIncomingJson !== 'function') {
         throw new Error('onIncomingJson must be a function');
     }
-    // Back-compat: boolean second argument is treated as simGen
-    const simGen = opts?.simGen ?? false;
     const pureFrontend = opts?.pureFrontend ?? false;
     // Server PCM sample rate
     const TTS_SAMPLE_RATE = opts?.ttsSampleRate ?? 48000;
@@ -528,10 +524,8 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
                     break;
 
                 case window.vad.Message.SpeechStart:
-                    // Pause TTS on barge-in unless in simultaneous generation mode
-                    if (!simGen) {
-                        pauseTTSPlayback();
-                    }
+                    // Pause TTS on barge-in
+                    pauseTTSPlayback();
 
                     // Enable the negative sample counter when speech starts
                     negEndCounterEnabled = true;
@@ -1142,8 +1136,6 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
             }
         },
         isMicMuted() { return !!micMuted; },
-        // Expose simGen for higher-level logic if needed
-        get simGen() { return !!simGen; },
         changeVoice,
         changeTTSSpeed,
         changeTTSModel,
@@ -1164,13 +1156,10 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
 }
 
 // Create the conversation controller.
-// Backward compatible signature:
-// - createConversation(true|false) => { sim_gen }
-// New signature:
-// - createConversation({ sim_gen?: bool, simGen?: bool, pure_frontend?: bool, pureFrontend?: bool })
+// Signature:
+// - createConversation({ pure_frontend?: bool, pureFrontend?: bool })
 //   With pure_frontend=true the frontend skips VAD/enhancer and keeps streaming raw audio frames.
 function createConversation(websocketURL = null, opts = null) {
-    const SIM_GEN = opts?.simGen ?? false;
     const PURE_FRONTEND = opts?.pureFrontend ?? false;
     // Helper vars
     let lastClientVadStartTs = null;
@@ -1398,14 +1387,11 @@ function createConversation(websocketURL = null, opts = null) {
             case 'pause_tts': {
                 // Pure front-end mode: when the backend asks to pause TTS, simulate the local interruption start,
                 // Run the same local logic as window.vad.Message.SpeechStart without sending JSON.
-                // Only do this outside of simultaneous generation; SIM_GEN never auto-pauses.
-                if (!SIM_GEN) {
-                    try { audioSession.pauseTTSPlayback(); } catch (_) { }
-                    if (PURE_FRONTEND) {
-                        const nowTs = Date.now();
-                        // Trigger the same frontend state update as VADSpeechStart (no server call)
-                        onIncomingJson({ action: 'client_vad_speech_start', data: { timestamp: nowTs } });
-                    }
+                try { audioSession.pauseTTSPlayback(); } catch (_) { }
+                if (PURE_FRONTEND) {
+                    const nowTs = Date.now();
+                    // Trigger the same frontend state update as VADSpeechStart (no server call)
+                    onIncomingJson({ action: 'client_vad_speech_start', data: { timestamp: nowTs } });
                 }
                 break;
             }
@@ -1441,12 +1427,8 @@ function createConversation(websocketURL = null, opts = null) {
                 const sliceFrom = Math.max(0, Math.min(safeBase, fullText.length));
                 const toDisplay = fullText.slice(sliceFrom);
 
-                if (SIM_GEN) {
-                    appendMessage({ role: ASSISTANT, content: toDisplay, turnId: targetTurn });
-                } else {
-                    if (toDisplay) {
-                        updateMessageByTurnOrLast({ role: ASSISTANT, content: toDisplay, turnId: targetTurn });
-                    }
+                if (toDisplay) {
+                    updateMessageByTurnOrLast({ role: ASSISTANT, content: toDisplay, turnId: targetTurn });
                 }
                 // Update the stored full text
                 assistantFullText = fullText;
@@ -1466,12 +1448,8 @@ function createConversation(websocketURL = null, opts = null) {
                 const sliceFrom = Math.max(0, Math.min(safeBase, fullText.length));
                 const toDisplay = fullText.slice(sliceFrom);
 
-                if (SIM_GEN) {
-                    appendMessage({ role: ASSISTANT, content: toDisplay, turnId: targetTurn });
-                } else {
-                    if (toDisplay) {
-                        updateMessageByTurnOrLast({ role: ASSISTANT, content: toDisplay, turnId: targetTurn });
-                    }
+                if (toDisplay) {
+                    updateMessageByTurnOrLast({ role: ASSISTANT, content: toDisplay, turnId: targetTurn });
                 }
                 // End of a reply: reset accumulation and baseline
                 assistantFullText = '';
@@ -1491,22 +1469,7 @@ function createConversation(websocketURL = null, opts = null) {
                     currentUserTurnId = incomingTurn;
                 }
                 const targetTurn = incomingTurn || currentUserTurnId || 0;
-                if (SIM_GEN) {
-                    appendMessage({ role: USER, content: json.data.text, turnId: targetTurn });
-                } else {
-                    updateMessageByTurnOrLast({ role: USER, content: json.data.text, turnId: targetTurn });
-                }
-                break;
-            }
-            case 'refine_transcription': {
-                if (SIM_GEN) {
-                    // Remove all user messages and keep a single aggregated entry
-                    const incomingTurn = resolveTurnId(json);
-                    const filtered = rawState.messages.filter(m => m.role !== USER || (incomingTurn && Number(m.turnId || 0) !== incomingTurn));
-                    filtered.push({ role: USER, content: normalizeDisplayText(json.data?.text || ''), turnId: incomingTurn || 0 });
-                    rawState.messages = filtered;
-                    onChangeCallback && onChangeCallback({ ...rawState });
-                }
+                updateMessageByTurnOrLast({ role: USER, content: json.data.text, turnId: targetTurn });
                 break;
             }
             case 'finish_asr': {
@@ -1515,11 +1478,7 @@ function createConversation(websocketURL = null, opts = null) {
                     currentUserTurnId = incomingTurn;
                 }
                 const targetTurn = incomingTurn || currentUserTurnId || 0;
-                if (SIM_GEN) {
-                    appendMessage({ role: USER, content: json.data.text, turnId: targetTurn });
-                } else {
-                    updateMessageByTurnOrLast({ role: USER, content: json.data.text, turnId: targetTurn });
-                }
+                updateMessageByTurnOrLast({ role: USER, content: json.data.text, turnId: targetTurn });
                 // Backend pushes latency_metrics after the first TTSStarted event
                 // Frontend only resets the displayed metrics
                 finishASRTs = null;

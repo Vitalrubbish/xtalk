@@ -73,8 +73,6 @@ class TTSManager(Manager):
         # Queue for audio chunks fed to downstream consumers
         self.tts_queue = asyncio.Queue()
 
-        # Settings for sim_gen mode
-        self._sim_gen: bool = bool(self.config.get("sim_gen", False))
         self._segments_queue: Optional[asyncio.Queue] = None
         self._segments_task: Optional[asyncio.Task] = None
 
@@ -125,11 +123,7 @@ class TTSManager(Manager):
         # Empty string marks flush
         await self._ensure_segments_queue().put("")
 
-    @Manager.event_handler(
-        TurnTTSResumeRequested,
-        priority=95,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TurnTTSResumeRequested, priority=95)
     async def _handle_turn_tts_resume(self, event: TurnTTSResumeRequested) -> None:
         """Resume TTS playback when mediator requests."""
         if not self._segments_task or self._segments_task.done():
@@ -143,11 +137,7 @@ class TTSManager(Manager):
         )
         await self.event_bus.publish(tts_resumed_event)
 
-    @Manager.event_handler(
-        TurnTTSPauseRequested,
-        priority=95,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TurnTTSPauseRequested, priority=95)
     async def _handle_turn_tts_pause(self, event: TurnTTSPauseRequested) -> None:
         """Pause TTS playback when mediator requests."""
         if not self._segments_task or self._segments_task.done():
@@ -473,11 +463,7 @@ class TTSManager(Manager):
                 )
             )
 
-    @Manager.event_handler(
-        TTSVoiceChange,
-        priority=100,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TTSVoiceChange, priority=100)
     async def _handle_voice_change(self, event: TTSVoiceChange) -> None:
         """Handle requests to change the reference voice."""
         voice_name = event.voice_name
@@ -491,11 +477,7 @@ class TTSManager(Manager):
                 self.session_id,
             )
 
-    @Manager.event_handler(
-        TTSEmotionChange,
-        priority=100,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TTSEmotionChange, priority=100)
     async def _handle_emotion_change(self, event: TTSEmotionChange) -> None:
         """Handle requests to change TTS emotion."""
         emotion_name = event.emotion_name
@@ -512,11 +494,7 @@ class TTSManager(Manager):
                 self.session_id,
             )
 
-    @Manager.event_handler(
-        TTSSpeedChange,
-        priority=100,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TTSSpeedChange, priority=100)
     async def _handle_speed_changed(self, event: TTSSpeedChange) -> None:
         """Handle requests to adjust TTS speed."""
         speed = event.speed

@@ -336,42 +336,12 @@ class TurnASREndRequested(BaseEvent):
 
 
 @dataclass
-class TurnASRFlushRequested(BaseEvent):
-    """Request ASR to flush current stable segment in sim-trans mode."""
-
-    TYPE: ClassVar[str] = "turn.asr_flush_requested"
-    reason: str = ""  # e.g., vad_end
-
-
-# ==================== Sim-Trans (Simultaneous Generation) Extensions ====================
-
-
-@dataclass
-class ASRStableSegmentReady(BaseEvent):
-    """ASR stable segment ready (simultaneous translation)."""
-
-    TYPE: ClassVar[str] = "asr.stable_segment_ready"
-    text: str = ""
-    stability: float = 1.0
-    start_ts: float = 0.0
-    end_ts: float = 0.0
-
-
-@dataclass
 class TurnTTSTextAppendRequested(BaseEvent):
     """Request to append text into ongoing TTS stream (sim-trans)."""
 
     TYPE: ClassVar[str] = "turn.tts_text_append_requested"
     text: str = ""
     reason: str = "asr_partial"
-
-
-@dataclass
-class TranscriptionRefined(BaseEvent):
-    """Backend refines or corrects transcription for simultaneous mode."""
-
-    TYPE: ClassVar[str] = "asr.transcription_refined"
-    text: str = ""
 
 
 # ==================== Speaker Notification (Frontend) ====================

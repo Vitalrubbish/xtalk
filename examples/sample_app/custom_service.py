@@ -131,7 +131,7 @@ class LLMOutputRefactorManager(Manager):
 
 
 # Create a Service and register the custom manager
-custom_service = DefaultService(pipeline=pipeline, service_config={"sim_gen": False})
+custom_service = DefaultService(pipeline=pipeline)
 custom_service.register_manager(LLMOutputRefactorManager)
 
 # Rewire event listeners of existing managers if needed

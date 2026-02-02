@@ -21,9 +21,6 @@ from ..events import (
     ErrorOccurred,
     ASRResultFinal,
     ASRResultPartial,
-    TranscriptionRefined,
-    ASRStableSegmentReady,
-    TurnASRFlushRequested,
 )
 from ..interfaces import Manager
 from ...pipelines import Pipeline
@@ -96,12 +93,8 @@ class ASRManager(Manager):
         self.consumer_task: Optional[asyncio.Task] = None
         self._consumer_lock = asyncio.Lock()
 
-        # Simultaneous generation segment tracking (sim_gen only)
-        self._sim_gen: bool = bool(self.config.get("sim_gen", False))
         # Pending incremental text buffer
         self._text_to_send: str = ""
-        # Aggregated transcription for simultaneous generation
-        self._sim_transcription: str = ""
         # Semantic timeout
         self._semantic_timeout_task: Optional[asyncio.Task] = None
         self._semantic_timeout_seconds: float = float(
@@ -248,11 +241,7 @@ class ASRManager(Manager):
         finally:
             self._starting_asr = False
 
-    @Manager.event_handler(
-        TurnASREndRequested,
-        priority=90,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TurnASREndRequested, priority=90)
     async def _handle_turn_asr_end(self, event) -> None:
         """Handle request to end ASR and finalize."""
         # Prevent duplicate end events
@@ -275,15 +264,6 @@ class ASRManager(Manager):
     async def _handle_turn_asr_reset(self, event) -> None:
         """Reset ASR state upon mediator instruction."""
         await self._reset_asr()
-
-    @Manager.event_handler(
-        TurnASRFlushRequested,
-        priority=88,
-        enabled_if=lambda mgr: mgr._sim_gen,
-    )
-    async def _handle_turn_asr_flush(self, event) -> None:
-        """Sim-trans request to emit current stable segment (VAD end)."""
-        await self._maybe_emit_stable_segment()
 
     async def _validate_accumulated_text(self, text: str, semantic_tag: str) -> dict:
         """
@@ -435,7 +415,6 @@ class ASRManager(Manager):
             self.accumulated_text = ""
             self.chunk_count = 0
             self._text_to_send = ""
-            self._sim_transcription = ""
             self._seg_start_ts = None
 
             if self.asr_model:
@@ -704,25 +683,12 @@ class ASRManager(Manager):
             if not self.consumer_state.running and not is_final:
                 return
 
-            # TODO: check sim_gen implementation
-            if self._sim_gen:
-                # Simultaneous generation path
-                if (not self._text_to_send) and delta_text.strip():
-                    self._seg_start_ts = time.time()
-                self._text_to_send += delta_text
-                await self._publish_asr_result(
-                    delta_text,
-                    False,
-                    mock_confidence,
-                    wait_for_completion=False,
-                )
-            else:
-                await self._publish_asr_result(
-                    self.accumulated_text,
-                    False,
-                    mock_confidence,
-                    wait_for_completion=False,
-                )
+            await self._publish_asr_result(
+                self.accumulated_text,
+                False,
+                mock_confidence,
+                wait_for_completion=False,
+            )
 
         except Exception as e:
             self.consumer_state.errors += 1
@@ -834,56 +800,6 @@ class ASRManager(Manager):
             )
         )
         await self.event_bus.publish(event, wait_for_completion=wait_for_completion)
-
-    async def _maybe_emit_stable_segment(self) -> None:
-        """Emit stable segments in sim-trans mode using simple heuristics."""
-        ## Skip segments shorter than 3 characters
-        if len(self._text_to_send.strip()) < 3:
-            return
-        # Optionally restore punctuation
-        punt_model = self.pipeline.get_punt_restorer_model()
-        if punt_model:
-            self._text_to_send = await punt_model.async_restore(self._text_to_send)
-
-        buf = self._text_to_send
-        if not buf:
-            return
-
-        should_emit = False
-
-        # If sentence-ending punctuation exists
-        if any(p in buf for p in self._seg_punct):
-            should_emit = True
-
-        if not should_emit:
-            return
-
-        segment = buf
-        # Reset buffers
-        self._text_to_send = ""
-        # Append to transcription log
-        self._sim_transcription += segment
-        now = time.time()
-        try:
-            evt = ASRStableSegmentReady(
-                session_id=self.session_id,
-                text=segment,
-                stability=1.0,
-                start_ts=(self._seg_start_ts or 0.0),
-                end_ts=now,
-            )
-            await self.event_bus.publish(evt)
-            await self.event_bus.publish(
-                TranscriptionRefined(
-                    session_id=self.session_id,
-                    text=self._sim_transcription,
-                )
-            )
-            # Reset segment start timestamp
-            self._seg_start_ts = None
-
-        except Exception as e:
-            logger.warning("Failed to emit ASRStableSegmentReady: %s", e)
 
     async def shutdown(self) -> None:
         """Shut down ASR manager."""

@@ -66,7 +66,6 @@ class TTSManager(Manager):
         self.config: dict[str, Any] = config or {}
 
         # TTS state
-        self.is_paused = False
         self.pending_sentence_buffer: str = ""  # Pending sentence buffer
         self._first_sentence_ready = False
 
@@ -128,7 +127,7 @@ class TTSManager(Manager):
         """Resume TTS playback when mediator requests."""
         if not self._segments_task or self._segments_task.done():
             return
-        if not self.is_paused:
+        if self._resume_event.is_set():
             logger.warning("Try to resume TTS which is not paused")
             return
         await self._resume_tts()
@@ -170,7 +169,6 @@ class TTSManager(Manager):
         """Reset all TTS state and cancel consumers."""
 
         # Reset state flags
-        self.is_paused = False
         self._resume_event.set()
         self.pending_sentence_buffer = ""
         self._first_sentence_ready = False
@@ -224,19 +222,17 @@ class TTSManager(Manager):
     async def _pause_tts(self) -> None:
         """Pause TTS by halting consumption while leaving the queue intact."""
 
-        if self.is_paused:
+        if not self._resume_event.is_set():
             return
 
-        self.is_paused = True
         self._resume_event.clear()
 
     async def _resume_tts(self) -> None:
         """Resume TTS and continue consuming queued audio."""
 
-        if not self.is_paused:
+        if self._resume_event.is_set():
             return
 
-        self.is_paused = False
         self._resume_event.set()
 
     async def _tts_consumer(self) -> None:
@@ -246,7 +242,7 @@ class TTSManager(Manager):
         try:
             while self._consumer_running:
                 # When paused, avoid consuming queue items or emitting events
-                if self.is_paused:
+                if not self._resume_event.is_set():
                     await self._resume_event.wait()
                     continue
                 try:

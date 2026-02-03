@@ -33,6 +33,7 @@ class ByteQueue:
                 self._buffer = self._buffer[excess:]
 
     async def get(self, max_bytes: Optional[int] = None) -> bytes:
+        # May return empty bytes
         async with self._lock:
             if max_bytes is None:
                 # Return all bytes
@@ -48,6 +49,8 @@ class ByteQueue:
     def __len__(self) -> int:
         return len(self._buffer)
 
+    # TODO: add wait for bytes
+
 
 class AudioConsumer:
     SAMPLE_RATE = 16000
@@ -62,6 +65,7 @@ class AudioConsumer:
     ) -> None:
         self._event_bus = event_bus
         self._asr_model = pipeline.get_asr_model()
+        self._asr_model.reset()
         self._session_id = session_id
         # Cache for recognition used in _recognize_and_publish
         self._recognized_text = ""
@@ -95,16 +99,16 @@ class AudioConsumer:
         self._start_consumer()
 
     async def pause(self):
-        # Do one recognition; stop consumer
-        audio = await self._audio_queue.get()
+        # Stop consumer, do one recognition and publish
         await self._stop_consumer()
+        audio = await self._audio_queue.get()
         # Sentence end but not end of recognition
         await self._recognize_and_publish(audio, is_asr_end=False, is_final_chunk=True)
 
     async def end(self):
-        # Do one recognition, publish ASRResultFinal, and clean up states (including reset ASR)
-        audio = await self._audio_queue.get()
+        # Stop consumer, do one recognition, publish ASRResultFinal, and clean up states (including reset ASR)
         await self._stop_consumer()
+        audio = await self._audio_queue.get()
         await self._recognize_and_publish(audio, is_asr_end=True, is_final_chunk=True)
         await self._reset_states()
 
@@ -134,9 +138,12 @@ class AudioConsumer:
         # Do ASR recognition once and publish result ASRResultPartal/Final based on is_asr_end; if not final, may use cache to determine whether to publish
         if is_asr_end and not is_final_chunk:
             raise ValueError("ASR ends but chunk is not final chunk")
-        recognized_text = await self._asr_model.async_recognize_stream(
-            audio, is_final=is_final_chunk
-        )
+        recognized_text = self._recognized_text
+        # Do not do recognition for empty audio
+        if len(audio) > 0:
+            recognized_text = await self._asr_model.async_recognize_stream(
+                audio, is_final=is_final_chunk
+            )
         if is_asr_end:
             self._recognized_text = recognized_text
             self._publish_event(
@@ -167,6 +174,7 @@ class AudioConsumer:
         await self._audio_queue.get()
         self._consumer_running_event.clear()
         self._consumer_idle_event.set()
+        self._asr_model.reset()
 
 
 class ASRManager(Manager):

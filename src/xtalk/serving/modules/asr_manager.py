@@ -87,6 +87,8 @@ class AudioConsumer:
         self._consumer_idle_event.set()
         # Start audio consumer task immediately
         self._audio_consumer_task = asyncio.create_task(self._audio_consumer())
+        # TODO: better turn behavior
+        self._turn_id = 1
 
     async def accept_audio_frame(self, audio_frame: bytes):
         # Add audio_frame to pre-buffer if consumer not started; add audio_frame to recognition queue if started
@@ -111,11 +113,12 @@ class AudioConsumer:
         await self._recognize_and_publish(audio, is_asr_end=False, is_final_chunk=True)
 
     async def end(self):
-        # Stop consumer, do one recognition, publish ASRResultFinal, and clean up states (including reset ASR)
+        # Stop consumer, do one recognition, publish ASRResultFinal, clean up states (including reset ASR) and increment turn
         await self._stop_consumer()
         audio = await self._audio_queue.get()
         await self._recognize_and_publish(audio, is_asr_end=True, is_final_chunk=True)
         await self._reset_states()
+        self._turn_id += 1
 
     async def _audio_consumer(self):
         while True:
@@ -164,6 +167,7 @@ class AudioConsumer:
                     session_id=self._session_id,
                     text=recognized_text,
                     display_text=recognized_text,
+                    turn_id=self._turn_id,
                 )
             )
         else:
@@ -175,6 +179,7 @@ class AudioConsumer:
                     session_id=self._session_id,
                     text=recognized_text,
                     display_text=recognized_text,
+                    turn_id=self._turn_id,
                 )
             )
 
@@ -198,25 +203,21 @@ class ASRManager(Manager):
         pipeline: Pipeline,
         config: dict[str, Any] | None = None,
     ):
-        self.event_bus = event_bus
-        self.pipeline = pipeline
+        self._audio_consumer = AudioConsumer(event_bus, session_id, pipeline, config)
 
     @Manager.event_handler(EnhancedAudioFrameReceived)
-    async def _handle_audio_frame(self):
-        # TODO: constantly pad frames to prebuffer/ for recognition
-        pass
+    async def _handle_audio_frame(self, event: EnhancedAudioFrameReceived):
+        audio_frame = event.audio_data
+        await self._audio_consumer.accept_audio_frame(audio_frame)
 
     @Manager.event_handler(TurnASRStartRequested)
-    async def _handle_asr_start(self):
-        # TODO
-        pass
+    async def _handle_asr_start(self, _):
+        await self._audio_consumer.start()
 
     @Manager.event_handler(TurnASREndRequested)
-    async def _handle_asr_end(self):
-        # TODO: stop consumer
-        pass
+    async def _handle_asr_end(self, _):
+        await self._audio_consumer.end()
 
     @Manager.event_handler(TurnASRPauseRequested)
-    async def _handle_asr_pause(self):
-        # TODO
-        pass
+    async def _handle_asr_pause(self, _):
+        await self._audio_consumer.pause()

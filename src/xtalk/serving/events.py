@@ -77,6 +77,7 @@ class VADSpeechEnd(BaseEvent):
     speech_probability: float = 0.0
 
 
+# TODO: remove unused fields and remove turn id?
 @dataclass
 class ASRResultPartial(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_partial"

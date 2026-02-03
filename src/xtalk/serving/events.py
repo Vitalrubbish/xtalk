@@ -59,7 +59,7 @@ class EnhancedAudioFrameReceived(BaseEvent):
     audio_data: bytes
     sample_rate: int = 16000
     channels: int = 1
-    is_final: bool = False
+    is_final: bool = False  # TODO: deprecate unused fields
     audio_format: str = "pcm_s16le"
 
 
@@ -333,6 +333,11 @@ class TurnASRStartRequested(BaseEvent):
 @dataclass
 class TurnASREndRequested(BaseEvent):
     TYPE: ClassVar[str] = "turn.asr_end_requested"
+
+
+@dataclass
+class TurnASRPauseRequested(BaseEvent):
+    TYPE: ClassVar[str] = "turn.asr_pause_requested"
 
 
 @dataclass

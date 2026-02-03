@@ -23,7 +23,7 @@ class ByteQueue:
         self._max_bytes = max_bytes
         self._buffer = bytearray()
         self._lock = asyncio.Lock()
-        self._has_bytes_event = asyncio.Event()
+        self._new_bytes_event = asyncio.Event()
 
     async def put(self, data: bytes) -> None:
         async with self._lock:
@@ -32,7 +32,7 @@ class ByteQueue:
             if self._max_bytes > 0 and len(self._buffer) > self._max_bytes:
                 excess = len(self._buffer) - self._max_bytes
                 self._buffer = self._buffer[excess:]
-            self._has_bytes_event.set()
+            self._new_bytes_event.set()
 
     async def get(self, max_bytes: Optional[int] = None) -> bytes:
         # May return empty bytes
@@ -46,15 +46,16 @@ class ByteQueue:
                 bytes_to_return = min(max_bytes, len(self._buffer))
                 result = bytes(self._buffer[:bytes_to_return])
                 self._buffer = self._buffer[bytes_to_return:]
-            self._has_bytes_event.clear()
             return result
 
-    async def wait(self):
-        """Wait until queue is non-empty"""
-        await self._has_bytes_event.wait()
+    async def wait_on_new_bytes(self):
+        """Wait until new bytes come"""
+        self._new_bytes_event.clear()
+        await self._new_bytes_event.wait()
 
-    def __len__(self) -> int:
-        return len(self._buffer)
+    async def size(self):
+        async with self._lock:
+            return len(self._buffer)
 
 
 class AudioConsumer:
@@ -75,7 +76,7 @@ class AudioConsumer:
         # Cache for recognition used in _recognize_and_publish
         self._recognized_text = ""
         # Assume PCM 16bit mono
-        bytes_per_second = self.SAMPLE_RATE * 1 * (16 / 8)
+        bytes_per_second = self.SAMPLE_RATE * 1 * (16 // 8)
         # Store audio before ASR starts; make sure ASR do not leave alone the first words
         self._pre_buffer = ByteQueue(self.PRE_BUFFER_SECS * bytes_per_second)
         # For ASR consumption
@@ -127,14 +128,22 @@ class AudioConsumer:
                 await self._consumer_running_event.wait()
             self._consumer_idle_event.clear()
             # Publish audio on condition:
-            # Await until queue is not empty
-            await self._audio_queue.wait()
+            # Await until new bytes come
+            await self._audio_queue.wait_on_new_bytes()
             # Accumulate to proper chunk bytes, send for recognition at least 1 bytes
             least_bytes_to_send = self._asr_model.stream_chunk_bytes_hint() or 1
-            if len(self._audio_queue) < least_bytes_to_send:
+            if await self._audio_queue.size() < least_bytes_to_send:
                 continue
             audio = await self._audio_queue.get()
             await self._recognize_and_publish(audio)
+
+    async def shutdown(self):
+        # Consumer task cancellation
+        try:
+            self._audio_consumer_task.cancel()
+            await self._audio_consumer_task
+        except asyncio.CancelledError:
+            pass
 
     # Helpers
     def _consumer_running(self):
@@ -162,7 +171,7 @@ class AudioConsumer:
             )
         if is_asr_end:
             self._recognized_text = recognized_text
-            self._publish_event(
+            await self._publish_event(
                 ASRResultFinal(
                     session_id=self._session_id,
                     text=recognized_text,
@@ -174,7 +183,7 @@ class AudioConsumer:
             if recognized_text == self._recognized_text:
                 return
             self._recognized_text = recognized_text
-            self._publish_event(
+            await self._publish_event(
                 ASRResultPartial(
                     session_id=self._session_id,
                     text=recognized_text,
@@ -223,4 +232,5 @@ class ASRManager(Manager):
         await self._audio_consumer.pause()
 
     async def shutdown(self):
-        return
+        # Task cancellation
+        await self._audio_consumer.shutdown()

@@ -23,6 +23,7 @@ class ByteQueue:
         self._max_bytes = max_bytes
         self._buffer = bytearray()
         self._lock = asyncio.Lock()
+        self._has_bytes_event = asyncio.Event()
 
     async def put(self, data: bytes) -> None:
         async with self._lock:
@@ -31,6 +32,7 @@ class ByteQueue:
             if self._max_bytes > 0 and len(self._buffer) > self._max_bytes:
                 excess = len(self._buffer) - self._max_bytes
                 self._buffer = self._buffer[excess:]
+            self._has_bytes_event.set()
 
     async def get(self, max_bytes: Optional[int] = None) -> bytes:
         # May return empty bytes
@@ -44,12 +46,15 @@ class ByteQueue:
                 bytes_to_return = min(max_bytes, len(self._buffer))
                 result = bytes(self._buffer[:bytes_to_return])
                 self._buffer = self._buffer[bytes_to_return:]
+            self._has_bytes_event.clear()
             return result
+
+    async def wait(self):
+        """Wait until queue is non-empty"""
+        await self._has_bytes_event.wait()
 
     def __len__(self) -> int:
         return len(self._buffer)
-
-    # TODO: add wait for bytes
 
 
 class AudioConsumer:
@@ -118,7 +123,15 @@ class AudioConsumer:
             if not self._consumer_running_event.is_set():
                 await self._consumer_running_event.wait()
             self._consumer_idle_event.clear()
-            # TODO: publish audio on condition
+            # Publish audio on condition:
+            # Await until queue is not empty
+            await self._audio_queue.wait()
+            # Accumulate to proper chunk bytes, send for recognition at least 1 bytes
+            least_bytes_to_send = self._asr_model.stream_chunk_bytes_hint() or 1
+            if len(self._audio_queue) < least_bytes_to_send:
+                continue
+            audio = await self._audio_queue.get()
+            await self._recognize_and_publish(audio)
 
     # Helpers
     def _consumer_running(self):

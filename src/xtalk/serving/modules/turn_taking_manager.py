@@ -38,7 +38,7 @@ class TurnTakingManager(Manager):
         # TODO: introduce turn detection to signal turn ASR end; here only signals TurnASRPause
         await self.event_bus.publish(TurnASREndRequested(session_id=self.session_id))
 
-    @Manager.event_handler(ASRResultFina)
+    @Manager.event_handler(ASRResultFinal)
     async def _on_asr_final(self, event: ASRResultFinal):
         """ASR final result triggers LLM generation."""
         await self.event_bus.publish(

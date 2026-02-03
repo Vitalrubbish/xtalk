@@ -212,6 +212,7 @@ class ASRManager(Manager):
         pipeline: Pipeline,
         config: dict[str, Any] | None = None,
     ):
+        self.event_bus = event_bus
         self._audio_consumer = AudioConsumer(event_bus, session_id, pipeline, config)
 
     @Manager.event_handler(EnhancedAudioFrameReceived)

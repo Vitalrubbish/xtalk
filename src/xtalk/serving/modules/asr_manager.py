@@ -221,3 +221,6 @@ class ASRManager(Manager):
     @Manager.event_handler(TurnASRPauseRequested)
     async def _handle_asr_pause(self, _):
         await self._audio_consumer.pause()
+
+    async def shutdown(self):
+        return

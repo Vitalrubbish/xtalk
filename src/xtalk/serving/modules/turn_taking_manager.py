@@ -1,103 +1,57 @@
-# -*- coding: utf-8 -*-
-"""
-TurnTakingManager
-
-Mediator that subscribes to core events (VAD/ASR/TTS/etc.) and dispatches turn
-control events to keep modules decoupled while preserving the public event API.
-"""
-
 from typing import Any
-
 from ..event_bus import EventBus
 from ..interfaces import Manager
 from ..events import (
-    # Original events
-    ASRResultFinal,
     VADSpeechStart,
     VADSpeechEnd,
-    VerificationResult,
-    TTSStarted,
-    TTSPlaybackFinished,
-    # Mediator turn-control events
-    TurnLLMAgentResumeRequested,
-    TurnLLMAgentStopRequested,
-    TurnLLMAgentPauseRequested,
     TurnLLMAgentStartRequested,
-    TurnASRResetRequested,
+    TurnLLMAgentStopRequested,
     TurnASRStartRequested,
     TurnASREndRequested,
+    ASRResultFinal,
+    TTSPlaybackFinished,
 )
 
 
 class TurnTakingManager(Manager):
-    """Mediator coordinating ASR/TTS/LLM turn transitions."""
-
     def __init__(
         self, event_bus: EventBus, session_id: str, config: dict[str, Any] | None = None
     ):
         self.event_bus = event_bus
         self.session_id = session_id
-        # Per-session config
-        self.config: dict[str, Any] = config or {}
 
-    @Manager.event_handler(VADSpeechStart, priority=95)
-    async def _on_vad_start(self, _event: VADSpeechStart) -> None:
-        """VAD start: pause LLM and notify ASR to start."""
+    @Manager.event_handler(VADSpeechStart)
+    async def _on_vad_start(self, _event: VADSpeechStart):
+        """VAD start: stop LLM and notify ASR to start."""
+        # TODO: introduce turn detection to handle llm agent pause/stop
         await self.event_bus.publish(
-            TurnLLMAgentPauseRequested(
+            TurnLLMAgentStopRequested(
                 session_id=self.session_id,
             ),
             wait_for_completion=True,
         )
         await self.event_bus.publish(TurnASRStartRequested(session_id=self.session_id))
 
-    @Manager.event_handler(VADSpeechEnd, priority=95)
-    async def _on_vad_end(self, _event: VADSpeechEnd) -> None:
+    @Manager.event_handler(VADSpeechEnd)
+    async def _on_vad_end(self, _event: VADSpeechEnd):
         """VAD end: finalize the turn."""
-        await self.event_bus.publish(
-            TurnASREndRequested(session_id=self.session_id)
-        )
+        # TODO: introduce turn detection to signal turn ASR end; here only signals TurnASRPause
+        await self.event_bus.publish(TurnASREndRequested(session_id=self.session_id))
 
-    @Manager.event_handler(ASRResultFinal, priority=98)
-    async def _on_asr_final(self, event: ASRResultFinal) -> None:
+    @Manager.event_handler(ASRResultFina)
+    async def _on_asr_final(self, event: ASRResultFinal):
         """ASR final result triggers LLM generation."""
-        text = getattr(event, "text", "") or ""
-        if not text:
-            return
         await self.event_bus.publish(
             TurnLLMAgentStartRequested(
                 session_id=self.session_id,
-                text=text,
+                text=event.text,
             )
         )
 
-    @Manager.event_handler(VerificationResult, priority=90)
-    async def _on_verification_result(self, event: VerificationResult) -> None:
-        """Stop LLM on valid verification; resume if invalid."""
-        if event.is_valid:
-            await self.event_bus.publish(
-                TurnLLMAgentStopRequested(
-                    session_id=self.session_id,
-                    reason="verification_valid",
-                ),
-                wait_for_completion=True,
-            )
-        else:
-            await self.event_bus.publish(
-                TurnLLMAgentResumeRequested(
-                    session_id=self.session_id,
-                ),
-                wait_for_completion=True,
-            )
-
-    @Manager.event_handler(TTSStarted, priority=85)
-    async def _on_llm_agent_response_update(self, _event: TTSStarted) -> None:
-        """When TTS starts outputting, request ASR reset."""
-        await self.event_bus.publish(TurnASRResetRequested(session_id=self.session_id))
-
-    @Manager.event_handler(TTSPlaybackFinished, priority=85)
+    @Manager.event_handler(TTSPlaybackFinished)
     async def _on_tts_playback_finished(self, _event: TTSPlaybackFinished) -> None:
-        """Frontend playback finished – stop LLM agent to clean up."""
+        """Frontend playback finished - stop LLM agent to clean up."""
+        # TODO: check whether this event handler is necessary
         await self.event_bus.publish(
             TurnLLMAgentStopRequested(
                 session_id=self.session_id,
@@ -106,4 +60,4 @@ class TurnTakingManager(Manager):
         )
 
     async def shutdown(self):
-        pass
+        return

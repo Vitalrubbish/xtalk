@@ -23,14 +23,15 @@ class TurnTakingManager(Manager):
         self.event_bus = event_bus
         self.session_id = session_id
 
-    @Manager.event_handler(TurnDetectorStartGeneration)
+    @Manager.event_handler(TurnDetectorStartGeneration, priority=99)
     async def _on_turn_detector_start_generation(
         self, event: TurnDetectorStartGeneration
     ):
         # TODO: utilize event.semantic
         await self.event_bus.publish(TurnASREndRequested(session_id=self.session_id))
 
-    @Manager.event_handler(TurnDetectorStopSpeaking)
+    # Stop speaking must be handled before starting generation
+    @Manager.event_handler(TurnDetectorStopSpeaking, priority=100)
     async def _on_turn_detector_stop_speaking(self, event: TurnDetectorStopSpeaking):
         # TODO: utilize event.semantic
         await self.event_bus.publish(

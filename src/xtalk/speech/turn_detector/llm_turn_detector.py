@@ -254,12 +254,11 @@ Return only the label string with no extra text.
                     )
                 if "interrupt" in response.lower():
                     self._listening = True
-                    result = [
-                        TurnDetectionResult(
-                            action=TurnDetectionAction.STOP_SPEAKING,
-                            semantic=TurnDetectionSemantic.INCOMPLETE,
-                        )
-                    ]
+                    result = TurnDetectionResult(
+                        action=TurnDetectionAction.STOP_SPEAKING,
+                        semantic=TurnDetectionSemantic.INCOMPLETE,
+                    )
+
                     # Need to additional check for start generation if meet speech paused (indicating a potential end of speech)
                     if speech_pause:
                         messages = [
@@ -268,13 +267,16 @@ Return only the label string with no extra text.
                         ]
                         response = (await self._model.ainvoke(messages)).content
                         if "complete" in response.lower():
-                            result[0].semantic = TurnDetectionSemantic.COMPLETE
-                            result.append(
+                            result = [
+                                TurnDetectionResult(
+                                    action=TurnDetectionAction.STOP_SPEAKING,
+                                    semantic=TurnDetectionSemantic.COMPLETE,
+                                ),
                                 TurnDetectionResult(
                                     action=TurnDetectionAction.START_GENERATION,
                                     semantic=TurnDetectionSemantic.COMPLETE,
-                                )
-                            )
+                                ),
+                            ]
                     return result
             return TurnDetectionResult(
                 action=TurnDetectionAction.DO_NOTHING,

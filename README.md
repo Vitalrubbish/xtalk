@@ -444,7 +444,17 @@ Below is an example config file for X-Talk when you want to have all models host
             }
         }
     },
-    "speech_speed_controller": "RubberbandSpeedController"
+    "speech_speed_controller": "RubberbandSpeedController",
+    "turn_detector": {
+        "type": "LLMTurnDetector",
+        "params": {
+            "model": {
+                "api_key": "none",
+                "model": "cpatonn/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit",
+                "base_url": "http://127.0.0.1:8000/v1"
+            }
+        }
+    },
 }
 ```
 

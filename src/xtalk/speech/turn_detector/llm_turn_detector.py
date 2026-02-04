@@ -72,31 +72,48 @@ Return **only** the label string.
 
 ### 1) **wait**
 
-Choose **wait** if the transcript contains an explicit pause/hold request, e.g.:
+Choose **wait** only if the utterance is a **pure pause/hold request** — i.e., the transcript contains a pause/hold phrase and **does NOT contain any additional meaningful/semantic content after it**.
 
+**Pause/hold keywords examples:**
 * English: “wait”, “hold on”, “hang on”, “one sec/second”, “a moment”, “give me a second”, “pause”, “let me think”
 * Chinese: “等一下/等等/稍等/先别说/先停一下/给我一分钟/我想一下”
-* Any variant like “stop, wait” where the intent is to pause the assistant
 
-If “wait” is present but clearly means something else (rare), follow the other rules.
+#### Semantic continuation override (CRITICAL)
+
+If a pause/hold phrase appears but the user continues with **any concrete semantic information afterwards**, **do NOT output `wait`**. Instead, proceed to rules **2) incomplete** and **3) complete** to classify the utterance as a whole.
+
+**What counts as “concrete semantic information” (any of these):**
+* A **question** or interrogative cue: “怎么/为什么/能不能/what/how/why…”
+* A **command/request**: “帮我…/给我…/打开…/explain…/do…”
+* A **statement with content words** (not just fillers), e.g. mentions objects/actions/names/numbers:
+  * “等一下，我要找一下文件”
+  * “等一下，刚才那个接口的报错是 403”
+  * “等一下，我的意思是你先改这段逻辑”
+* Any continuation markers with real content: “然后…/其实…/我的意思是…/就是说…/I mean…/actually…”
+
+**What does NOT count as semantic continuation (still `wait`-eligible):**
+Only short fillers/politeness/acknowledgements after the pause phrase, such as:
+* Chinese: “嗯/啊/哦/好/行/可以/谢谢/让我想想(仅此一句且没有别的内容)”
+* English: “uh/um/okay/yeah/sure/thanks/let me think (and nothing else)”
+
+**Tie-break inside Rule 1:**
+* If pause/hold phrase is present **and** there is **no semantic continuation** → output **`wait`**.
+* If pause/hold phrase is present **but** there **is semantic continuation** → **NOT `wait`**, go to rules 2–3.
 
 ### 2) **incomplete**
 
 Choose **incomplete** if **any** of these are true:
 
 **A. Truncation / cut-off indicators**
-
 * Transcript ends with unfinished connectors: “and”, “so”, “but”, “because”, “if”, “then”, “like”, “which”, “that...”
 * Ends with filler or restart signals: “uh”, “um”, “er”, “I mean”, “well...”, “你知道”, “就是”, “然后...”
 * Ends with a dangling preposition/article: “to”, “with”, “for”, “a/an/the”, “的/了/在/把” (when clearly hanging)
 
 **B. Mid-thought structure**
-
 * Starts a clause but doesn't complete it: “I want to...”, “Can you...”, “Let's...”, “Could we...”, “我想.../能不能.../我们...”
 * Contains self-correction or continuation cues without finishing: “no—”, “actually—”, “wait— I mean—”, “不是...我是说...”
 
 **C. ASR partialness signs**
-
 * Very short fragment that looks like a partial start (1-3 content words) and not a full intent, e.g. “so the...”, “about the...”, “那个...”, “就是...”
 * Strong repetition/restarts: “I I I...”, “we we...”, “我我我...”
 
@@ -117,7 +134,7 @@ Choose **complete** if neither of the above applies and the utterance forms a co
 
 ## Output format
 
-Return only the label string with no extra text.    
+Return only the label string with no extra text.
 """
     CHECK_COMPLETION_PROMPT = """You are a real-time speech-UI classifier. Given an ASR transcript of what the user just said (may be partial, noisy, or cut off), classify whether the user's utterance is:
 

@@ -77,19 +77,21 @@ class VADSpeechEnd(BaseEvent):
     speech_probability: float = 0.0
 
 
-# TODO: remove unused fields and remove turn id?
+# TODO: remove unused fields
 @dataclass
 class ASRResultPartial(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_partial"
     text: str = ""
     confidence: float = 0.0
-    is_final: bool = False
+    # Indicates whether user has a pause on his speech (often triggered by VAD end)
+    speech_pause: bool = False
     display_text: str = ""  # Cleaned text for frontend display
     turn_id: int = 0
 
 
 @dataclass
 class ASRResultFinal(BaseEvent):
+    # Emit when ready for generation
     TYPE: ClassVar[str] = "asr.result_final"
     text: str = ""
     confidence: float = 0.0
@@ -198,15 +200,11 @@ class TTSPlaybackFinished(BaseEvent):
     TYPE: ClassVar[str] = "tts.playback_finished"
 
 
+# TODO: remove this event and its related logic on frontend
 @dataclass
 class VerificationResult(BaseEvent):
     TYPE: ClassVar[str] = "verification.result"
     is_valid: bool = False
-    text: str = ""
-    confidence: float = 0.0
-    reason: str = ""
-    text_length: int = 0
-    chunk_count: int = 0
 
 
 @dataclass
@@ -401,3 +399,22 @@ class SessionConfigReceived(BaseEvent):
 
     TYPE: ClassVar[str] = "session.config_received"
     recording_path: str | None = None
+
+
+# ==================== Turn Detection Events ====================
+
+
+@dataclass
+class TurnDetectorStopSpeaking(BaseEvent):
+    """Turn detector determined ai should stop speaking."""
+
+    TYPE: ClassVar[str] = "turn_detector.stop_speaking"
+    semantic: str = ""
+
+
+@dataclass
+class TurnDetectorStartGeneration(BaseEvent):
+    """Turn detector determined ai should start generation."""
+
+    TYPE: ClassVar[str] = "turn_detector.start_generation"
+    semantic: str = ""

@@ -1,8 +1,10 @@
 from abc import abstractmethod, ABC
-from typing import Iterable, AsyncIterator, Any
+from typing import Iterable, AsyncIterator, Any, Optional
 import numpy as np
 import asyncio
 from functools import partial
+from enum import Enum
+from dataclasses import dataclass
 from .utils import MockStreamRecognizer
 
 
@@ -369,3 +371,65 @@ class SpeechSpeedController(ABC):
         return await loop.run_in_executor(
             None, lambda: self.process(audio_bytes, speed)
         )
+
+
+class TurnDetectionAction(Enum):
+    DO_NOTHING = 1
+    STOP_SPEAKING = 2
+    START_GENERATION = 3
+
+
+class TurnDetectionSemantic(Enum):
+    IDLE = "idle"
+    INCOMPLETE = "incomplete"
+    COMPLETE = "complete"
+    WAIT = "wait"
+    BACKCHANNEL = "backchannel"
+
+
+@dataclass(frozen=True)
+class TurnDetectionResult:
+    action: TurnDetectionAction
+    semantic: TurnDetectionSemantic
+
+
+class TurnDetector(ABC):
+    @abstractmethod
+    def detect(
+        self,
+        audio: Optional[bytes] = None,
+        text: Optional[str] = None,
+        speech_pause: Optional[bool] = None,
+    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+        """
+        Detect turn with audio and/or text.
+
+        Args:
+            audio (bytes): Audio data frame at this instant. PCM 16bit mono, 16000Hz bytes.
+            text: Text of the turn, from ASR result.
+            speech_pause: indicates whether user has a pause on his speech (often triggered by VAD end); only sent alongside text
+
+            Either audio or (text, speech_pause) will be present.
+
+        Returns:
+            TurnDetectionResult | list[TurnDetectionResult]; STOP_SPEAKING action will be processed before START_GENERATION
+        """
+        pass
+
+    async def async_detect(
+        self,
+        audio: Optional[bytes] = None,
+        text: Optional[str] = None,
+        speech_pause: Optional[bool] = None,
+    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+        """Async wrapper for detect()."""
+        loop = asyncio.get_running_loop()
+        func = partial(self.detect, audio=audio, text=text, speech_pause=speech_pause)
+        result: TurnDetectionResult | list[TurnDetectionResult] = (
+            await loop.run_in_executor(None, func)
+        )
+        return result
+
+    @abstractmethod
+    def clone(self) -> "TurnDetector":
+        pass

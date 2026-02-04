@@ -71,3 +71,10 @@ try:
     __all__.append("FunASR")
 except:
     pass
+
+# Qwen3 ASR Client
+try:
+    from .qwen3asr_client import Qwen3ASRClient as Qwen3ASRClient
+    __all__.append("Qwen3ASRClient")
+except:
+    pass

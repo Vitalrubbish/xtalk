@@ -77,19 +77,21 @@ class VADSpeechEnd(BaseEvent):
     speech_probability: float = 0.0
 
 
-# TODO: remove unused fields and remove turn id?
+# TODO: remove unused fields
 @dataclass
 class ASRResultPartial(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_partial"
     text: str = ""
     confidence: float = 0.0
-    is_final: bool = False
+    # Indicates whether user has a pause on his speech (often triggered by VAD end)
+    speech_pause: bool = False
     display_text: str = ""  # Cleaned text for frontend display
     turn_id: int = 0
 
 
 @dataclass
 class ASRResultFinal(BaseEvent):
+    # Emit when ready for generation
     TYPE: ClassVar[str] = "asr.result_final"
     text: str = ""
     confidence: float = 0.0

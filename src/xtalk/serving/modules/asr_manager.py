@@ -77,6 +77,9 @@ class AudioConsumer:
         self._asr_model = pipeline.get_asr_model()
         self._asr_model.reset()
         self._session_id = session_id
+        # Flag to avoid repeat pause or end
+        self._ended = True
+        self._paused = False
         # Cache for recognition used in _recognize_and_publish
         self._recognized_text = ""
         # Assume PCM 16bit mono
@@ -106,12 +109,22 @@ class AudioConsumer:
         # Pump pre-buffer to recognition queue; start consumer
         # Break start-once invariance warning
         if self._consumer_running():
-            logger.warning(f"AudioConsumer started repeatedly")
-        await self._audio_queue.put(await self._pre_buffer.get())
+            logger.warning(f"AudioConsumer started repeatedly; do early return")
+            return
+        self._ended = False
+        self._paused = False
         self._start_consumer()
+        await self._audio_queue.put(await self._pre_buffer.get())
 
     async def pause(self):
         # Stop consumer, do one recognition and publish
+        # Break pause-once invariance warning
+        if self._paused or self._ended:
+            logger.warning(
+                f"AudioConsumer paused repeatedly/pause after end; do early return"
+            )
+            return
+        self._paused = True
         await self._stop_consumer()
         audio = await self._audio_queue.get()
         # Sentence end but not end of recognition
@@ -119,6 +132,11 @@ class AudioConsumer:
 
     async def end(self):
         # Stop consumer, do one recognition, publish ASRResultFinal, clean up states (including reset ASR) and increment turn
+        # Break stop-once invariance warning
+        if self._ended:
+            logger.warning(f"AudioConsumer ended repeatedly; do early return")
+            return
+        self._ended = True
         await self._stop_consumer()
         audio = await self._audio_queue.get()
         await self._recognize_and_publish(audio, is_asr_end=True, is_final_chunk=True)
@@ -166,7 +184,8 @@ class AudioConsumer:
     async def _recognize_and_publish(
         self, audio: bytes, is_asr_end: bool = False, is_final_chunk: bool = False
     ):
-        # Do ASR recognition once and publish result ASRResultPartal/Final based on is_asr_end; if not final, may use cache to determine whether to publish
+        # Do ASR recognition once and publish result ASRResultPartal/Final based on is_asr_end; if not final, may use cache to determine whether to publish;
+        # is_final_chunk means whether user has a pause on his speech, passed on to ASRResultPartial
         if is_asr_end and not is_final_chunk:
             raise ValueError("ASR ends but chunk is not final chunk")
         recognized_text = self._recognized_text
@@ -186,7 +205,7 @@ class AudioConsumer:
                 )
             )
         else:
-            if recognized_text == self._recognized_text:
+            if recognized_text == self._recognized_text and not is_final_chunk:
                 return
             self._recognized_text = recognized_text
             await self._publish_event(
@@ -195,6 +214,7 @@ class AudioConsumer:
                     text=recognized_text,
                     display_text=recognized_text,
                     turn_id=self._turn_id,
+                    speech_pause=is_final_chunk,
                 )
             )
 

@@ -53,6 +53,10 @@ class ByteQueue:
         self._new_bytes_event.clear()
         await self._new_bytes_event.wait()
 
+    async def interrupt_wait(self):
+        """Interrupt any waiting on new bytes."""
+        self._new_bytes_event.set()
+
     async def size(self):
         async with self._lock:
             return len(self._buffer)
@@ -155,6 +159,8 @@ class AudioConsumer:
     async def _stop_consumer(self):
         # Must stop after the current chunk is processed in consumer
         self._consumer_running_event.clear()
+        # FIXED: make sure audio consumer does not stuck and _consumer_idle_event will be set
+        await self._audio_queue.interrupt_wait()
         await self._consumer_idle_event.wait()
 
     async def _recognize_and_publish(

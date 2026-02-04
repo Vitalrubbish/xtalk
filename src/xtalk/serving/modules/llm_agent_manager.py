@@ -44,7 +44,6 @@ class LLMAgentManager(Manager):
         self.llm_agent = pipeline.get_agent()
 
         self._llm_task: Optional[asyncio.Task] = None
-        self._paused: bool = False
         self._resume_event = asyncio.Event()
         self._resume_event.set()
 
@@ -82,7 +81,6 @@ class LLMAgentManager(Manager):
 
         await self._cancel_running_task()
         self._llm_task = asyncio.create_task(self._generate_response(text))
-        self._paused = False
         self._resume_event.set()
         self._turn_id += 1
 
@@ -93,8 +91,7 @@ class LLMAgentManager(Manager):
         """Resume a paused generation task."""
         if not self._llm_task or self._llm_task.done():
             return
-        if self._paused:
-            self._paused = False
+        if not self._resume_event.is_set():
             self._resume_event.set()
             await self.event_bus.publish(
                 TurnTTSResumeRequested(session_id=self.session_id)
@@ -107,10 +104,9 @@ class LLMAgentManager(Manager):
         """Pause the running generation task."""
         if not self._llm_task or self._llm_task.done():
             return
-        if self._paused:
+        if not self._resume_event.is_set():
             logger.warning(f"Try to pause paused LLM generation")
             return
-        self._paused = True
         self._resume_event.clear()
         await self.event_bus.publish(
             TurnTTSPauseRequested(
@@ -130,7 +126,6 @@ class LLMAgentManager(Manager):
             ),
             wait_for_completion=True,
         )
-        self._paused = False
         self._resume_event.set()
 
     async def _cancel_running_task(self) -> None:
@@ -142,7 +137,6 @@ class LLMAgentManager(Manager):
             except asyncio.CancelledError:
                 pass
         self._llm_task = None
-        self._paused = False
         self._resume_event.set()
 
     async def _generate_response(self, text: str) -> None:
@@ -177,7 +171,7 @@ class LLMAgentManager(Manager):
 
         try:
             while True:
-                if self._paused:
+                if not self._resume_event.is_set():
                     await self._resume_event.wait()
                     continue
                 try:

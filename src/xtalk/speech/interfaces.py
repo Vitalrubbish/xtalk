@@ -28,7 +28,9 @@ class ASR(ABC):
         pass
 
     def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str:
-        """Incremental streaming interface."""
+        """Incremental streaming interface.
+        is_final indicates user pause or user turn end, meaning that ASR should forcefully do a recognition
+        """
         recognizer = self._get_mock_recognizer()
 
         if not audio:

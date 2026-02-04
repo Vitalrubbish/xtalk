@@ -26,7 +26,6 @@ from ..events import (
     TTSEmotionChange,
 )
 from ..events import (
-    TranscriptionRefined,
     ThoughtUpdated,
     CaptionUpdated,
     LatencyMetricsUpdated,
@@ -262,25 +261,6 @@ class OutputGateway(EventListenerMixin):
         except Exception as e:
             logger.error(
                 "Failed to send error signal - session: %s, error: %s",
-                self.session_id,
-                e,
-            )
-
-    @EventListenerMixin.event_handler(TranscriptionRefined, priority=5)
-    async def _send_refine_transcription_signal(
-        self, event: TranscriptionRefined
-    ) -> None:
-        try:
-            await self.send_signal(
-                self._build_message(
-                    "refine_transcription",
-                    {"text": event.text},
-                    event,
-                )
-            )
-        except Exception as e:
-            logger.error(
-                "Failed to send refine_transcription signal - session: %s, error: %s",
                 self.session_id,
                 e,
             )

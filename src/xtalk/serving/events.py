@@ -59,7 +59,7 @@ class EnhancedAudioFrameReceived(BaseEvent):
     audio_data: bytes
     sample_rate: int = 16000
     channels: int = 1
-    is_final: bool = False
+    is_final: bool = False  # TODO: deprecate unused fields
     audio_format: str = "pcm_s16le"
 
 
@@ -77,6 +77,7 @@ class VADSpeechEnd(BaseEvent):
     speech_probability: float = 0.0
 
 
+# TODO: remove unused fields and remove turn id?
 @dataclass
 class ASRResultPartial(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_partial"
@@ -336,25 +337,8 @@ class TurnASREndRequested(BaseEvent):
 
 
 @dataclass
-class TurnASRFlushRequested(BaseEvent):
-    """Request ASR to flush current stable segment in sim-trans mode."""
-
-    TYPE: ClassVar[str] = "turn.asr_flush_requested"
-    reason: str = ""  # e.g., vad_end
-
-
-# ==================== Sim-Trans (Simultaneous Generation) Extensions ====================
-
-
-@dataclass
-class ASRStableSegmentReady(BaseEvent):
-    """ASR stable segment ready (simultaneous translation)."""
-
-    TYPE: ClassVar[str] = "asr.stable_segment_ready"
-    text: str = ""
-    stability: float = 1.0
-    start_ts: float = 0.0
-    end_ts: float = 0.0
+class TurnASRPauseRequested(BaseEvent):
+    TYPE: ClassVar[str] = "turn.asr_pause_requested"
 
 
 @dataclass
@@ -364,14 +348,6 @@ class TurnTTSTextAppendRequested(BaseEvent):
     TYPE: ClassVar[str] = "turn.tts_text_append_requested"
     text: str = ""
     reason: str = "asr_partial"
-
-
-@dataclass
-class TranscriptionRefined(BaseEvent):
-    """Backend refines or corrects transcription for simultaneous mode."""
-
-    TYPE: ClassVar[str] = "asr.transcription_refined"
-    text: str = ""
 
 
 # ==================== Speaker Notification (Frontend) ====================

@@ -1,55 +1,70 @@
-# -*- coding: utf-8 -*-
-import asyncio
-import time
-from dataclasses import dataclass, field
 from typing import Optional, Any
-import math
-from collections import deque
-import numpy as np
-import re
-
-from ...log_utils import logger
-
+import asyncio
+from ..interfaces import Manager
 from ..event_bus import EventBus
-
+from ...pipelines import Pipeline
 from ..events import (
+    BaseEvent,
     EnhancedAudioFrameReceived,
     TurnASRStartRequested,
     TurnASREndRequested,
-    TurnASRResetRequested,
-    VerificationResult,
-    ErrorOccurred,
-    ASRResultFinal,
+    TurnASRPauseRequested,
     ASRResultPartial,
-    TranscriptionRefined,
-    ASRStableSegmentReady,
-    TurnASRFlushRequested,
+    ASRResultFinal,  # emit when turn about to move to next stage like text generation
 )
-from ..interfaces import Manager
-from ...pipelines import Pipeline
+from ...log_utils import logger
 
 
-@dataclass
-class ConsumerState:
-    """Track per-consumer state and keep buffers isolated per instance."""
+class ByteQueue:
+    def __init__(self, max_bytes: int = 0):
+        # max_byte==0 indicates no cap
+        if max_bytes < 0:
+            raise ValueError("max_bytes must be a non-negative int")
+        self._max_bytes = max_bytes
+        self._buffer = bytearray()
+        self._lock = asyncio.Lock()
+        self._new_bytes_event = asyncio.Event()
 
-    accumulated_audio: bytearray = field(default_factory=bytearray)
-    running: bool = False
-    processing: bool = False
-    last_activity: float = 0.0
-    processed_secs: float = 0
-    errors: int = 0
-    # Prevent final chunks from processing twice
-    final_started_process: bool = False
-    # Lock to protect state flags
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    async def put(self, data: bytes) -> None:
+        async with self._lock:
+            self._buffer.extend(data)
+            # Remove bytes from front if exceeding capacity
+            if self._max_bytes > 0 and len(self._buffer) > self._max_bytes:
+                excess = len(self._buffer) - self._max_bytes
+                self._buffer = self._buffer[excess:]
+            self._new_bytes_event.set()
+
+    async def get(self, max_bytes: Optional[int] = None) -> bytes:
+        # May return empty bytes
+        async with self._lock:
+            if max_bytes is None:
+                # Return all bytes
+                result = bytes(self._buffer)
+                self._buffer.clear()
+            else:
+                # Return at most max_bytes
+                bytes_to_return = min(max_bytes, len(self._buffer))
+                result = bytes(self._buffer[:bytes_to_return])
+                self._buffer = self._buffer[bytes_to_return:]
+            return result
+
+    async def wait_on_new_bytes(self):
+        """Wait until new bytes come"""
+        self._new_bytes_event.clear()
+        await self._new_bytes_event.wait()
+
+    async def interrupt_wait(self):
+        """Interrupt any waiting on new bytes."""
+        self._new_bytes_event.set()
+
+    async def size(self):
+        async with self._lock:
+            return len(self._buffer)
 
 
-# TODO: align sample rates
-class ASRManager(Manager):
-    """Event-driven ASR manager."""
-
-    SAMPLE_RATE = 16000  # Sample rate constant
+class AudioConsumer:
+    SAMPLE_RATE = 16000
+    PRE_BUFFER_SECS = 1
 
     def __init__(
         self,
@@ -57,837 +72,172 @@ class ASRManager(Manager):
         session_id: str,
         pipeline: Pipeline,
         config: dict[str, Any] | None = None,
-    ):
-        """
-        Initialize the ASR manager.
-
-        Args:
-            event_bus: event bus
-            session_id: session identifier
-            pipeline: pipeline instance
-        """
-        self.event_bus = event_bus
-        self.session_id = session_id
-        self.pipeline = pipeline
-        # Per-session config
-        self.config: dict[str, Any] = config or {}
-
-        # ASR state
-        self.accumulated_text = ""
-        self.chunk_count = 0
-
-        # Whether a speech segment is active (driven by frontend VAD)
-        self._speech_active = False
-        self._speech_active_lock = asyncio.Lock()
-
-        # Optimized audio buffer to reduce copying
-        self.audio_buffer = deque(maxlen=1000)  # Keep last 1000 audio chunks
-        self.buffer_lock = asyncio.Lock()
-
-        # Streaming ASR parameters: hold model ref only, chunking handled by model
-        self.asr_model = self.pipeline.get_asr_model()
-        self._stream_chunk_bytes_hint = self._get_stream_chunk_hint()
-        self.pre_buffer = deque(maxlen=self._compute_prebuffer_len())
-
-        # Recording is handled by RecordingManager
-
-        # Consumer state
-        self.consumer_state = ConsumerState()
-        self.consumer_task: Optional[asyncio.Task] = None
-        self._consumer_lock = asyncio.Lock()
-
-        # Simultaneous generation segment tracking (sim_gen only)
-        self._sim_gen: bool = bool(self.config.get("sim_gen", False))
-        # Pending incremental text buffer
-        self._text_to_send: str = ""
-        # Aggregated transcription for simultaneous generation
-        self._sim_transcription: str = ""
-        # Semantic timeout
-        self._semantic_timeout_task: Optional[asyncio.Task] = None
-        self._semantic_timeout_seconds: float = float(
-            self.config.get("semantic_timeout_sec", 0.5)
-        )
-        # turn
-        self._turn_id = 0
-        # Sentence-ending punctuation list
-        self._seg_punct = "，,。．.!！?？;；:：\n"
-        # Segment throttle threshold (ms)
-        self._seg_throttle_ms: int = 5000
-        # Start timestamp for stable segment events
-        self._seg_start_ts: float | None = None
-
-        # Flags to prevent duplicate event processing
-        self._ending_asr = False
-        self._starting_asr = False
-        self._resetting = False
-
-        # Error recovery configuration
-        self._max_consecutive_errors = 5
-        self._error_reset_threshold = 3
-
-        # Speaker detection moved elsewhere; SpeakerManager writes to context.
-
-    @property
-    def speech_active(self) -> bool:
-        """Get speech active status (thread-safe read)."""
-        return self._speech_active
-
-    async def _set_speech_active(self, value: bool) -> None:
-        """Set speech active status with lock protection."""
-        async with self._speech_active_lock:
-            self._speech_active = value
-
-    def _get_stream_chunk_hint(self) -> int | None:
-        """Cache chunk-size hint provided by the model."""
-        if not self.asr_model:
-            return None
-        return self.asr_model.stream_chunk_bytes_hint()
-
-    def _compute_prebuffer_len(self) -> int:
-        """Estimate pre-buffer frame count based on chunk hint."""
-        default_len = 20
-        if not self._stream_chunk_bytes_hint:
-            return default_len
-        ms = (self._stream_chunk_bytes_hint / 32000) * 1000
-        target_ms = max(100.0, min(400.0, ms * 2))
-        est_frames = int(math.ceil(target_ms / 10.0))
-        return max(20, min(50, est_frames))
-
-    @Manager.event_handler(EnhancedAudioFrameReceived, priority=100)
-    async def _handle_audio_frame(self, event: EnhancedAudioFrameReceived) -> None:
-        """Handle enhanced audio frames."""
-        # Ignore frames during reset
-        if self._resetting:
-            return
-
-        frame = {
-            "data": event.audio_data,
-            "timestamp": time.time(),
-            "sample_rate": getattr(event, "sample_rate", self.SAMPLE_RATE),
-            "is_final": getattr(event, "is_final", False),
-        }
-
-        # Only maintain pre_buffer when speech is inactive as padding for next turn
-        if not self.speech_active:
-            self.pre_buffer.append(frame)
-
-        # Skip main buffer when speech isn't active unless final frame forces flush
-        if not self.speech_active and not getattr(event, "is_final", False):
-            return
-
-        # Append audio to main buffer during speech segments
-        async with self.buffer_lock:
-            self.audio_buffer.append(frame)
-
-        # When is_final=True, drain accumulated audio (default False for safety)
-        if getattr(event, "is_final", False):
-            try:
-                # Safely drain buffer across async boundaries
-                # Use the lock only to read buffer length, then consume outside it.
-                while True:
-                    async with self.buffer_lock:
-                        remaining = len(self.audio_buffer)
-                    if remaining <= 0:
-                        break
-                    await self._asr_consume_once(should_sleep=False)
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                logger.error(
-                    "ASR consumer error - session: %s, error: %s", self.session_id, e
-                )
-                self.consumer_state.errors += 1
-
-                # Publish error event
-                error_event = ErrorOccurred(
-                    session_id=self.session_id,
-                    error_type="asr_consumer_error",
-                    error_message=str(e),
-                    component="ASRManager",
-                )
-                await self.event_bus.publish(error_event)
-
-    @Manager.event_handler(TurnASRStartRequested, priority=90)
-    async def _handle_turn_asr_start(self, event) -> None:
-        """Handle mediator request to start an ASR cycle."""
-        # Prevent duplicate start events
-        if self._starting_asr:
-            logger.warning(
-                "ASR start already in progress - session: %s, ignoring duplicate event",
-                self.session_id,
-            )
-            return
-
-        # Check if already active
-        if self.speech_active and self.consumer_task and not self.consumer_task.done():
-            logger.warning(
-                "ASR already active - session: %s, ignoring duplicate start event",
-                self.session_id,
-            )
-            return
-
-        self._starting_asr = True
-        try:
-            await self._set_speech_active(True)
-            # Start ASR processing
-            await self._start_consumer()
-            # Ensure state is reset after unexpected interruptions
-            async with self.consumer_state._lock:
-                self.consumer_state.final_started_process = False
-
-            # Move pre-buffer frames into the main buffer as padding
-            async with self.buffer_lock:
-                prebuffer_frames = list(self.pre_buffer)
-                for item in prebuffer_frames:
-                    self.audio_buffer.append(item)
-                # Clear once moved to avoid reusing old frames next turn
-                self.pre_buffer.clear()
-
-            # Increment turn id
-            self._turn_id += 1
-        finally:
-            self._starting_asr = False
-
-    @Manager.event_handler(
-        TurnASREndRequested,
-        priority=90,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
-    async def _handle_turn_asr_end(self, event) -> None:
-        """Handle request to end ASR and finalize."""
-        # Prevent duplicate end events
-        if self._ending_asr:
-            logger.warning(
-                "ASR end already in progress - session: %s, ignoring duplicate event",
-                self.session_id,
-            )
-            return
-
-        self._ending_asr = True
-        try:
-            await self._set_speech_active(False)
-            await self._stop_consumer()
-            await self._finish_asr_processing()
-        finally:
-            self._ending_asr = False
-
-    @Manager.event_handler(TurnASRResetRequested, priority=85)
-    async def _handle_turn_asr_reset(self, event) -> None:
-        """Reset ASR state upon mediator instruction."""
-        await self._reset_asr()
-
-    @Manager.event_handler(
-        TurnASRFlushRequested,
-        priority=88,
-        enabled_if=lambda mgr: mgr._sim_gen,
-    )
-    async def _handle_turn_asr_flush(self, event) -> None:
-        """Sim-trans request to emit current stable segment (VAD end)."""
-        await self._maybe_emit_stable_segment()
-
-    async def _validate_accumulated_text(self, text: str, semantic_tag: str) -> dict:
-        """
-        Validate whether ASR output should trigger interruption.
-
-        Args:
-            text: text to validate
-
-        Returns:
-            dict: validation result
-        """
-        validation_result = {
-            "is_valid": False,
-            "text": text,
-            "confidence": 0.0,
-            "validation_time": time.time(),
-            "session_id": self.session_id,
-        }
-
-        try:
-            # Minimum audio length gate
-            MIN_INTERRUPTION_SECONDS = 1  # seconds
-            audio_length = self.consumer_state.processed_secs
-            if audio_length < MIN_INTERRUPTION_SECONDS:
-                validation_result["is_valid"] = False
-                validation_result["reason"] = "audio too short"
-                return validation_result
-            if semantic_tag:
-                normalized_tag = (semantic_tag or "").strip().lower()
-                if normalized_tag in {"<complete>", "<incomplete>", "<wait>"}:
-                    validation_result.update(
-                        {
-                            "is_valid": True,
-                            "confidence": 1.0,
-                            "reason": normalized_tag,
-                            "text_length": len(text.strip()),
-                            "chunk_count": self.chunk_count,
-                        }
-                    )
-                else:
-                    validation_result.update(
-                        {
-                            "is_valid": False,
-                            "reason": normalized_tag,
-                            "text_length": len(text.strip()),
-                            "chunk_count": self.chunk_count,
-                        }
-                    )
-                return validation_result
-
-            # Basic check: reject empty text
-            if not text or not text.strip():
-                validation_result["is_valid"] = False
-                validation_result["reason"] = "text empty"
-                return validation_result
-
-            # Length validation
-            text_length = len(text.strip())
-            if text_length < 1:
-                validation_result["is_valid"] = False
-                validation_result["reason"] = "text too short"
-                return validation_result
-
-            # Single-character alphanumeric filter
-            if len(text.strip()) == 1 and re.match(r"^[\w]$", text.strip()):
-                validation_result["is_valid"] = False
-                validation_result["reason"] = "single character filtered"
-                return validation_result
-
-            # Filler words
-            filler_words = ["嗯", "啊", "呃", "哦", "呀", "吧", "呢", "嘛", "咳", "哼"]
-            if text.strip() in filler_words:
-                validation_result["is_valid"] = False
-                validation_result["reason"] = "filler filtered"
-                return validation_result
-
-            # Placeholder token
-            if text == "<EMPTY>":
-                validation_result["is_valid"] = False
-                validation_result["reason"] = "placeholder filtered"
-                return validation_result
-
-            # Confidence heuristic (to be refined)
-            confidence = min(
-                0.95, 0.5 + (text_length * 0.02) + (self.chunk_count * 0.01)
-            )
-
-            # Passed validation
-            validation_result["is_valid"] = True
-            validation_result["confidence"] = confidence
-            validation_result["reason"] = "validated"
-            validation_result["text_length"] = text_length
-            validation_result["chunk_count"] = self.chunk_count
-
-        except Exception as e:
-            logger.error(
-                "Text validation error - session: %s, error: %s", self.session_id, e
-            )
-            validation_result["is_valid"] = False
-            validation_result["reason"] = f"validation error: {str(e)}"
-
-        return validation_result
-
-    async def _publish_validation_result(
-        self, text: str, validation_result: dict
     ) -> None:
-        """Publish a validation result event."""
-        try:
-            # Emit verification result
-            verification_result_event = VerificationResult(
-                session_id=self.session_id,
-                is_valid=validation_result["is_valid"],
-                text=text,
-                confidence=validation_result["confidence"],
-                reason=validation_result["reason"],
-                text_length=validation_result.get("text_length", 0),
-                chunk_count=validation_result.get("chunk_count", 0),
-            )
-            # wait_for_completion=True ensures TTS/LLM stop flows finish before the next turn
-            await self.event_bus.publish(
-                verification_result_event, wait_for_completion=True
-            )
+        self._event_bus = event_bus
+        self._asr_model = pipeline.get_asr_model()
+        self._asr_model.reset()
+        self._session_id = session_id
+        # Cache for recognition used in _recognize_and_publish
+        self._recognized_text = ""
+        # Assume PCM 16bit mono
+        bytes_per_second = self.SAMPLE_RATE * 1 * (16 // 8)
+        # Store audio before ASR starts; make sure ASR do not leave alone the first words
+        self._pre_buffer = ByteQueue(self.PRE_BUFFER_SECS * bytes_per_second)
+        # For ASR consumption
+        self._audio_queue = ByteQueue()
+        # Indicate whether consumer is running and _audio_queue should accept audio
+        self._consumer_running_event = asyncio.Event()
+        # Indicate whether consumer is idle; useful for waiting consumer to process its current loop after stop
+        self._consumer_idle_event = asyncio.Event()
+        self._consumer_idle_event.set()
+        # Start audio consumer task immediately
+        self._audio_consumer_task = asyncio.create_task(self._audio_consumer())
+        # TODO: better turn behavior
+        self._turn_id = 1
 
-        except Exception as e:
-            logger.error(
-                "Failed to publish ASR validation result - session: %s, error: %s",
-                self.session_id,
-                e,
-            )
-
-    async def _reset_asr(self) -> None:
-        """Fully reset ASR state."""
-        if self._resetting:
-            logger.warning(
-                "ASR reset already in progress - session: %s", self.session_id
-            )
-            return
-
-        self._resetting = True
-        try:
-            # Stop consumer
-            await self._stop_consumer()
-
-            # Cancel semantic timeout
-            await self._cancel_semantic_timeout()
-
-            # Reset state variables
-            self._reset_consumer_state()
-            self.accumulated_text = ""
-            self.chunk_count = 0
-            self._text_to_send = ""
-            self._sim_transcription = ""
-            self._seg_start_ts = None
-
-            if self.asr_model:
-                self.asr_model.reset()
-
-            # Clear buffers
-            async with self.buffer_lock:
-                self.audio_buffer.clear()
-                self.pre_buffer.clear()
-        finally:
-            self._resetting = False
-
-    async def _finish_asr_processing(self) -> None:
-        """Finalize ASR processing."""
-        # Process remaining audio with duplicate protection
-        async with self.consumer_state._lock:
-            if not self.consumer_state.final_started_process:
-                self.consumer_state.final_started_process = True
-                should_process_audio = True
-            else:
-                should_process_audio = False
-
-        if should_process_audio:
-            await self._process_accumulated_audio(is_final=True)
-
-        # Placeholder confidence (model may override later)
-        final_confidence = 0
-        final_text = self.accumulated_text.strip()
-
-        if not final_text:
-            return
-
-        cleaned_text, semantic_tag = self._extract_semantic_tag(final_text)
-
-        # Display text no longer injects speaker labels (available via context)
-        display_text = cleaned_text
-        llm_text = cleaned_text
-
-        # Validate and publish final ASR result
-        valid_result = await self._validate_accumulated_text(llm_text, semantic_tag)
-        semantic_tag = semantic_tag or "<complete>"
-        await self._publish_validation_result(llm_text, valid_result)
-        if valid_result["is_valid"]:
-            if semantic_tag in ["<incomplete>", "<wait>"]:
-                await self._publish_asr_result(
-                    llm_text,
-                    False,
-                    final_confidence,
-                    display_text=display_text,
-                    semantic_tag=semantic_tag,
-                    wait_for_completion=True,
-                )
-
-                await self._schedule_semantic_timeout()
-            else:
-                await self._publish_asr_result(
-                    llm_text,
-                    True,
-                    final_confidence,
-                    display_text=display_text,
-                    semantic_tag=semantic_tag,
-                    wait_for_completion=True,
-                )
-                await self._cancel_semantic_timeout()
-
-    async def _start_consumer(self) -> None:
-        """Start the audio consumer task."""
-        async with self._consumer_lock:
-            if self.consumer_task and not self.consumer_task.done():
-                return
-
-            self.consumer_state.running = True
-            self.consumer_task = asyncio.create_task(self._asr_consumer())
-
-    async def _stop_consumer(self) -> None:
-        """Stop the audio consumer task."""
-        async with self._consumer_lock:
-            # Signal loop to exit
-            self.consumer_state.running = False
-
-            if self.consumer_task and not self.consumer_task.done():
-                try:
-                    # Wait at most 2 seconds for graceful shutdown
-                    await asyncio.wait_for(self.consumer_task, timeout=2.0)
-                except asyncio.TimeoutError:
-                    # Force cancel after timeout
-                    logger.warning(
-                        "Consumer task did not stop gracefully, cancelling - session: %s",
-                        self.session_id,
-                    )
-                    self.consumer_task.cancel()
-                    try:
-                        await self.consumer_task
-                    except asyncio.CancelledError:
-                        pass
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    logger.error(
-                        "Error stopping consumer - session: %s, error: %s",
-                        self.session_id,
-                        e,
-                    )
-
-            self.consumer_task = None
-
-    def _reset_consumer_state(self):
-        self.consumer_state = ConsumerState()
-
-    async def _asr_consume_once(self, should_sleep: bool) -> None:
-        """Single iteration of the ASR consumer."""
-        # Pull from buffer if available
-        audio_chunk = None
-        async with self.buffer_lock:
-            if self.audio_buffer:
-                audio_chunk = self.audio_buffer.popleft()
-
-        if audio_chunk:
-            # Append bytes to accumulator to avoid repeated copies
-            chunk_data = audio_chunk["data"]
-            self.consumer_state.accumulated_audio.extend(chunk_data)
-
-            is_final = audio_chunk.get("is_final", False)
-
-            # Determine if accumulated audio should be processed
-            should_process = False
-            if is_final:
-                should_process = True
-            else:
-                dynamic_chunk_bytes = self._stream_chunk_bytes_hint
-
-                if (
-                    dynamic_chunk_bytes is None
-                    or len(self.consumer_state.accumulated_audio) >= dynamic_chunk_bytes
-                ):
-                    should_process = True
-
-            # Check flag with lock protection
-            async with self.consumer_state._lock:
-                if self.consumer_state.final_started_process:
-                    should_process = False
-                elif should_process and is_final:
-                    self.consumer_state.final_started_process = True
-
-            if should_process:
-                # Process accumulated audio
-                await self._process_accumulated_audio(is_final)
+    async def accept_audio_frame(self, audio_frame: bytes):
+        # Add audio_frame to pre-buffer if consumer not started; add audio_frame to recognition queue if started
+        if not self._consumer_running():
+            await self._pre_buffer.put(audio_frame)
         else:
-            # No data; short sleep to avoid busy loop
-            if should_sleep:
-                await asyncio.sleep(0.005)  # 5 ms to reduce busy-waiting
+            await self._audio_queue.put(audio_frame)
 
-    async def _asr_consumer(self) -> None:
-        """Background loop that consumes audio chunks."""
+    async def start(self):
+        # Pump pre-buffer to recognition queue; start consumer
+        # Break start-once invariance warning
+        if self._consumer_running():
+            logger.warning(f"AudioConsumer started repeatedly")
+        await self._audio_queue.put(await self._pre_buffer.get())
+        self._start_consumer()
+
+    async def pause(self):
+        # Stop consumer, do one recognition and publish
+        await self._stop_consumer()
+        audio = await self._audio_queue.get()
+        # Sentence end but not end of recognition
+        await self._recognize_and_publish(audio, is_asr_end=False, is_final_chunk=True)
+
+    async def end(self):
+        # Stop consumer, do one recognition, publish ASRResultFinal, clean up states (including reset ASR) and increment turn
+        await self._stop_consumer()
+        audio = await self._audio_queue.get()
+        await self._recognize_and_publish(audio, is_asr_end=True, is_final_chunk=True)
+        await self._reset_states()
+        self._turn_id += 1
+
+    async def _audio_consumer(self):
+        while True:
+            self._consumer_idle_event.set()
+            if not self._consumer_running_event.is_set():
+                await self._consumer_running_event.wait()
+            self._consumer_idle_event.clear()
+            # Publish audio on condition:
+            # Await until new bytes come
+            await self._audio_queue.wait_on_new_bytes()
+            # Accumulate to proper chunk bytes, send for recognition at least 1 bytes
+            least_bytes_to_send = self._asr_model.stream_chunk_bytes_hint() or 1
+            if await self._audio_queue.size() < least_bytes_to_send:
+                continue
+            audio = await self._audio_queue.get()
+            await self._recognize_and_publish(audio)
+
+    async def shutdown(self):
+        # Consumer task cancellation
         try:
-            while self.consumer_state.running:
-                await self._asr_consume_once(should_sleep=True)
-
+            self._audio_consumer_task.cancel()
+            await self._audio_consumer_task
         except asyncio.CancelledError:
             pass
-        except Exception as e:
-            logger.error(
-                "ASR consumer error - session: %s, error: %s", self.session_id, e
-            )
-            self.consumer_state.errors += 1
 
-            # Publish error event
-            error_event = ErrorOccurred(
-                session_id=self.session_id,
-                error_type="asr_consumer_error",
-                error_message=str(e),
-                component="ASRManager",
-            )
-            await self.event_bus.publish(error_event)
+    # Helpers
+    def _consumer_running(self):
+        return self._consumer_running_event.is_set()
 
-    async def _process_accumulated_audio(
+    def _start_consumer(self):
+        self._consumer_running_event.set()
+
+    async def _stop_consumer(self):
+        # Must stop after the current chunk is processed in consumer
+        self._consumer_running_event.clear()
+        # FIXED: make sure audio consumer does not stuck and _consumer_idle_event will be set
+        await self._audio_queue.interrupt_wait()
+        await self._consumer_idle_event.wait()
+
+    async def _recognize_and_publish(
+        self, audio: bytes, is_asr_end: bool = False, is_final_chunk: bool = False
+    ):
+        # Do ASR recognition once and publish result ASRResultPartal/Final based on is_asr_end; if not final, may use cache to determine whether to publish
+        if is_asr_end and not is_final_chunk:
+            raise ValueError("ASR ends but chunk is not final chunk")
+        recognized_text = self._recognized_text
+        # Do not do recognition for empty audio
+        if len(audio) > 0:
+            recognized_text = await self._asr_model.async_recognize_stream(
+                audio, is_final=is_final_chunk
+            )
+        if is_asr_end:
+            self._recognized_text = recognized_text
+            await self._publish_event(
+                ASRResultFinal(
+                    session_id=self._session_id,
+                    text=recognized_text,
+                    display_text=recognized_text,
+                    turn_id=self._turn_id,
+                )
+            )
+        else:
+            if recognized_text == self._recognized_text:
+                return
+            self._recognized_text = recognized_text
+            await self._publish_event(
+                ASRResultPartial(
+                    session_id=self._session_id,
+                    text=recognized_text,
+                    display_text=recognized_text,
+                    turn_id=self._turn_id,
+                )
+            )
+
+    async def _publish_event(self, event: BaseEvent):
+        await self._event_bus.publish(event)
+
+    async def _reset_states(self):
+        self._recognized_text = ""
+        await self._pre_buffer.get()
+        await self._audio_queue.get()
+        self._consumer_running_event.clear()
+        self._consumer_idle_event.set()
+        self._asr_model.reset()
+
+
+class ASRManager(Manager):
+    def __init__(
         self,
-        is_final: bool,
-    ) -> None:
-        """
-        Process accumulated audio (optimized path).
+        event_bus: EventBus,
+        session_id: str,
+        pipeline: Pipeline,
+        config: dict[str, Any] | None = None,
+    ):
+        self.event_bus = event_bus
+        self._audio_consumer = AudioConsumer(event_bus, session_id, pipeline, config)
 
-        Args:
-            is_final: flag for final processing pass
-        """
-        try:
-            dynamic_chunk_bytes = self._stream_chunk_bytes_hint
-            self.consumer_state.processing = True
+    @Manager.event_handler(EnhancedAudioFrameReceived)
+    async def _handle_audio_frame(self, event: EnhancedAudioFrameReceived):
+        audio_frame = event.audio_data
+        await self._audio_consumer.accept_audio_frame(audio_frame)
 
-            # Ensure model exists
-            if not self.asr_model:
-                logger.warning(
-                    "No ASR model, skipping processing - session: %s", self.session_id
-                )
-                return
+    @Manager.event_handler(TurnASRStartRequested)
+    async def _handle_asr_start(self, _):
+        await self._audio_consumer.start()
 
-            # Check consecutive errors
-            if self.consumer_state.errors >= self._max_consecutive_errors:
-                logger.error(
-                    "Too many consecutive errors, resetting ASR - session: %s, errors: %d",
-                    self.session_id,
-                    self.consumer_state.errors,
-                )
-                await self._reset_asr()
-                return
+    @Manager.event_handler(TurnASREndRequested)
+    async def _handle_asr_end(self, _):
+        await self._audio_consumer.end()
 
-            # Slice off bytes to process
-            if dynamic_chunk_bytes and not is_final:
-                audio_data = bytes(
-                    self.consumer_state.accumulated_audio[:dynamic_chunk_bytes]
-                )
-                self.consumer_state.accumulated_audio = (
-                    self.consumer_state.accumulated_audio[dynamic_chunk_bytes:]
-                )
-            else:
-                audio_data = bytes(self.consumer_state.accumulated_audio)
-                self.consumer_state.accumulated_audio.clear()
+    @Manager.event_handler(TurnASRPauseRequested)
+    async def _handle_asr_pause(self, _):
+        await self._audio_consumer.pause()
 
-            # Double-check model presence
-            if not self.asr_model:
-                return
-
-            # Skip if no audio and not a final flush
-            if (not audio_data or len(audio_data) == 0) and not is_final:
-                return
-
-            if audio_data is None:
-                audio_data = b""
-
-            current_text: str = await self.asr_model.async_recognize_stream(
-                audio_data, is_final=is_final
-            )
-
-            # Success - reduce error count
-            if self.consumer_state.errors > 0:
-                self.consumer_state.errors = max(0, self.consumer_state.errors - 1)
-
-            self.consumer_state.last_activity = time.time()
-            # Only accumulate processed seconds when actual audio arrives
-            if audio_data:
-                self.consumer_state.processed_secs += (
-                    len(audio_data) / 2 / self.SAMPLE_RATE
-                )  # Assume 16 kHz mono 16-bit PCM
-            if not current_text:
-                return
-
-            previous_text = self.accumulated_text
-            if current_text == previous_text:
-                return
-
-            if previous_text and current_text.startswith(previous_text):
-                delta_text = current_text[len(previous_text) :]
-            else:
-                delta_text = current_text
-
-            self.accumulated_text = current_text
-
-            if not delta_text:
-                return
-
-            # Placeholder confidence; real value not supplied by model
-            mock_confidence = 0.0
-            self.chunk_count += 1
-
-            # Allow final-triggered segments to dispatch events
-            if not self.consumer_state.running and not is_final:
-                return
-
-            # TODO: check sim_gen implementation
-            if self._sim_gen:
-                # Simultaneous generation path
-                if (not self._text_to_send) and delta_text.strip():
-                    self._seg_start_ts = time.time()
-                self._text_to_send += delta_text
-                await self._publish_asr_result(
-                    delta_text,
-                    False,
-                    mock_confidence,
-                    wait_for_completion=False,
-                )
-            else:
-                await self._publish_asr_result(
-                    self.accumulated_text,
-                    False,
-                    mock_confidence,
-                    wait_for_completion=False,
-                )
-
-        except Exception as e:
-            self.consumer_state.errors += 1
-            logger.error(
-                "ASR failed to process accumulated audio - session: %s, error: %s, error_count: %d",
-                self.session_id,
-                e,
-                self.consumer_state.errors,
-            )
-            raise
-        finally:
-            self.consumer_state.processing = False
-
-    def _pcm_to_float(self, pcm: bytes) -> np.ndarray:
-        """Deprecated: ASR handles conversions internally (kept for compatibility)."""
-        pcm_int16 = np.frombuffer(pcm, dtype=np.int16)
-        return pcm_int16.astype(np.float32) / 32768.0
-
-    def _extract_semantic_tag(self, text: str) -> tuple[str, str]:
-        """Parse semantic tags and return (clean_text, tag)."""
-        tag_patterns = ["<complete>", "<incomplete>", "<backchannel>", "<wait>"]
-        found_tag = next((t for t in tag_patterns if t in text), "")
-        cleaned_text = re.sub(r"<[^>]+>", "", text).strip()
-        return cleaned_text, found_tag
-
-    async def _schedule_semantic_timeout(self) -> None:
-        """Schedule timeout to auto-complete incomplete segments."""
-        await self._cancel_semantic_timeout()
-        if self._semantic_timeout_seconds <= 0:
-            return
-        self._semantic_timeout_task = asyncio.create_task(
-            self._semantic_timeout_worker()
-        )
-
-    async def _cancel_semantic_timeout(self) -> None:
-        """Cancel pending semantic timeout task."""
-        if self._semantic_timeout_task and not self._semantic_timeout_task.done():
-            self._semantic_timeout_task.cancel()
-            try:
-                await self._semantic_timeout_task
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:  # pragma: no cover
-                logger.warning(
-                    "Failed to cancel semantic timeout task - session: %s, error: %s",
-                    self.session_id,
-                    exc,
-                )
-        self._semantic_timeout_task = None
-
-    async def _semantic_timeout_worker(self) -> None:
-        """On timeout, emit an empty complete result to unblock downstream."""
-        # Capture current state at timeout start
-        timeout_turn_id = self._turn_id
-        timeout_text = self.accumulated_text
-
-        try:
-            await asyncio.sleep(self._semantic_timeout_seconds)
-
-            # Validate timeout is still relevant
-            if self._turn_id != timeout_turn_id:
-                return
-
-            # Check if speech is still active
-            if not self.speech_active:
-                return
-
-            await self._publish_asr_result(
-                text=timeout_text,
-                is_final=True,
-                confidence=0.0,
-                display_text="",
-                semantic_tag="<complete>",
-                wait_for_completion=True,
-            )
-        except asyncio.CancelledError:
-            raise
-        finally:
-            self._semantic_timeout_task = None
-
-    async def _publish_asr_result(
-        self,
-        text: str,
-        is_final: bool,
-        confidence: float,
-        display_text: str = "",
-        semantic_tag: str | None = None,
-        wait_for_completion: bool = False,
-    ) -> None:
-        """Publish ASR result events."""
-        cleaned_text = re.sub(r"<[^>]+>", "", text or "").strip()
-        display_payload = display_text or cleaned_text
-        event = (
-            ASRResultFinal(
-                session_id=self.session_id,
-                text=cleaned_text,
-                confidence=confidence,
-                display_text=display_payload,
-                semantic_tag=semantic_tag or "<complete>",
-                turn_id=self._turn_id,
-            )
-            if is_final
-            else ASRResultPartial(
-                session_id=self.session_id,
-                text=cleaned_text,
-                confidence=confidence,
-                display_text=display_payload,
-                turn_id=self._turn_id,
-            )
-        )
-        await self.event_bus.publish(event, wait_for_completion=wait_for_completion)
-
-    async def _maybe_emit_stable_segment(self) -> None:
-        """Emit stable segments in sim-trans mode using simple heuristics."""
-        ## Skip segments shorter than 3 characters
-        if len(self._text_to_send.strip()) < 3:
-            return
-        # Optionally restore punctuation
-        punt_model = self.pipeline.get_punt_restorer_model()
-        if punt_model:
-            self._text_to_send = await punt_model.async_restore(self._text_to_send)
-
-        buf = self._text_to_send
-        if not buf:
-            return
-
-        should_emit = False
-
-        # If sentence-ending punctuation exists
-        if any(p in buf for p in self._seg_punct):
-            should_emit = True
-
-        if not should_emit:
-            return
-
-        segment = buf
-        # Reset buffers
-        self._text_to_send = ""
-        # Append to transcription log
-        self._sim_transcription += segment
-        now = time.time()
-        try:
-            evt = ASRStableSegmentReady(
-                session_id=self.session_id,
-                text=segment,
-                stability=1.0,
-                start_ts=(self._seg_start_ts or 0.0),
-                end_ts=now,
-            )
-            await self.event_bus.publish(evt)
-            await self.event_bus.publish(
-                TranscriptionRefined(
-                    session_id=self.session_id,
-                    text=self._sim_transcription,
-                )
-            )
-            # Reset segment start timestamp
-            self._seg_start_ts = None
-
-        except Exception as e:
-            logger.warning("Failed to emit ASRStableSegmentReady: %s", e)
-
-    async def shutdown(self) -> None:
-        """Shut down ASR manager."""
-
-        # Stop ASR
-        await self._reset_asr()
-        # Recording logic handled in RecordingManager
+    async def shutdown(self):
+        # Task cancellation
+        await self._audio_consumer.shutdown()

@@ -400,7 +400,7 @@ class TurnDetector(ABC):
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
         speech_pause: Optional[bool] = None,
-    ) -> TurnDetectionResult:
+    ) -> TurnDetectionResult | list[TurnDetectionResult]:
         """
         Detect turn with audio and/or text.
 
@@ -412,7 +412,7 @@ class TurnDetector(ABC):
             Either audio or (text, speech_pause) will be present.
 
         Returns:
-            TurnDetectionResult
+            TurnDetectionResult | list[TurnDetectionResult]; STOP_SPEAKING action will be processed before START_GENERATION
         """
         pass
 
@@ -421,11 +421,13 @@ class TurnDetector(ABC):
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
         speech_pause: Optional[bool] = None,
-    ) -> TurnDetectionResult:
+    ) -> TurnDetectionResult | list[TurnDetectionResult]:
         """Async wrapper for detect()."""
         loop = asyncio.get_running_loop()
         func = partial(self.detect, audio=audio, text=text, speech_pause=speech_pause)
-        result: TurnDetectionResult = await loop.run_in_executor(None, func)
+        result: TurnDetectionResult | list[TurnDetectionResult] = (
+            await loop.run_in_executor(None, func)
+        )
         return result
 
     @abstractmethod

@@ -85,18 +85,23 @@ class TurnDetectorManager(Manager):
         except Exception as e:
             logger.error("[TurnDetectorManager] ASR partial processing failed: %s", e)
 
-    async def _handle_detection_result(self, result: TurnDetectionResult) -> None:
+    async def _handle_detection_result(
+        self, result: TurnDetectionResult | list[TurnDetectionResult]
+    ) -> None:
         """Handle turn detection result and emit appropriate events."""
-        if result.action == TurnDetectionAction.STOP_SPEAKING:
-            evt = TurnDetectorStopSpeaking(
-                session_id=self.session_id, semantic=result.semantic.value
-            )
-            await self.event_bus.publish(evt)
-        elif result.action == TurnDetectionAction.START_GENERATION:
-            evt = TurnDetectorStartGeneration(
-                session_id=self.session_id, semantic=result.semantic.value
-            )
-            await self.event_bus.publish(evt)
+        if not isinstance(result, list):
+            result = [result]
+        for item in result:
+            if item.action == TurnDetectionAction.STOP_SPEAKING:
+                evt = TurnDetectorStopSpeaking(
+                    session_id=self.session_id, semantic=item.semantic.value
+                )
+                await self.event_bus.publish(evt)
+            elif item.action == TurnDetectionAction.START_GENERATION:
+                evt = TurnDetectorStartGeneration(
+                    session_id=self.session_id, semantic=item.semantic.value
+                )
+                await self.event_bus.publish(evt)
         # DO_NOTHING requires no action
 
     # ----------------------------

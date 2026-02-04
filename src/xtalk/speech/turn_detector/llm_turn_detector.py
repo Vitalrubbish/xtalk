@@ -119,6 +119,49 @@ Choose **complete** if neither of the above applies and the utterance forms a co
 
 Return only the label string with no extra text.    
 """
+    CHECK_COMPLETION_PROMPT = """You are a real-time speech-UI classifier. Given an ASR transcript of what the user just said (may be partial, noisy, or cut off), classify whether the user's utterance is:
+
+* **incomplete**: the user is still speaking / the thought is unfinished, or ASR looks truncated.
+* **complete**: the user finished a coherent utterance (question/command/statement) and is yielding the floor.
+
+### 1) **incomplete**
+
+Choose **incomplete** if **any** of these are true:
+
+**A. Truncation / cut-off indicators**
+
+* Transcript ends with unfinished connectors: “and”, “so”, “but”, “because”, “if”, “then”, “like”, “which”, “that...”
+* Ends with filler or restart signals: “uh”, “um”, “er”, “I mean”, “well...”, “你知道”, “就是”, “然后...”
+* Ends with a dangling preposition/article: “to”, “with”, “for”, “a/an/the”, “的/了/在/把” (when clearly hanging)
+
+**B. Mid-thought structure**
+
+* Starts a clause but doesn't complete it: “I want to...”, “Can you...”, “Let's...”, “Could we...”, “我想.../能不能.../我们...”
+* Contains self-correction or continuation cues without finishing: “no—”, “actually—”, “wait— I mean—”, “不是...我是说...”
+
+**C. ASR partialness signs**
+
+* Very short fragment that looks like a partial start (1-3 content words) and not a full intent, e.g. “so the...”, “about the...”, “那个...”, “就是...”
+* Strong repetition/restarts: “I I I...”, “we we...”, “我我我...”
+
+### 2) **complete**
+
+Choose **complete** if neither of the above applies and the utterance forms a complete communicative unit, e.g.:
+
+* A full question: ends naturally or with “?”, has an interrogative (“what/why/how/能不能/怎么”)
+* A full command/request: “Open X”, “Explain Y”, “帮我把...”
+* A complete statement: “I'm done”, “That's fine”, “We should do A first”
+* Even if short, it clearly conveys a finished intent: “yes”, “no”, “okay”, “got it”, “不用了”, “可以”
+
+## Tie-breakers
+
+* If the transcript ends with a period-like finality (or clear completion) vs. a dangling connector, prefer **complete**.
+* If it includes both acknowledgement and a new clause starter (e.g., “yeah but...”, “好的然后...”), choose **incomplete** unless it clearly finishes.
+
+## Output format
+
+Return only the label string with no extra text.
+"""
 
     def __init__(self, model: dict | BaseChatModel) -> None:
         if isinstance(model, dict):
@@ -138,7 +181,7 @@ Return only the label string with no extra text.
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
         speech_pause: Optional[bool] = None,
-    ) -> TurnDetectionResult:
+    ) -> TurnDetectionResult | list[TurnDetectionResult]:
         return asyncio.run(self.async_detect(audio, text, speech_pause))
 
     async def async_detect(
@@ -146,7 +189,7 @@ Return only the label string with no extra text.
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
         speech_pause: Optional[bool] = None,
-    ) -> TurnDetectionResult:
+    ) -> TurnDetectionResult | list[TurnDetectionResult]:
         if text == None:
             return TurnDetectionResult(
                 action=TurnDetectionAction.DO_NOTHING,
@@ -194,10 +237,28 @@ Return only the label string with no extra text.
                     )
                 if "interrupt" in response.lower():
                     self._listening = True
-                    return TurnDetectionResult(
-                        action=TurnDetectionAction.STOP_SPEAKING,
-                        semantic=TurnDetectionSemantic.INCOMPLETE,
-                    )
+                    result = [
+                        TurnDetectionResult(
+                            action=TurnDetectionAction.STOP_SPEAKING,
+                            semantic=TurnDetectionSemantic.INCOMPLETE,
+                        )
+                    ]
+                    # Need to additional check for start generation if meet speech paused (indicating a potential end of speech)
+                    if speech_pause:
+                        messages = [
+                            SystemMessage(content=self.CHECK_COMPLETION_PROMPT),
+                            HumanMessage(content=text),
+                        ]
+                        response = (await self._model.ainvoke(messages)).content
+                        if "complete" in response.lower():
+                            result[0].semantic = TurnDetectionSemantic.COMPLETE
+                            result.append(
+                                TurnDetectionResult(
+                                    action=TurnDetectionAction.START_GENERATION,
+                                    semantic=TurnDetectionSemantic.COMPLETE,
+                                )
+                            )
+                    return result
             return TurnDetectionResult(
                 action=TurnDetectionAction.DO_NOTHING,
                 semantic=TurnDetectionSemantic.IDLE,

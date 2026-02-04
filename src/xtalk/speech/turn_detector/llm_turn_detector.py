@@ -127,6 +127,8 @@ Return only the label string with no extra text.
         # If AI is listening, try to determine whether to start generation and toggle state;
         # else determine whether to stop speaking and toggle state
         self._listening = True
+        # FIXED: lock listening
+        self._listening_lock = asyncio.Lock()
 
     def clone(self) -> "TurnDetector":
         return LLMTurnDetector(self._model)
@@ -146,49 +148,57 @@ Return only the label string with no extra text.
         speech_pause: Optional[bool] = None,
     ) -> TurnDetectionResult:
         if text == None:
-            return
-        if self._listening:
-            messages = [
-                SystemMessage(content=self.START_GENERATION_PROMPT),
-                HumanMessage(content=text),
-            ]
-            response = (await self._model.ainvoke(messages)).content
-            if speech_pause and "complete" in response.lower():
-                self._listening = False
-                return TurnDetectionResult(
-                    action=TurnDetectionAction.START_GENERATION,
-                    semantic=TurnDetectionSemantic.COMPLETE,
-                )
-            if "incomplete" in response.lower():
-                return TurnDetectionResult(
-                    action=TurnDetectionAction.DO_NOTHING,
-                    semantic=TurnDetectionSemantic.INCOMPLETE,
-                )
-            if "wait" in response.lower():
-                return TurnDetectionResult(
-                    action=TurnDetectionAction.DO_NOTHING,
-                    semantic=TurnDetectionSemantic.WAIT,
-                )
-        else:
-            messages = [
-                SystemMessage(content=self.STOP_SPEAKING_PROMPT),
-                HumanMessage(content=text),
-            ]
-            response = (await self._model.ainvoke(messages)).content
-            if "backchannel" in response.lower():
-                return TurnDetectionResult(
-                    action=TurnDetectionAction.DO_NOTHING,
-                    semantic=TurnDetectionSemantic.BACKCHANNEL,
-                )
-            if "wait" in response.lower():
-                self._listening = True
-                return TurnDetectionResult(
-                    action=TurnDetectionAction.STOP_SPEAKING,
-                    semantic=TurnDetectionSemantic.WAIT,
-                )
-            if "interrupt" in response.lower():
-                self._listening = True
-                return TurnDetectionResult(
-                    action=TurnDetectionAction.STOP_SPEAKING,
-                    semantic=TurnDetectionSemantic.INCOMPLETE,
-                )
+            return TurnDetectionResult(
+                action=TurnDetectionAction.DO_NOTHING,
+                semantic=TurnDetectionSemantic.IDLE,
+            )
+        async with self._listening_lock:
+            if self._listening:
+                messages = [
+                    SystemMessage(content=self.START_GENERATION_PROMPT),
+                    HumanMessage(content=text),
+                ]
+                response = (await self._model.ainvoke(messages)).content
+                if speech_pause and "complete" in response.lower():
+                    self._listening = False
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.START_GENERATION,
+                        semantic=TurnDetectionSemantic.COMPLETE,
+                    )
+                if "incomplete" in response.lower():
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.DO_NOTHING,
+                        semantic=TurnDetectionSemantic.INCOMPLETE,
+                    )
+                if "wait" in response.lower():
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.DO_NOTHING,
+                        semantic=TurnDetectionSemantic.WAIT,
+                    )
+            else:
+                messages = [
+                    SystemMessage(content=self.STOP_SPEAKING_PROMPT),
+                    HumanMessage(content=text),
+                ]
+                response = (await self._model.ainvoke(messages)).content
+                if "backchannel" in response.lower():
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.DO_NOTHING,
+                        semantic=TurnDetectionSemantic.BACKCHANNEL,
+                    )
+                if "wait" in response.lower():
+                    self._listening = True
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.STOP_SPEAKING,
+                        semantic=TurnDetectionSemantic.WAIT,
+                    )
+                if "interrupt" in response.lower():
+                    self._listening = True
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.STOP_SPEAKING,
+                        semantic=TurnDetectionSemantic.INCOMPLETE,
+                    )
+            return TurnDetectionResult(
+                action=TurnDetectionAction.DO_NOTHING,
+                semantic=TurnDetectionSemantic.IDLE,
+            )

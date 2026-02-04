@@ -78,7 +78,7 @@ class TurnDetectorManager(Manager):
                 return
 
             result = await self.turn_detector.async_detect(
-                text=event.text, asr_final=False
+                text=event.text, speech_pause=event.speech_pause
             )
             await self._handle_detection_result(result)
 

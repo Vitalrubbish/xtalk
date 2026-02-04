@@ -7,7 +7,10 @@ from ..events import (
     TurnLLMAgentStartRequested,
     TurnLLMAgentStopRequested,
     TurnASRStartRequested,
+    TurnASRPauseRequested,
     TurnASREndRequested,
+    TurnDetectorStartGeneration,
+    TurnDetectorStopSpeaking,
     ASRResultFinal,
     TTSPlaybackFinished,
 )
@@ -20,23 +23,32 @@ class TurnTakingManager(Manager):
         self.event_bus = event_bus
         self.session_id = session_id
 
-    @Manager.event_handler(VADSpeechStart)
-    async def _on_vad_start(self, _event: VADSpeechStart):
-        """VAD start: stop LLM and notify ASR to start."""
-        # TODO: introduce turn detection to handle llm agent pause/stop
+    @Manager.event_handler(TurnDetectorStartGeneration)
+    async def _on_turn_detector_start_generation(
+        self, event: TurnDetectorStartGeneration
+    ):
+        # TODO: utilize event.semantic
+        await self.event_bus.publish(TurnASREndRequested(session_id=self.session_id))
+
+    @Manager.event_handler(TurnDetectorStopSpeaking)
+    async def _on_turn_detector_stop_speaking(self, event: TurnDetectorStopSpeaking):
+        # TODO: utilize event.semantic
         await self.event_bus.publish(
             TurnLLMAgentStopRequested(
                 session_id=self.session_id,
             ),
             wait_for_completion=True,
         )
+
+    @Manager.event_handler(VADSpeechStart)
+    async def _on_vad_start(self, _event: VADSpeechStart):
+        """VAD start: stop LLM and notify ASR to start."""
         await self.event_bus.publish(TurnASRStartRequested(session_id=self.session_id))
 
     @Manager.event_handler(VADSpeechEnd)
     async def _on_vad_end(self, _event: VADSpeechEnd):
         """VAD end: finalize the turn."""
-        # TODO: introduce turn detection to signal turn ASR end; here only signals TurnASRPause
-        await self.event_bus.publish(TurnASREndRequested(session_id=self.session_id))
+        await self.event_bus.publish(TurnASRPauseRequested(session_id=self.session_id))
 
     @Manager.event_handler(ASRResultFinal)
     async def _on_asr_final(self, event: ASRResultFinal):

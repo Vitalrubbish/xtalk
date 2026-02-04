@@ -399,7 +399,6 @@ class TurnDetector(ABC):
         self,
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
-        asr_final: Optional[bool] = None,
     ) -> TurnDetectionResult:
         """
         Detect turn with audio and/or text.
@@ -407,9 +406,8 @@ class TurnDetector(ABC):
         Args:
             audio (bytes): Audio data frame at this instant. PCM 16bit mono, 16000Hz bytes.
             text: Text of the turn, from ASR result.
-            asr_final: Whether text is ASR final result, or still partial recognition.
 
-            Either audio or (text, asr_final) will be present.
+            Either audio or text will be present.
 
         Returns:
             TurnDetectionResult
@@ -420,11 +418,10 @@ class TurnDetector(ABC):
         self,
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
-        asr_final: Optional[bool] = None,
     ) -> TurnDetectionResult:
         """Async wrapper for detect()."""
         loop = asyncio.get_running_loop()
-        func = partial(self.detect, audio=audio, text=text, asr_final=asr_final)
+        func = partial(self.detect, audio=audio, text=text)
         result: TurnDetectionResult = await loop.run_in_executor(None, func)
         return result
 

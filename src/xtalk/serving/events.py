@@ -198,6 +198,7 @@ class TTSPlaybackFinished(BaseEvent):
     TYPE: ClassVar[str] = "tts.playback_finished"
 
 
+# TODO: remove this event and its related logic on frontend
 @dataclass
 class VerificationResult(BaseEvent):
     TYPE: ClassVar[str] = "verification.result"

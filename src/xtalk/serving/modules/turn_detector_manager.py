@@ -5,7 +5,7 @@ TurnDetectorManager
 Manages turn detection by processing audio and ASR results through the TurnDetector.
 Subscribes to:
 - EnhancedAudioFrameReceived: feeds audio to turn detector
-- ASRResultPartial/ASRResultFinal: feeds text and finality to turn detector
+- ASRResultPartial: feeds text to turn detector
 
 Emits:
 - TurnDetectorStopSpeaking: when action is STOP_SPEAKING
@@ -23,7 +23,6 @@ from ..interfaces import Manager
 from ..events import (
     EnhancedAudioFrameReceived,
     ASRResultPartial,
-    ASRResultFinal,
     TurnDetectorStopSpeaking,
     TurnDetectorStartGeneration,
 )
@@ -85,24 +84,6 @@ class TurnDetectorManager(Manager):
 
         except Exception as e:
             logger.error("[TurnDetectorManager] ASR partial processing failed: %s", e)
-
-    @Manager.event_handler(ASRResultFinal)
-    async def _on_asr_final(self, event: ASRResultFinal) -> None:
-        """Process final ASR results through turn detector."""
-        try:
-            if self.turn_detector is None:
-                return
-
-            if not event.text:
-                return
-
-            result = await self.turn_detector.async_detect(
-                text=event.text, asr_final=True
-            )
-            await self._handle_detection_result(result)
-
-        except Exception as e:
-            logger.error("[TurnDetectorManager] ASR final processing failed: %s", e)
 
     async def _handle_detection_result(self, result: TurnDetectionResult) -> None:
         """Handle turn detection result and emit appropriate events."""

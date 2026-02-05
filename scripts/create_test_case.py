@@ -121,8 +121,9 @@ def generate_audio_dashscope(
     api_key: str,
     voice: str = "Cherry",
     language_type: str = "Auto",
+    max_retries: int = 3,
 ) -> bytes:
-    """Generate audio using DashScope TTS API."""
+    """Generate audio using DashScope TTS API with retry logic."""
     url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 
     headers = {
@@ -141,25 +142,35 @@ def generate_audio_dashscope(
 
     print(f"  Requesting TTS for: {text[:50]}...")
 
-    response = requests.post(url, headers=headers, json=payload, timeout=120)
-    response.raise_for_status()
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
+            response.raise_for_status()
 
-    result = response.json()
+            result = response.json()
 
-    if "output" not in result or "audio" not in result["output"]:
-        raise ValueError(f"Unexpected API response: {result}")
+            if "output" not in result or "audio" not in result["output"]:
+                raise ValueError(f"Unexpected API response: {result}")
 
-    audio_url = result["output"]["audio"].get("url")
-    if not audio_url:
-        raise ValueError(f"No audio URL in response: {result}")
+            audio_url = result["output"]["audio"].get("url")
+            if not audio_url:
+                raise ValueError(f"No audio URL in response: {result}")
 
-    print(f"  Downloading audio from: {audio_url[:80]}...")
+            print(f"  Downloading audio from: {audio_url[:80]}...")
 
-    # Download the audio file
-    audio_response = requests.get(audio_url, timeout=60)
-    audio_response.raise_for_status()
+            # Download the audio file
+            audio_response = requests.get(audio_url, timeout=60)
+            audio_response.raise_for_status()
 
-    return audio_response.content
+            return audio_response.content
+
+        except (requests.RequestException, ValueError) as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # exponential backoff
+                print(f"  Retry {attempt + 1}/{max_retries} after {wait_time}s: {e}")
+                time.sleep(wait_time)
+            else:
+                raise  # Re-raise on final attempt
 
 
 def create_test_case(
@@ -167,13 +178,14 @@ def create_test_case(
     output_dir: str,
     api_key: str,
     voice: str = "Cherry",
-    language_type: str = "Audo",
+    language_type: str = "Auto",
 ) -> None:
     """Create test case directory with audio files and timestamp.txt."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
     timestamp_lines = []
+    failed_entries = []
 
     for i, entry in enumerate(entries):
         # Generate audio filename
@@ -207,18 +219,30 @@ def create_test_case(
 
         except Exception as e:
             print(f"  ERROR: Failed to generate audio: {e}")
-            raise
+            failed_entries.append((i, entry, str(e)))
+            # Continue to next entry instead of raising
 
-    # Write timestamp.txt
-    timestamp_path = output_path / "timestamp.txt"
-    with open(timestamp_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(timestamp_lines) + "\n")
+    # Write timestamp.txt only if at least one entry succeeded
+    if timestamp_lines:
+        timestamp_path = output_path / "timestamp.txt"
+        with open(timestamp_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(timestamp_lines) + "\n")
+        print(f"\n[Done] Created test case at: {output_path}")
+        print(f"  Audio files: {len(timestamp_lines)}/{len(entries)}")
+        print(f"  Timestamp file: {timestamp_path}")
+    else:
+        print(f"\n[Error] No audio files were successfully generated")
+        sys.exit(1)
 
-    print(f"\n[Done] Created test case at: {output_path}")
-    print(f"  Audio files: {len(entries)}")
-    print(f"  Timestamp file: {timestamp_path}")
-    print(f"\nRun with:")
-    print(f"  python scripts/offline_client.py --input {output_path}")
+    # Report failures
+    if failed_entries:
+        print(f"\n[Warning] {len(failed_entries)} entries failed:")
+        for idx, entry, error in failed_entries:
+            print(f"  Entry {idx}: {entry.text[:50]}... - {error}")
+        
+    if timestamp_lines:
+        print(f"\nRun with:")
+        print(f"  python scripts/offline_client.py --input {output_path}")
 
 
 def main():

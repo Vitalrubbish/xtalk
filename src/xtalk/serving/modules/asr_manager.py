@@ -189,8 +189,9 @@ class AudioConsumer:
         if is_asr_end and not is_final_chunk:
             raise ValueError("ASR ends but chunk is not final chunk")
         recognized_text = self._recognized_text
-        # Do not do recognition for empty audio
-        if len(audio) > 0:
+        # Always call recognize_stream when is_final_chunk to ensure finalization
+        # (tail silence + wait_final), even if audio is empty
+        if len(audio) > 0 or is_final_chunk:
             recognized_text = await self._asr_model.async_recognize_stream(
                 audio, is_final=is_final_chunk
             )

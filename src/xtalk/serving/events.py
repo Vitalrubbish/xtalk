@@ -167,6 +167,7 @@ class TTSEmotionChange(BaseEvent):
     emotion_vector: list = None
 
     def __post_init__(self):
+        super().__post_init__()
         if self.emotion_vector is None:
             self.emotion_vector = []
 

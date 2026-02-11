@@ -53,6 +53,10 @@ VAD_LATENCY_SEC = 0.5  # extra wait after audio end, before vad_speech_end
 # Valid timestamp labels
 TIMESTAMP_LABELS = {"ai_start", "ai_end", "user_start", "user_end"}
 
+# Client-generated events (produced by sending audio, not by server)
+# These use "most recent event" semantics instead of "wait for new event"
+CLIENT_EVENTS = {"user_start", "user_end"}
+
 
 @dataclass
 class TimingSpec:
@@ -135,6 +139,9 @@ class AudioExchangeClient:
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         self._running = True
         self._silence_task: Optional[asyncio.Task] = None
+        # When True, receive_loop skips playback sleep for audio chunks.
+        # Set when user interrupts an active AI response; cleared on start_tts.
+        self._skip_tts_playback = False
 
     async def connect(self):
         self.ws = await websockets.connect(self.ws_url, ping_interval=None)
@@ -257,7 +264,13 @@ class AudioExchangeClient:
         await self.send_json({"action": "tts_playback_finished"})
 
     async def receive_loop(self):
-        """Handle incoming messages from server."""
+        """Handle incoming messages from server.
+
+        Audio chunks are "played back" by sleeping for their duration.
+        When _skip_tts_playback is True (user interrupted AI), chunks are
+        fast-drained without sleeping so we can quickly reach the next
+        response's messages.
+        """
         try:
             async for msg in self.ws:
                 if isinstance(msg, bytes):
@@ -267,9 +280,12 @@ class AudioExchangeClient:
                         self._record_event("ai_start")
 
                     self.state.tts_bytes_received += len(msg)
-                    # Simulate playback duration for this chunk
-                    chunk_duration = len(msg) / (TTS_SR * BYTES_PER_SAMPLE)
-                    await asyncio.sleep(chunk_duration)
+
+                    if not self._skip_tts_playback:
+                        # Simulate playback duration for this chunk
+                        chunk_duration = len(msg) / (TTS_SR * BYTES_PER_SAMPLE)
+                        await asyncio.sleep(chunk_duration)
+
                     # Notify server this chunk has been played
                     await self.send_json({"action": "tts_chunk_played"})
                 else:
@@ -282,14 +298,20 @@ class AudioExchangeClient:
                         # Record ai_end
                         if self.state.ai_started:
                             self._record_event("ai_end")
+                    elif action == "start_tts":
+                        print("[Server] TTS started")
+                        # New response — resume playback simulation
+                        self._skip_tts_playback = False
+                    elif action == "stop_tts":
+                        print("[Server] TTS stopped")
+                        # Response interrupted — fast-drain remaining chunks
+                        self._skip_tts_playback = True
                     elif action == "finish_asr":
                         text = data.get("data", {}).get("text", "")
                         print(f"[ASR] {text}")
                     elif action == "finish_resp":
                         text = data.get("data", {}).get("text", "")
                         print(f"[LLM] {text[:100]}...")
-                    elif action == "start_tts":
-                        print("[Server] TTS started")
                     elif action == "error":
                         print(f"[Error] {data.get('data')}")
         except websockets.ConnectionClosed:
@@ -298,15 +320,22 @@ class AudioExchangeClient:
     async def wait_for_timing(self, timing: TimingSpec):
         """Wait until the specified timing condition is met.
 
-        For event-based timing (ai_end, user_end, etc.):
+        For server events (ai_start, ai_end):
         - Uses event counts to detect NEW events since snapshot
         - If a new event fired after snapshot, uses its timestamp
         - If no new event, waits for the next one
-        - Offset is calculated from the actual event timestamp
+
+        For client events (user_start, user_end):
+        - Uses "most recent event" semantics — references the last recorded
+          timestamp directly, since these events are produced by the client
+          itself and waiting for a "new" one would deadlock.
+
+        Offset is always calculated from the actual event timestamp.
 
         This enables reliable cross-task scheduling like:
             ai_end:question.wav      -> send after previous response ends
             ai_end+2.5:followup.wav  -> send 2.5s after previous response ends
+            user_end+20:resume.wav   -> send 20s after user finished speaking
         """
         if timing.label is None:
             # Absolute time from start
@@ -318,24 +347,47 @@ class AudioExchangeClient:
                 await asyncio.sleep(wait_time)
         else:
             label = timing.label
-            snapshot_count = self.state._wait_snapshot.get(label, 0)
-            current_count = self.state.event_counts.get(label, 0)
 
-            if current_count <= snapshot_count:
-                # No new event since snapshot, need to wait
-                event = self.state.events.get(label)
-                if event:
-                    # Clear event so we can wait for the next firing
-                    event.clear()
-                    print(f"[Wait] Waiting for {label}...")
-                    await event.wait()
+            if label in CLIENT_EVENTS:
+                # Client-generated events: use most recent timestamp directly.
+                # These events are produced by our own send_audio_file(), so
+                # waiting for a "new" event would deadlock (we can't send audio
+                # until this wait completes).
+                event_time = self.state.event_times.get(label)
+                if event_time is None:
+                    # Event hasn't fired yet — wait for the first occurrence
+                    event = self.state.events.get(label)
+                    if event:
+                        event.clear()
+                        print(f"[Wait] Waiting for first {label}...")
+                        await event.wait()
+                    event_time = self.state.event_times.get(label)
+                else:
+                    print(
+                        f"[Wait] Using last {label} timestamp"
+                    )
             else:
-                print(
-                    f"[Wait] {label} already fired (count {current_count} > snapshot {snapshot_count}), proceeding"
-                )
+                # Server-generated events: use snapshot/count mechanism to
+                # detect NEW events since the snapshot was taken.
+                snapshot_count = self.state._wait_snapshot.get(label, 0)
+                current_count = self.state.event_counts.get(label, 0)
+
+                if current_count <= snapshot_count:
+                    # No new event since snapshot, need to wait
+                    event = self.state.events.get(label)
+                    if event:
+                        # Clear event so we can wait for the next firing
+                        event.clear()
+                        print(f"[Wait] Waiting for {label}...")
+                        await event.wait()
+                else:
+                    print(
+                        f"[Wait] {label} already fired (count {current_count} > snapshot {snapshot_count}), proceeding"
+                    )
+
+                event_time = self.state.event_times.get(label)
 
             # Apply offset relative to the actual event timestamp
-            event_time = self.state.event_times.get(label)
             if timing.offset > 0 and event_time:
                 target = event_time + timing.offset
                 now = asyncio.get_event_loop().time()
@@ -380,6 +432,12 @@ class AudioExchangeClient:
 
                 # Wait for timing condition (may reference events from previous tasks)
                 await self.wait_for_timing(task.timing)
+
+                # If AI is currently speaking, the next audio send will
+                # interrupt it — skip playback for the interrupted response
+                # so receive_loop can fast-drain buffered chunks.
+                if self.state.ai_started and not self.state.tts_finished:
+                    self._skip_tts_playback = True
 
                 # Reset per-audio state AFTER waiting, BEFORE sending
                 # This preserves event history for cross-task timing

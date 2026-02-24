@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import asyncio
-import json
 from typing import Any, Optional
 from langchain_core.messages import ToolCall
 from ...log_utils import logger
@@ -25,6 +24,7 @@ from ..events import (
 )
 from ..interfaces import Manager
 from ...pipelines import Pipeline
+from ...llm_agent import Agent
 
 
 class LLMAgentManager(Manager):
@@ -162,7 +162,7 @@ class LLMAgentManager(Manager):
             await self._publish_error("llm_generation_error", str(e))
             return
 
-    async def _stream_tts(self, agent: Any, llm_input: dict[str, Any]) -> None:
+    async def _stream_tts(self, agent: Agent, llm_input: dict[str, Any]) -> None:
         """Stream agent output to TTS by appending chunks and flushing at the end."""
         text_for_tts_started = False
         first_chunk_generated = False
@@ -267,17 +267,9 @@ class LLMAgentManager(Manager):
 
     async def _publish_tool_call(self, tool_call: ToolCall) -> None:
         """Forward tool-call payloads to downstream consumers."""
-        # Validate required fields exist
-        if "name" not in tool_call:
-            logger.warning(
-                "Tool call missing 'name' field - session: %s",
-                self.session_id,
-            )
-            return
-        
         name = tool_call["name"]
         args = tool_call.get("args", {})
-        
+
         # Validate name is not empty
         if not name:
             logger.warning(
@@ -285,7 +277,7 @@ class LLMAgentManager(Manager):
                 self.session_id,
             )
             return
-        
+
         try:
             await self.event_bus.publish(
                 ToolCallOccurred(

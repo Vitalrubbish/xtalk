@@ -36,7 +36,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import numpy as np
 import soundfile as sf
@@ -136,7 +136,7 @@ class AudioExchangeClient:
         self.with_vad = with_vad
         self.output_path = output_path
         self.state = ClientState()
-        self.ws: Optional[websockets.WebSocketClientProtocol] = None
+        self.ws: Optional[websockets.ClientConnection] = None
         self._running = True
         self._silence_task: Optional[asyncio.Task] = None
         # When True, receive_loop skips playback sleep for audio chunks.

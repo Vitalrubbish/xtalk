@@ -50,12 +50,12 @@ BYTES_PER_SAMPLE = 2  # int16
 SILENCE_FRAME = b"\x00" * (FRAME_SAMPLES * BYTES_PER_SAMPLE)
 VAD_LATENCY_SEC = 0.5  # extra wait after audio end, before vad_speech_end
 
-# Valid timestamp labels
-TIMESTAMP_LABELS = {"ai_start", "ai_end", "user_start", "user_end"}
-
 # Client-generated events (produced by sending audio, not by server)
 # These use "most recent event" semantics instead of "wait for new event"
 CLIENT_EVENTS = {"user_start", "user_end"}
+
+# Valid timestamp labels
+TIMESTAMP_LABELS = {"ai_start", "ai_end"} | CLIENT_EVENTS
 
 
 @dataclass
@@ -363,9 +363,7 @@ class AudioExchangeClient:
                         await event.wait()
                     event_time = self.state.event_times.get(label)
                 else:
-                    print(
-                        f"[Wait] Using last {label} timestamp"
-                    )
+                    print(f"[Wait] Using last {label} timestamp")
             else:
                 # Server-generated events: use snapshot/count mechanism to
                 # detect NEW events since the snapshot was taken.

@@ -1,11 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Event Bus with enhanced error handling and recursion protection.
-
-Key improvements:
-- Prevents infinite error event recursion with depth tracking
-- Circuit breaker pattern for error event publishing
-- Better error isolation and logging
 """
 import asyncio
 from collections import defaultdict
@@ -32,11 +27,11 @@ class EventHandler:
 class EventBus:
     """Event bus abstraction with recursion protection."""
 
-    # 最大错误事件递归深度
+    # Max error event recursion depth
     MAX_ERROR_EVENT_DEPTH = 3
-    # 错误事件发布冷却时间（秒）
+    # Error event publish cooldown (s)
     ERROR_EVENT_COOLDOWN = 1.0
-    # 错误事件发布速率限制（每秒最多几个）
+    # Error event publish rate limit (/s)
     ERROR_EVENT_RATE_LIMIT = 10
 
     def __init__(self, enable_history: bool = False, max_history: int = 1000):
@@ -62,7 +57,7 @@ class EventBus:
             "events_processed": 0,
             "errors_occurred": 0,
             "handlers_count": 0,
-            "error_events_dropped": 0,  # 新增：因递归保护而丢弃的错误事件
+            "error_events_dropped": 0,  # Error events dropped due to recursion protection
         }
 
         # Active async tasks
@@ -71,11 +66,11 @@ class EventBus:
         # Weak references for cleanup
         self._weak_refs: List[weakref.ref] = []
 
-        # 错误事件递归保护
+        # Error event recursion protection
         self._error_event_depth = 0
         self._error_event_lock = asyncio.Lock()
-        
-        # 错误事件速率限制
+
+        # Error event rate limiting
         self._error_event_times: List[float] = []
         self._last_error_event_time = 0.0
 
@@ -189,7 +184,7 @@ class EventBus:
             logger.error("Failed to publish event: %s", e)
             self._stats["errors_occurred"] += 1
 
-            # 使用安全的错误事件发布
+            # Publish error event safely
             if event.event_type != "error.occurred":
                 await self._publish_error_event_safe(
                     session_id=event.session_id,
@@ -229,7 +224,7 @@ class EventBus:
                 handler.handler.__name__,
             )
 
-            # 使用安全的错误事件发布
+            # Publish error event safely
             if event.event_type != "error.occurred":
                 await self._publish_error_event_safe(
                     session_id=event.session_id,
@@ -243,20 +238,20 @@ class EventBus:
     ) -> None:
         """
         Safely publish an error event with recursion protection.
-        
+
         Protection mechanisms:
         1. Depth tracking: Prevents deep recursion
         2. Rate limiting: Prevents error event flooding
         3. Cooldown: Prevents rapid successive error events
         4. Circuit breaker: Temporarily stops error events if too many failures
-        
+
         Args:
             session_id: session identifier
             error_type: type of error
             error_message: error message
             component: component that raised the error
         """
-        # 检查递归深度
+        # Check recursion depth
         if self._error_event_depth >= self.MAX_ERROR_EVENT_DEPTH:
             logger.error(
                 "Max error event depth (%d) reached, dropping error event: %s",
@@ -266,7 +261,7 @@ class EventBus:
             self._stats["error_events_dropped"] += 1
             return
 
-        # 检查冷却时间
+        # Check cooldown period
         current_time = time.time()
         if current_time - self._last_error_event_time < self.ERROR_EVENT_COOLDOWN:
             logger.debug(
@@ -276,7 +271,7 @@ class EventBus:
             self._stats["error_events_dropped"] += 1
             return
 
-        # 检查速率限制
+        # Check rate limit
         self._error_event_times = [
             t for t in self._error_event_times if current_time - t < 1.0
         ]
@@ -289,11 +284,11 @@ class EventBus:
             self._stats["error_events_dropped"] += 1
             return
 
-        # 使用锁保护递归深度
+        # Lock to protect recursion depth counter
         async with self._error_event_lock:
             self._error_event_depth += 1
             try:
-                # 创建错误事件
+                # Create error event
                 error_event = ErrorOccurred(
                     session_id=session_id,
                     error_type=error_type,
@@ -301,21 +296,19 @@ class EventBus:
                     component=component,
                 )
 
-                # 发布错误事件（不等待完成，避免阻塞）
-                # 使用 try-except 确保即使发布失败也不会影响递归深度的恢复
+                # Publish error event (fire-and-forget to avoid blocking)
+                # Use try-except to ensure depth counter is restored even if publish fails
                 try:
                     await self.publish(error_event, wait_for_completion=False)
                     self._last_error_event_time = current_time
                     self._error_event_times.append(current_time)
                 except Exception as e:
-                    logger.error(
-                        "Failed to publish error event (suppressing): %s", e
-                    )
-                    # 不再递归，直接记录日志
+                    logger.error("Failed to publish error event (suppressing): %s", e)
+                    # Do not recurse further; just log
                     self._stats["error_events_dropped"] += 1
 
             finally:
-                # 确保深度计数器总是被恢复
+                # Ensure depth counter is always restored
                 self._error_event_depth -= 1
 
     def _add_to_history(self, event: BaseEvent) -> None:
@@ -374,7 +367,7 @@ class EventBus:
             "active_tasks": len(self._active_tasks),
             "history_enabled": self._enable_history,
             "history_count": len(self._event_history) if self._enable_history else 0,
-            "error_event_depth": self._error_event_depth,  # 新增
+            "error_event_depth": self._error_event_depth,
         }
 
     def clear_history(self) -> None:

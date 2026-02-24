@@ -321,22 +321,23 @@ class TurnLLMAgentStopRequested(BaseEvent):
 
 
 @dataclass
-class TurnASRResetRequested(BaseEvent):
-    TYPE: ClassVar[str] = "turn.asr_reset_requested"
-
-
-@dataclass
 class TurnASRStartRequested(BaseEvent):
     TYPE: ClassVar[str] = "turn.asr_start_requested"
 
 
 @dataclass
 class TurnASREndRequested(BaseEvent):
+    """
+    Indicates hard turn end. ASR model state is reset. Turn moves to next.
+    """
     TYPE: ClassVar[str] = "turn.asr_end_requested"
 
 
 @dataclass
 class TurnASRPauseRequested(BaseEvent):
+    """
+    Used when user indicates a wait, or pauses in the speech. Triggers recognition once. ASR model state is preserved; turn unchanged.
+    """
     TYPE: ClassVar[str] = "turn.asr_pause_requested"
 
 

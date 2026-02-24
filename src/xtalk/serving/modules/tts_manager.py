@@ -159,16 +159,16 @@ class TTSManager(Manager):
 
     async def reset_tts(self) -> None:
         """Reset all TTS state and cancel consumers."""
-        
+
         # Reset state flags
         self._resume_event.set()
         self.pending_sentence_buffer = ""
         self._first_sentence_ready = False
         self._last_chunk_sent_for_tts = False
-        
+
         # Stop consumer
         await self._stop_consumer()
-        
+
         # Cancel segments producer task
         if self._segments_task and not self._segments_task.done():
             self._segments_task.cancel()
@@ -177,7 +177,7 @@ class TTSManager(Manager):
             except asyncio.CancelledError:
                 pass
         self._segments_task = None
-        
+
         # Drain queue
         while True:
             try:
@@ -185,7 +185,7 @@ class TTSManager(Manager):
                 self.tts_queue.task_done()
             except asyncio.QueueEmpty:
                 break
-        
+
         # Clear segments queue
         if self._segments_queue:
             while True:
@@ -247,14 +247,14 @@ class TTSManager(Manager):
 
     async def _tts_consumer(self) -> None:
         """Consume queued TTS output and publish audio events."""
-        
+
         try:
             while self._consumer_running:
                 # When paused, avoid consuming queue items or emitting events
                 if not self._resume_event.is_set():
                     await self._resume_event.wait()
                     continue
-                
+
                 item = None  # Track if we successfully got an item
                 try:
                     # Pull from the queue with a short timeout
@@ -268,10 +268,8 @@ class TTSManager(Manager):
                             self.speed_controller is not None
                             and self.current_speed != 1.0
                         ):
-                            processed_audio = (
-                                await self.speed_controller.async_process(
-                                    item.audio_chunk, self.current_speed
-                                )
+                            processed_audio = await self.speed_controller.async_process(
+                                item.audio_chunk, self.current_speed
                             )
 
                         # Publish to frontend (chunks processed in FIFO order)
@@ -280,13 +278,11 @@ class TTSManager(Manager):
                             audio_chunk=processed_audio,
                         )
                         # Ensure ordering by waiting for completion
-                        await self.event_bus.publish(
-                            event, wait_for_completion=True
-                        )
-                    
+                        await self.event_bus.publish(event, wait_for_completion=True)
+
                     # Mark task as done after processing
                     self.tts_queue.task_done()
-                    
+
                     # Check if the last chunk has been sent and the queue is empty
                     if self._last_chunk_sent_for_tts and self.tts_queue.empty():
                         await self.event_bus.publish(
@@ -457,7 +453,7 @@ class TTSManager(Manager):
         """Handle tool call events for TTS control (speed, voice, emotion)."""
         name = event.name
         args = event.args
-        
+
         # Add parameter validation
         if name == "set_speed":
             if "speed" not in args:
@@ -468,14 +464,6 @@ class TTSManager(Manager):
                 return
             try:
                 speed = float(args["speed"])
-                # Validate speed range (0.5-2.0 is a common reasonable range)
-                if not 0.5 <= speed <= 2.0:
-                    logger.warning(
-                        "Speed %.2f out of valid range [0.5, 2.0] - session: %s",
-                        speed,
-                        self.session_id,
-                    )
-                    return
                 await self.event_bus.publish(
                     TTSSpeedChange(session_id=self.session_id, speed=speed)
                 )
@@ -486,7 +474,7 @@ class TTSManager(Manager):
                     e,
                     self.session_id,
                 )
-                
+
         elif name == "set_voice":
             if "name" not in args:
                 logger.warning(
@@ -504,7 +492,7 @@ class TTSManager(Manager):
             await self.event_bus.publish(
                 TTSVoiceChange(session_id=self.session_id, voice_name=voice_name)
             )
-            
+
         elif name == "set_emotion":
             emotion_name = args.get("name", "")
             emotion_vector = args.get("vector", None)
@@ -528,17 +516,8 @@ class TTSManager(Manager):
         """Handle requests to change the reference voice."""
         voice_name = event.voice_name
 
-        # Add None check
-        tts_model = self.pipeline.get_tts_model()
-        if not tts_model:
-            logger.error(
-                "TTS model not available for voice change - session: %s",
-                self.session_id,
-            )
-            return
-
         try:
-            tts_model.set_voice(voice_names=[voice_name])
+            self.pipeline.get_tts_model().set_voice(voice_names=[voice_name])
         except Exception as e:
             logger.error(
                 "Failed to change voice: %s - session: %s",
@@ -552,15 +531,6 @@ class TTSManager(Manager):
         emotion_name = event.emotion_name
         emotion_vector = event.emotion_vector
 
-        # Add None check
-        tts_model = self.pipeline.get_tts_model()
-        if not tts_model:
-            logger.error(
-                "TTS model not available for emotion change - session: %s",
-                self.session_id,
-            )
-            return
-
         # Validate parameters
         if not emotion_name and not emotion_vector:
             logger.warning(
@@ -570,7 +540,7 @@ class TTSManager(Manager):
             return
 
         try:
-            tts_model.set_emotion(
+            self.pipeline.get_tts_model().set_emotion(
                 emotion=emotion_name if emotion_name else emotion_vector
             )
         except Exception as e:

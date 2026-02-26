@@ -285,11 +285,20 @@ class TTSManager(Manager):
 
                     # Check if the last chunk has been sent and the queue is empty
                     if self._last_chunk_sent_for_tts and self.tts_queue.empty():
+                        self._last_chunk_sent_for_tts = False
                         await self.event_bus.publish(
                             TTSFinished(session_id=self.session_id),
                         )
 
                 except asyncio.TimeoutError:
+                    # Also check when queue is empty — TTS may have produced
+                    # zero chunks (e.g. synthesis service failure), so the
+                    # finished condition would never be evaluated above.
+                    if self._last_chunk_sent_for_tts and self.tts_queue.empty():
+                        self._last_chunk_sent_for_tts = False
+                        await self.event_bus.publish(
+                            TTSFinished(session_id=self.session_id),
+                        )
                     continue
                 except Exception as e:
                     logger.error("TTS consumer error while handling audio: %s", e)

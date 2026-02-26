@@ -366,12 +366,16 @@ Caption and thought:
         self, caption: Optional[str], thought: Optional[str]
     ) -> str:
         """Build system prompt augmented with caption/thought for this turn."""
-        parts: List[str] = []
+        from datetime import datetime
+
+        now = datetime.now()
+        date_info = f"<current_date>{now.strftime('%Y-%m-%d %A')}</current_date>\n"
+        parts: List[str] = [date_info]
         if caption and str(caption).strip():
             parts.append(f"<caption>{str(caption).strip()}</caption>")
         if thought and str(thought).strip():
             parts.append(f"<thought>{str(thought).strip()}</thought>")
-        return self.sys_prompt_for_session + ("\n".join(parts) or "No context yet")
+        return self.sys_prompt_for_session + "\n".join(parts)
 
     def _update_first_system(
         self, caption: Optional[str], thought: Optional[str]

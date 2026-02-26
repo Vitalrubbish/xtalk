@@ -56,7 +56,8 @@ You MUST call this tool when the user's question involves ANY of the following:
 - Specific people, organizations, companies, products, events
 - Numbers, statistics, rankings, or comparisons requiring accuracy
 - ANY factual question where you are not 100% certain of the answer
-GOLDEN RULE: When in doubt, ALWAYS search. Never guess specific facts from memory."""
+GOLDEN RULE: When in doubt, ALWAYS search. Never guess specific facts from memory.
+LANGUAGE RULE: The search query MUST use the SAME language as the user's question. If the user speaks Chinese, search in Chinese. If the user speaks English, search in English. Do NOT translate the query to a different language."""
 
     @tool(WEB_SEARCH_TOOL, args_schema=args_schema)
     def web_search(

@@ -48,6 +48,16 @@ def build_web_search_tool() -> BaseTool:
 
     resolved_key = _resolve_env("SERPER_API_KEY", "GOOGLE_SERPER_API_KEY") or ""
 
+    search_description = """Search the web for accurate, up-to-date information.
+You MUST call this tool when the user's question involves ANY of the following:
+- Weather, news, current events, real-time data (stock prices, scores, exchange rates)
+- Specific places, buildings, campuses, addresses, floor numbers, opening hours (e.g. '香港科技大学有几家咖啡厅', '南北小厨在几楼', 'where is the library')
+- Restaurants, shops, cafes, businesses: location, menu, price, count, hours
+- Specific people, organizations, companies, products, events
+- Numbers, statistics, rankings, or comparisons requiring accuracy
+- ANY factual question where you are not 100% certain of the answer
+GOLDEN RULE: When in doubt, ALWAYS search. Never guess specific facts from memory."""
+
     @tool(WEB_SEARCH_TOOL, args_schema=args_schema)
     def web_search(
         query: str,
@@ -55,7 +65,7 @@ def build_web_search_tool() -> BaseTool:
         region: str | None = None,
         lang: str | None = None,
     ) -> str:
-        """Search the web and return a concise textual summary of top results."""
+        """Search the web for real-time information and return top results."""
         # Lazy import requests so the module loads even if dependency is missing
         try:
             import requests  # type: ignore
@@ -99,6 +109,7 @@ def build_web_search_tool() -> BaseTool:
         except Exception as e:  # fail-safe
             return f"Search error: {e}"
 
+    web_search.description = search_description
     return web_search
 
 
@@ -125,9 +136,17 @@ def build_time_tool() -> BaseTool:
         "additionalProperties": False,
     }
 
+    time_description = """Get the current date and time.
+You MUST call this tool when the user asks about:
+- Current time (e.g. '现在几点', '几点了', 'what time is it')
+- Current date (e.g. '今天几号', '今天是什么日期', 'what is today's date')
+- Day of week (e.g. '今天星期几', 'what day is it')
+- Any question that requires knowing the current datetime
+Do NOT guess or fabricate the current time — always use this tool."""
+
     @tool(TIME_TOOL, args_schema=args_schema)
     def get_time(timezone: str | None = None, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
-        """Return current datetime as a string with optional timezone and format."""
+        """Get the current date and time."""
         from datetime import datetime
 
         tzinfo = None
@@ -145,6 +164,7 @@ def build_time_tool() -> BaseTool:
         except Exception:
             return now.strftime("%Y-%m-%d %H:%M:%S")
 
+    get_time.description = time_description
     return get_time
 
 

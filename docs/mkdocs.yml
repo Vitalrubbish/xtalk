@@ -1,5 +1,7 @@
 site_name: xtalk
 docs_dir: .
+theme:
+  name: material
 nav:
   - Home: index.md
   - Testing: testing.md

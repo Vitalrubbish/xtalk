@@ -1,3 +1,4 @@
 site_name: xtalk
+docs_dir: .
 nav:
   - Testing: testing.md

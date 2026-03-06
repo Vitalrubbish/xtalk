@@ -50,7 +50,7 @@ After that, create a JSON config specifying the models to use, and **fill in <AP
 >     }
 > },
 > ```
-> If you want all models deployed locally, see [here](#sample-config-for-fully-local-deployment).
+> If you want all models deployed locally, see [here](tutorial/sample_config_for_fully_local_deployment.md).
 
 The next step is to compose the startup script. Since we also need to link frontend webpage and scripts to get the demo working, the startup script is ready at `examples/sample_app/configurable_server.py`. We simply need to start the server with the config file (**fill in <PATH_TO_CONFIG>.json** with the path to the config file we just created) and a custom port:
 ```bash

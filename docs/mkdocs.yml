@@ -16,7 +16,7 @@ extra:
       lang: zh
 nav:
   - Home: 
-      - en/index.md
+      - index.md
       - zh/index.md
   - Tutorial:
       - Testing:

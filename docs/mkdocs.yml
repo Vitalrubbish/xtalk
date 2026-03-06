@@ -38,9 +38,11 @@ plugins:
             Home: 首页
             Tutorial: 教程
             Quickstart: 快速开始
+            'Sample Config for Fully Local Deployment': 完全本地部署示例配置
             Testing: 测试
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Tutorial:
+      - 'Sample Config for Fully Local Deployment': tutorial/sample_config_for_fully_local_deployment.md
       - Testing: tutorial/testing.md

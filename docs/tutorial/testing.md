@@ -21,6 +21,7 @@ ai_end+2.5:This will be sent 2.5 seconds after AI finishes.
 ```
 
 Where `<timestamp>` is:
+
 - A float number: absolute seconds from start (e.g., `0`, `5.0`, `10.5`)
 - `ai_start`: when first AI audio chunk starts playing
 - `ai_end`: when AI response finishes playing
@@ -39,6 +40,7 @@ python scripts/create_test_case.py --input transcription.txt --output /path/to/a
 ```
 
 This will create:
+
 - Audio files: `audio_000.wav`, `audio_001.wav`, etc.
 - `timestamp.txt` in the format expected by `offline_client.py`
 

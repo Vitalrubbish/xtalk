@@ -21,6 +21,7 @@ ai_end+2.5:This will be sent 2.5 seconds after AI finishes.
 ```
 
 其中 `<时间戳>` 可以是：
+
 - 浮点数：从开始算起的绝对秒数（例如 `0`、`5.0`、`10.5`）
 - `ai_start`：第一个 AI 音频块开始播放时
 - `ai_end`：AI 响应播放完成时
@@ -39,6 +40,7 @@ python scripts/create_test_case.py --input transcription.txt --output /path/to/a
 ```
 
 这将创建：
+
 - 音频文件：`audio_000.wav`、`audio_001.wav` 等
 - `timestamp.txt` 文件，格式符合 `offline_client.py` 的要求
 

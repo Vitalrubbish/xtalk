@@ -6,19 +6,27 @@ theme:
 plugins:
   - search:
       separator: '[\s\u200b\-]'
+  - i18n:
+      docs_structure: suffix
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: zh
+          name: 简体中文
+          build: true
 extra:
   alternate:
     - name: English
       link: /en/ 
       lang: en
-    - name: Simplified Chinese
+    - name: 简体中文
       link: /zh/
       lang: zh
 nav:
   - Home: 
       - index.md
-      - zh/index.md
   - Tutorial:
       - Testing:
-        - en/tutorial/testing.md
-        - zh/tutorial/testing.md
+        - tutorial/testing.md

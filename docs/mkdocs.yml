@@ -2,6 +2,21 @@ site_name: xtalk
 docs_dir: .
 theme:
   name: material
+  language: en
+plugins:
+  - search:
+      separator: '[\s\u200b\-]'
+extra:
+  alternate:
+    - name: English
+      link: /en/ 
+      lang: en
+    - name: Simplified Chinese
+      link: /zh/
+      lang: zh
 nav:
   - Home: index.md
-  - Testing: testing.md
+  - Tutorial:
+      - Testing:
+        - en/tutorial/testing.md
+        - zh/tutorial/testing.md

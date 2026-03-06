@@ -15,7 +15,9 @@ extra:
       link: /zh/
       lang: zh
 nav:
-  - Home: index.md
+  - Home: 
+      - en/index.md
+      - zh/index.md
   - Tutorial:
       - Testing:
         - en/tutorial/testing.md

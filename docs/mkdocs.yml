@@ -8,20 +8,25 @@ plugins:
       separator: '[\s\u200b\-]'
   - i18n:
       docs_structure: suffix
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
       languages:
         - locale: en
           default: true
           name: English
           build: true
+          site_name: X-Talk Documentation
         - locale: zh
           name: 简体中文
           build: true
+          site_name: X-Talk文档
+          link: /zh/
           nav_translations:
             Home: 首页
             Tutorial: 教程
             Testing: 测试
 nav:
-  - Home: 
-      - index.md
+  - Home: index.md
   - Tutorial:
       - Testing: tutorial/testing.md

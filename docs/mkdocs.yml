@@ -1,8 +1,12 @@
 site_name: xtalk
 docs_dir: .
+repo_url: https://github.com/xcc-zach/xtalk
+repo_name: xcc-zach/xtalk
 theme:
   name: material
   language: en
+  icon:
+    repo: fontawesome/brands/github
 extra:
   alternate:
     - name: English
@@ -33,8 +37,10 @@ plugins:
           nav_translations:
             Home: 首页
             Tutorial: 教程
+            Quickstart: 快速开始
             Testing: 测试
 nav:
   - Home: index.md
+  - Quickstart: quickstart.md
   - Tutorial:
       - Testing: tutorial/testing.md

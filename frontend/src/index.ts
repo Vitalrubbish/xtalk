@@ -669,7 +669,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
             startHeartbeat();
         });
 
-        ws.addEventListener('close', (event) => {
+        ws.addEventListener('close', () => {
             // Only show the notice when the disconnect was unexpected
             if (!suppressNextCloseLog) {
                 modelLog('Websocket Lost connection.');
@@ -1148,22 +1148,10 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
 //   With pure_frontend=true the frontend skips VAD/enhancer and keeps streaming raw audio frames.
 function createConversation(websocketURL = null, opts: any = null) {
     const PURE_FRONTEND = opts?.pureFrontend ?? false;
-    // Helper vars
-    let lastClientVadStartTs: null = null;
-    let waitingFirstUpdateResp = false;
-    let finishASRTs = null;
-    // Track assistant cumulative text and the "interruption baseline" length
-    // - assistantFullText: backend-provided full text (grows with update_resp)
-    // - assistantBaseLen: when interrupted by Info, record the displayed length
-    //   Later assistant messages show fullText.slice(assistantBaseLen)
-    let assistantFullText = '';
-    let assistantBaseLen = 0;
-    let currentAssistantTurnId = 0;
-    let currentUserTurnId = 0;
-    // State
+
     const ASSISTANT = 'assistant';
     const USER = 'user';
-    // Initialize latency metrics
+
     const createDefaultLatencyState = () => ({
         network: 0,
         asr: 0,
@@ -1271,8 +1259,20 @@ function createConversation(websocketURL = null, opts: any = null) {
         const prev = rawState.latency || createDefaultLatencyState();
         state.latency = { ...prev, ...(partial || {}) };
     }
-    // Handle incoming JSON from server
+
     let audioSession: { markTTSStreamState: any; pauseTTSPlayback: any; stopAllPlayback: any; resumeTTSPlayback: any; pendTTSStreamFinished: any; initWebSocket: any; stopStreaming: any; startStreaming: any; closeWebSocket: any; changeVoice: any; changeTTSSpeed: any; changeTTSModel: any; changeLLMModel: any; setMicMuted: any; onNewAudioOutput: any; isMicMuted?: () => boolean; isWebSocketOpen?: boolean | null; setTTSPlaybackRate?: (rate: any) => void; } | null = null;
+
+    // Track assistant cumulative text and the "interruption baseline" length
+    // - assistantFullText: backend-provided full text (grows with update_resp)
+    // - assistantBaseLen: when interrupted by Info, record the displayed length
+    //   Later assistant messages show fullText.slice(assistantBaseLen)
+    let assistantFullText = '';
+    let assistantBaseLen = 0;
+    let currentAssistantTurnId = 0;
+    let currentUserTurnId = 0;
+
+    let lastClientVadStartTs: null = null;
+
     function onIncomingJson(json: { action: any; data: any; position?: any; }) {
         const normalizeDisplayText = (s: string) => {
             // Convert literal \"\n\" to real newlines while keeping actual newlines
@@ -1463,10 +1463,6 @@ function createConversation(websocketURL = null, opts: any = null) {
                 }
                 const targetTurn = incomingTurn || currentUserTurnId || 0;
                 updateMessageByTurnOrLast({ role: USER, content: json.data.text, turnId: targetTurn });
-                // Backend pushes latency_metrics after the first TTSStarted event
-                // Frontend only resets the displayed metrics
-                finishASRTs = null;
-                waitingFirstUpdateResp = false;
                 break;
             }
             case 'latency_metrics': {

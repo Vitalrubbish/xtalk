@@ -1215,7 +1215,7 @@ function createConversation(websocketURL = null, opts: any = null) {
         latestCaption: '',
         latestRetrieval: '',
         micMuted: false,
-        currentSpeakerId: null,
+        currentSpeakerId: null as string | null,
     };
     function appendMessage({ role, content, turnId = 0 }: { role: string; content: string; turnId?: number }) {
         rawState.messages.push({ role, content, turnId });
@@ -1284,13 +1284,13 @@ function createConversation(websocketURL = null, opts: any = null) {
         const messages = rawState.messages;
         if (messages.length > 0 && messages[messages.length - 1].role === USER) {
             messages.pop();
-            onChangeCallback({ ...rawState });
+            onChangeCallback!({ ...rawState });
         }
     }
-    let onChangeCallback: ((arg0: { queued: boolean; queuePosition: null; latency: { network: number; asr: number; llmFirstToken: number; llmSentence: number; ttsFirstChunk: number; }; messages: any[]; streaming: boolean; loading: boolean; streamState: string; currentVoiceName: null; currentVoicePath: null; currentSessionId: null; latestThought: string; latestCaption: string; latestRetrieval: string; micMuted: boolean; currentSpeakerId: null; }) => void) | null = null;
+    let onChangeCallback: ((arg0: typeof rawState) => void) | null = null;
     const state = new Proxy(rawState, {
-        set(target, prop, value) {
-            target[prop] = value;
+        set(target, prop: any, value) {
+            (target as any)[prop] = value;
             if (onChangeCallback) onChangeCallback({ ...target });
             return true;
         }
@@ -1307,7 +1307,7 @@ function createConversation(websocketURL = null, opts: any = null) {
             if (typeof s !== 'string') return '';
             return s.replace(/\\n/g, '\n');
         };
-        const resolveTurnId = (payload: { turn_id: any; data: { turn_id: any; }; }) => {
+        const resolveTurnId = (payload: any) => {
             const v = Number(payload?.turn_id ?? payload?.data?.turn_id ?? 0);
             return Number.isFinite(v) ? v : 0;
         };
@@ -1600,12 +1600,7 @@ function createConversation(websocketURL = null, opts: any = null) {
             }
         }
     }
-    function subscribe(cb: (arg0: {
-        queued: boolean; queuePosition: null;
-        // Detailed latency metrics (ms)
-        latency: { network: number; asr: number; llmFirstToken: number; llmSentence: number; ttsFirstChunk: number; }; messages: never[]; streaming: boolean; loading: boolean; streamState: string; // 'idle' | 'listening' | 'processing' | 'speaking'
-        currentVoiceName: null; currentVoicePath: null; currentSessionId: null; latestThought: string; latestCaption: string; latestRetrieval: string; micMuted: boolean; currentSpeakerId: null;
-    }) => void) {
+    function subscribe(cb: (arg0: typeof rawState) => void) {
         onChangeCallback = cb;
         cb({ ...rawState });
     }

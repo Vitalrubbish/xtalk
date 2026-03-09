@@ -1,5 +1,5 @@
 import fastEnhancerOnnxUrl from "../models/fastenhancer_s.onnx";
-import vadProcessorUrl from "./vad-processor.worklet.js";
+import vadProcessorUrl from "../worklets/vad-processor.worklet.js";
 // Create low-level audio/WebSocket session.
 //
 // This file now includes on-demand ORT/VAD loading logic:
@@ -11,12 +11,20 @@ import vadProcessorUrl from "./vad-processor.worklet.js";
 // ------------------------------
 // ORT/VAD Loader (lazy load)
 // ------------------------------
-let __ensureOrtVadPromise = null;
+let __ensureOrtVadPromise: Promise<void> | null = null;
 /**
  * Ensure onnxruntime-web and @ricky0123/vad-web are loaded.
  * - Use ORT 1.17.0 on iOS devices and 1.22.0 elsewhere to match the old HTML injection logic.
  * - Multiple calls only trigger one network fetch.
  */
+declare global {
+    interface Window {
+        ort?: any;
+        vad?: any;
+        __ortVersion?: string;
+        webkitAudioContext?: typeof AudioContext;
+    }
+}
 async function ensureOrtVad() {
     // Exit early when already loaded
     if (window.ort && window.vad) return;
@@ -31,7 +39,7 @@ async function ensureOrtVad() {
     // Remember the version so downstream code can reuse it for wasm paths
     try { window.__ortVersion = ver; } catch (_) { }
 
-    const inject = (src) => new Promise((resolve, reject) => {
+    const inject = (src: string) => new Promise<void>((resolve, reject) => {
         const s = document.createElement('script');
         s.src = src;
         s.onload = () => resolve();
@@ -59,7 +67,11 @@ async function ensureOrtVad() {
 // The second argument accepts an options object:
 // - Objects may include { pureFrontend?: bool, pure_frontend?: bool }
 //   pureFrontend = true enables "pure front-end mode": skip VAD/enhancer and only capture+forward raw audio.
-function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
+interface AudioSessionOptions {
+    pureFrontend?: boolean;
+    ttsSampleRate?: number;
+}
+function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action: string; data: any; }): void; }, websocketURL = null, opts: AudioSessionOptions | null = null) {
     const scriptUrl = new URL(import.meta.url);
     if (typeof onIncomingJson !== 'function') {
         throw new Error('onIncomingJson must be a function');
@@ -67,21 +79,21 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     const pureFrontend = opts?.pureFrontend ?? false;
     // Server PCM sample rate
     const TTS_SAMPLE_RATE = opts?.ttsSampleRate ?? 48000;
-    let ws = null;
+    let ws: WebSocket | null = null;
     // Whether to suppress the "Lost connection" notice on the next WS close (one-shot)
     let suppressNextCloseLog = false;
-    let vad = null; // In pure front-end mode this encapsulates the raw mic capture lifecycle
+    let vad: { stop: any; setMuted: any; stream?: MediaStream; audioContext?: AudioContext; sourceNode?: MediaStreamAudioSourceNode; workletNode?: AudioWorkletNode; frameProcessor?: any; } | null = null; // In pure front-end mode this encapsulates the raw mic capture lifecycle
     const AudioContext = window.AudioContext || window.webkitAudioContext;
-    let audioCtx = null;
-    let newAudioOutputCallback = null;
-    function onNewAudioOutput(cb) {
+    let audioCtx: AudioContext | null = null;
+    let newAudioOutputCallback: ((arg0: any, arg1: any) => any) | null = null;
+    function onNewAudioOutput(cb: any) {
         newAudioOutputCallback = cb;
     }
-    const playingSources = [];
+    const playingSources: any[] = [];
     // Frontend TTS playback rate (local playback only, server synthesis unaffected), default 1.0x
     // The UI adjusts via convo.changeTTSSpeed(x); recommended range [0.5, 1.5]
     let ttsPlaybackRate = 1.0;
-    const audioQueue = [];
+    const audioQueue: any[] = [];
     let streaming = false;
     let pendingTTSStreamFinished = false;
     // Whether mic input is muted (no capture/report)
@@ -89,13 +101,13 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
 
     // Simple frontend log forwarding so model-related logs appear as conversation messages
     // Note: log entries use English for easier debugging and search
-    const modelLog = (msg) => {
+    const modelLog = (msg: string) => {
         try { onIncomingJson && onIncomingJson({ action: 'client_log', data: msg }); } catch (_) { }
     };
 
     // Heartbeat management
-    let heartbeatInterval = null;
-    let heartbeatTimeout = null;
+    let heartbeatInterval: number | null | undefined = null;
+    let heartbeatTimeout: number | null | undefined = null;
     let missedHeartbeats = 0;
     const HEARTBEAT_INTERVAL_MS = 15000;
     const HEARTBEAT_TIMEOUT_MS = 10000;
@@ -104,7 +116,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     // Clock synchronization
     let pingTimestamp = 0; // Timestamp when ping was sent
     let clockOffset = null; // Clock offset (ms): client_time - server_time
-    let clockSyncSamples = []; // Clock offset samples
+    let clockSyncSamples: number[] = []; // Clock offset samples
     const MAX_CLOCK_SYNC_SAMPLES = 5; // Keep the latest 5 samples 
 
     // TTS stream flags
@@ -133,7 +145,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     }
 
     // Use a stateless linear resampler per chunk
-    function resampleChunkPCM(src, fromRate, toRate) {
+    function resampleChunkPCM(src: string | any[] | Float32Array<ArrayBuffer>, fromRate: number, toRate: number) {
         if (!src || src.length === 0) return src || new Float32Array(0);
         if (fromRate === toRate) return src;
         const outLen = Math.max(1, Math.round(src.length * toRate / fromRate));
@@ -152,15 +164,15 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     }
 
     // Poll timer for "wait for next chunk" when active
-    let playPollTimer = null;
+    let playPollTimer: number | null | undefined = null;
 
     // Unified send helpers
-    function sendJson(obj) {
+    function sendJson(obj: { action: string; timestamp?: number; client_send_ts?: number; server_recv_ts?: number; client_recv_ts?: number; voice_name?: any; speed?: any; model_type?: any; config?: {}; model_name?: any; base_url?: string; api_key?: string; extra_body?: null; reason?: string; }) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             try { ws.send(JSON.stringify(obj)); } catch (_e) { }
         }
     }
-    function sendPCM(int16) {
+    function sendPCM(int16: Int16Array<any>) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             try { ws.send(int16.buffer); } catch (_e) { }
         }
@@ -206,7 +218,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         console.log('[Heartbeat] Stopped heartbeat mechanism');
     }
 
-    function onPongReceived(pongData) {
+    function onPongReceived(pongData: { server_recv_timestamp: any; server_timestamp: any; }) {
         if (heartbeatTimeout) {
             clearTimeout(heartbeatTimeout);
             heartbeatTimeout = null;
@@ -284,7 +296,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
             throw new Error('VAD library not available after ensureOrtVad(). Check network/CDN access.');
         }
 
-        function sendFrame(frame) {
+        function sendFrame(frame: string | any[]) {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const int16 = new Int16Array(frame.length);
             for (let i = 0; i < frame.length; i++) {
@@ -305,15 +317,15 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         // Optional fast enhancer state (falls back to passthrough on failure)
         let useEnhancer = false;
         // Default enhancer function: passthrough
-        let enhanceSpeech = async (audioFrame) => audioFrame; // No enhancement on failure
+        let enhanceSpeech = async (audioFrame: any) => audioFrame; // No enhancement on failure
 
         // Variables needed when the enhancer is enabled so reset/cleanup can access them
         let ENHANCER_HOP_SIZE = 256;
         let ENHANCER_N_FFT = 512;
-        let enhancerSession = null;
-        let enhancerCache = null;
-        let enhancerInputBuffer = [];
-        let enhancerOutputBuffer = [];
+        let enhancerSession: { run: (arg0: { wav_in: any; }) => any; outputNames: any; } | null = null;
+        let enhancerCache: object | null = null;
+        let enhancerInputBuffer: any[] = [];
+        let enhancerOutputBuffer: any[] = [];
         let isFirstEnhancerFrame = true;
         let enhancementErrorNotified = false; // Only notify the session once about enhancer errors
 
@@ -443,7 +455,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         let lastEnhancedFrame = null;
 
         // VAD model process function (with enhancement)
-        const modelProcess = async (frame) => {
+        const modelProcess = async (frame: any) => {
             // Step 1: Enhance audio using FastEnhancer
             const enhancedFrame = await enhanceSpeech(frame);
 
@@ -472,7 +484,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
 
                 for (const cacheName of Object.keys(enhancerCache)) {
                     const shape = enhancerCache[cacheName].dims;
-                    const zeros = new Float32Array(shape.reduce((a, b) => a * b, 1)).fill(0);
+                    const zeros = new Float32Array(shape.reduce((a: number, b: number) => a * b, 1)).fill(0);
                     enhancerCache[cacheName] = new ort.Tensor('float32', zeros, shape);
                 }
             }
@@ -499,7 +511,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         );
 
         // Handle frame processor events
-        const handleFrameProcessorEvent = (ev) => {
+        const handleFrameProcessorEvent = (ev: { msg: any; frame: any; probs: { notSpeech: any; }; }) => {
             switch (ev.msg) {
                 case window.vad.Message.FrameProcessed:
                     const frame = ev.frame; // Original frame from input
@@ -574,7 +586,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         });
 
         // Queue for frame processing to avoid dropping frames
-        const frameQueue = [];
+        const frameQueue: any[] = [];
         let isProcessingQueue = false;
 
         // Process frames from queue sequentially
@@ -621,7 +633,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
             workletNode,
             frameProcessor,
             // Mute toggle: pause/resume VAD and discard frames while muted
-            setMuted(flag) {
+            setMuted(flag: boolean) {
                 micMuted = !!flag;
             },
             async stop() {
@@ -643,7 +655,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         // But skip onnxruntime/vad-web entirely and stream frames continuously without boundaries.
         const frameSamples = 512; // Match VAD frame size so the backend buffer stays aligned
 
-        function sendFrame(frame) {
+        function sendFrame(frame: string | any[]) {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             const int16 = new Int16Array(frame.length);
             for (let i = 0; i < frame.length; i++) {
@@ -693,7 +705,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
             audioContext,
             sourceNode,
             workletNode,
-            setMuted(flag) { micMuted = !!flag; },
+            setMuted(flag: boolean) { micMuted = !!flag; },
             async stop() {
                 try { workletNode.disconnect(); } catch (_) { }
                 try { sourceNode.disconnect(); } catch (_) { }
@@ -832,7 +844,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         }
     }
 
-    function handleIncomingData(event) {
+    function handleIncomingData(event: { data: string; }) {
         if (typeof event.data === 'string') {
             try {
                 const json_data = JSON.parse(event.data);
@@ -1043,7 +1055,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     }
 
     // Change reference voice by name
-    function changeVoice(voiceName) {
+    function changeVoice(voiceName: any) {
         sendJson({
             action: "change_voice",
             voice_name: voiceName,
@@ -1052,7 +1064,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     }
 
     // Change TTS speed
-    function changeTTSSpeed(speed) {
+    function changeTTSSpeed(speed: any) {
         sendJson({
             action: "change_tts_speed",
             speed: speed,
@@ -1061,7 +1073,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     }
 
     // Switch TTS model (IndexTTS / IndexTTS2)
-    function changeTTSModel(modelType, config = {}) {
+    function changeTTSModel(modelType: any, config = {}) {
         sendJson({
             action: "change_tts_model",
             model_type: modelType,
@@ -1071,7 +1083,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     }
 
     // Switch LLM model/base_url configuration (ChatOpenAI style)
-    function changeLLMModel(modelName, baseUrl = '', apiKey = '', extraBody = null) {
+    function changeLLMModel(modelName: any, baseUrl = '', apiKey = '', extraBody = null) {
         sendJson({
             action: "change_llm_model",
             model_name: modelName,
@@ -1083,7 +1095,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
     }
 
     // TTS state flags
-    function markTTSStreamState(state) {
+    function markTTSStreamState(state: string) {
         switch (state) {
             case 'active':
             case 'start':
@@ -1126,7 +1138,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         markTTSStreamState,
         pendTTSStreamFinished,
         // Toggle mic mute
-        setMicMuted(flag) {
+        setMicMuted(flag: any) {
             micMuted = !!flag;
             try { vad && vad.setMuted && vad.setMuted(micMuted); } catch (_) { }
             // Tell the backend to end the current segment while muted
@@ -1144,7 +1156,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
         },
         onNewAudioOutput,
         // Set the local-only TTS playback rate
-        setTTSPlaybackRate(rate) {
+        setTTSPlaybackRate(rate: any) {
             const r = Number(rate);
             if (!Number.isNaN(r) && r > 0) {
                 // Clamp to a reasonable range to avoid poor UX
@@ -1161,7 +1173,7 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
 function createConversation(websocketURL = null, opts = null) {
     const PURE_FRONTEND = opts?.pureFrontend ?? false;
     // Helper vars
-    let lastClientVadStartTs = null;
+    let lastClientVadStartTs: null = null;
     let waitingFirstUpdateResp = false;
     let finishASRTs = null;
     // Track assistant cumulative text and the "interruption baseline" length
@@ -1271,7 +1283,7 @@ function createConversation(websocketURL = null, opts = null) {
             onChangeCallback({ ...rawState });
         }
     }
-    let onChangeCallback = null;
+    let onChangeCallback: ((arg0: { queued: boolean; queuePosition: null; latency: { network: number; asr: number; llmFirstToken: number; llmSentence: number; ttsFirstChunk: number; }; messages: never[] | never[]; streaming: boolean; loading: boolean; streamState: string; currentVoiceName: null; currentVoicePath: null; currentSessionId: null; latestThought: string; latestCaption: string; latestRetrieval: string; micMuted: boolean; currentSpeakerId: null; }) => void) | null = null;
     const state = new Proxy(rawState, {
         set(target, prop, value) {
             target[prop] = value;
@@ -1279,19 +1291,19 @@ function createConversation(websocketURL = null, opts = null) {
             return true;
         }
     });
-    function updateLatencyState(partial) {
+    function updateLatencyState(partial: { network: number; asr: number; llmFirstToken: number; llmSentence: number; ttsFirstChunk: number; }) {
         const prev = rawState.latency || createDefaultLatencyState();
         state.latency = { ...prev, ...(partial || {}) };
     }
     // Handle incoming JSON from server
-    let audioSession = null;
-    function onIncomingJson(json) {
-        const normalizeDisplayText = (s) => {
+    let audioSession: { markTTSStreamState: any; pauseTTSPlayback: any; stopAllPlayback: any; resumeTTSPlayback: any; pendTTSStreamFinished: any; initWebSocket: any; stopStreaming: any; startStreaming: any; closeWebSocket: any; changeVoice: any; changeTTSSpeed: any; changeTTSModel: any; changeLLMModel: any; setMicMuted: any; onNewAudioOutput: any; isMicMuted?: () => boolean; isWebSocketOpen?: boolean | null; setTTSPlaybackRate?: (rate: any) => void; } | null = null;
+    function onIncomingJson(json: { action: any; data: any; position?: any; }) {
+        const normalizeDisplayText = (s: string) => {
             // Convert literal \"\n\" to real newlines while keeping actual newlines
             if (typeof s !== 'string') return '';
             return s.replace(/\\n/g, '\n');
         };
-        const resolveTurnId = (payload) => {
+        const resolveTurnId = (payload: { turn_id: any; data: { turn_id: any; }; }) => {
             const v = Number(payload?.turn_id ?? payload?.data?.turn_id ?? 0);
             return Number.isFinite(v) ? v : 0;
         };
@@ -1523,7 +1535,7 @@ function createConversation(websocketURL = null, opts = null) {
     audioSession.initWebSocket();
     state.loading = false;
 
-    async function uploadFile(file) {
+    async function uploadFile(file: string | Blob) {
         if (!file) return;
         const sid = state.currentSessionId;
         if (!sid) {
@@ -1584,7 +1596,12 @@ function createConversation(websocketURL = null, opts = null) {
             }
         }
     }
-    function subscribe(cb) {
+    function subscribe(cb: (arg0: {
+        queued: boolean; queuePosition: null;
+        // Detailed latency metrics (ms)
+        latency: { network: number; asr: number; llmFirstToken: number; llmSentence: number; ttsFirstChunk: number; }; messages: never[]; streaming: boolean; loading: boolean; streamState: string; // 'idle' | 'listening' | 'processing' | 'speaking'
+        currentVoiceName: null; currentVoicePath: null; currentSessionId: null; latestThought: string; latestCaption: string; latestRetrieval: string; micMuted: boolean; currentSpeakerId: null;
+    }) => void) {
         onChangeCallback = cb;
         cb({ ...rawState });
     }
@@ -1629,25 +1646,25 @@ function createConversation(websocketURL = null, opts = null) {
         resetConversationState();
     }
 
-    function changeVoice(voiceName) {
+    function changeVoice(voiceName: any) {
         if (audioSession) {
             audioSession.changeVoice(voiceName);
         }
     }
 
-    function changeTTSSpeed(speed) {
+    function changeTTSSpeed(speed: any) {
         if (audioSession) {
             audioSession.changeTTSSpeed(speed);
         }
     }
 
-    function changeTTSModel(modelType, config = {}) {
+    function changeTTSModel(modelType: any, config = {}) {
         if (audioSession && audioSession.changeTTSModel) {
             audioSession.changeTTSModel(modelType, config);
         }
     }
 
-    function changeLLMModel(modelName, baseUrl = '', apiKey = '') {
+    function changeLLMModel(modelName: any, baseUrl = '', apiKey = '') {
         if (audioSession && audioSession.changeLLMModel) {
             audioSession.changeLLMModel(modelName, baseUrl, apiKey);
         }

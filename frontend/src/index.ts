@@ -254,7 +254,8 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
                 clockOffset = offset;
             }
 
-            console.log(`[Clock Sync] RTT: ${rtt.toFixed(1)}ms, Offset: ${clockOffset.toFixed(1)}ms (samples: ${clockSyncSamples.length})`);
+            if (clockOffset)
+                console.log(`[Clock Sync] RTT: ${rtt.toFixed(1)}ms, Offset: ${clockOffset.toFixed(1)}ms (samples: ${clockSyncSamples.length})`);
 
             // Notify the backend about these clock sync samples
             sendJson({
@@ -322,8 +323,8 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
         // Variables needed when the enhancer is enabled so reset/cleanup can access them
         let ENHANCER_HOP_SIZE = 256;
         let ENHANCER_N_FFT = 512;
-        let enhancerSession: { run: (arg0: { wav_in: any; }) => any; outputNames: any; } | null = null;
-        let enhancerCache: object | null = null;
+        let enhancerSession: { run: (arg0: Record<string, any>) => any; outputNames: any; } | null = null;
+        let enhancerCache: Record<string, any> | null = null;
         let enhancerInputBuffer: any[] = [];
         let enhancerOutputBuffer: any[] = [];
         let isFirstEnhancerFrame = true;
@@ -368,6 +369,9 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
             useEnhancer = true;
 
             // Speech enhancement function (adapted from the Python version)
+            // Capture non-null references for use inside the closure
+            const session = enhancerSession!;
+            const cache = enhancerCache as Record<string, any>;
             enhanceSpeech = async (audioFrame) => {
                 try {
                     // Push into the input buffer
@@ -384,21 +388,21 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
                         const wavIn = new ort.Tensor('float32', chunkArray, [1, ENHANCER_HOP_SIZE]);
 
                         // Build inputs including cache
-                        const inputs = { wav_in: wavIn };
-                        for (const inputName of Object.keys(enhancerCache)) {
-                            inputs[inputName] = enhancerCache[inputName];
+                        const inputs: Record<string, any> = { wav_in: wavIn };
+                        for (const inputName of Object.keys(cache)) {
+                            inputs[inputName] = cache[inputName];
                         }
 
                         // Run inference
-                        const outputs = await enhancerSession.run(inputs);
+                        const outputs = await session.run(inputs);
 
                         // First output is the enhanced waveform; the rest update caches
-                        const outputNames = enhancerSession.outputNames;
+                        const outputNames = session.outputNames;
                         const enhancedChunk = outputs[outputNames[0]].data;
 
                         for (let i = 1; i < outputNames.length; i++) {
                             const cacheName = `cache_in_${i - 1}`;
-                            enhancerCache[cacheName] = outputs[outputNames[i]];
+                            cache[cacheName] = outputs[outputNames[i]];
                         }
 
                         // Write into the output buffer
@@ -790,8 +794,8 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
 
     function resumeTTSPlayback() {
         ensureAudioCtx();
-        if (audioCtx.state === 'suspended') {
-            audioCtx.resume().then(() => {
+        if (audioCtx!.state === 'suspended') {
+            audioCtx!.resume().then(() => {
                 if (playingSources.length === 0 && audioQueue.length > 0) {
                     playNextAudio();
                 } else if (playingSources.length === 0 && audioQueue.length === 0) {
@@ -844,7 +848,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
         }
     }
 
-    function handleIncomingData(event: { data: string; }) {
+    function handleIncomingData(event: { data: any; }) {
         if (typeof event.data === 'string') {
             try {
                 const json_data = JSON.parse(event.data);
@@ -884,7 +888,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
             if (int16.length === 0) return;
 
             const float32 = new Float32Array(int16.length);
-            for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
+            for (let i = 0; i < int16.length; i++) float32[i] = int16[i]! / 32768;
 
             ensureAudioCtx();
             const targetRate = audioCtx ? audioCtx.sampleRate : LOCAL_SAMPLE_RATE;
@@ -899,7 +903,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
     // Serial playback with seamless audio scheduling
     function playNextAudio() {
         // Do not start when AudioContext is paused
-        if (audioCtx && audioCtx.state === 'suspended') return;
+        if (!audioCtx || audioCtx.state === 'suspended') return;
 
         if (audioQueue.length === 0) {
             if (ttsStreamFinished) return;
@@ -990,10 +994,10 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
             }
         };
 
-        src.onerror = () => {
-            const idx = playingSources.indexOf(src);
-            if (idx !== -1) playingSources.splice(idx, 1);
-        };
+        // src.onerror = () => {
+        //     const idx = playingSources.indexOf(src);
+        //     if (idx !== -1) playingSources.splice(idx, 1);
+        // };
 
         playingSources.push(src);
 
@@ -1170,7 +1174,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
 // Signature:
 // - createConversation({ pure_frontend?: bool, pureFrontend?: bool })
 //   With pure_frontend=true the frontend skips VAD/enhancer and keeps streaming raw audio frames.
-function createConversation(websocketURL = null, opts = null) {
+function createConversation(websocketURL = null, opts: any = null) {
     const PURE_FRONTEND = opts?.pureFrontend ?? false;
     // Helper vars
     let lastClientVadStartTs: null = null;
@@ -1200,24 +1204,24 @@ function createConversation(websocketURL = null, opts = null) {
         queuePosition: null,
         // Detailed latency metrics (ms)
         latency: createDefaultLatencyState(),
-        messages: [],
+        messages: [] as any,
         streaming: false,
         loading: false,
         streamState: 'idle', // 'idle' | 'listening' | 'processing' | 'speaking'
         currentVoiceName: null,
         currentVoicePath: null,
-        currentSessionId: null,
+        currentSessionId: null as string | null,
         latestThought: '',
         latestCaption: '',
         latestRetrieval: '',
         micMuted: false,
         currentSpeakerId: null,
     };
-    function appendMessage({ role, content, turnId = 0 }) {
+    function appendMessage({ role, content, turnId = 0 }: { role: string; content: string; turnId?: number }) {
         rawState.messages.push({ role, content, turnId });
         onChangeCallback && onChangeCallback({ ...rawState });
     }
-    function updateMessageByTurnOrLast({ role, content, turnId = 0 }) {
+    function updateMessageByTurnOrLast({ role, content, turnId = 0 }: { role: string; content: string; turnId?: number }) {
         const messages = rawState.messages || (rawState.messages = []);
         const t = Number(turnId || 0);
 
@@ -1256,7 +1260,7 @@ function createConversation(websocketURL = null, opts = null) {
 
         // role === USER
         const asstIdx = messages.findIndex(
-            (m) => m?.role === ASSISTANT && Number(m.turnId || 0) === t
+            (m: any) => m?.role === ASSISTANT && Number(m.turnId || 0) === t
         );
 
         if (asstIdx !== -1) {
@@ -1283,7 +1287,7 @@ function createConversation(websocketURL = null, opts = null) {
             onChangeCallback({ ...rawState });
         }
     }
-    let onChangeCallback: ((arg0: { queued: boolean; queuePosition: null; latency: { network: number; asr: number; llmFirstToken: number; llmSentence: number; ttsFirstChunk: number; }; messages: never[] | never[]; streaming: boolean; loading: boolean; streamState: string; currentVoiceName: null; currentVoicePath: null; currentSessionId: null; latestThought: string; latestCaption: string; latestRetrieval: string; micMuted: boolean; currentSpeakerId: null; }) => void) | null = null;
+    let onChangeCallback: ((arg0: { queued: boolean; queuePosition: null; latency: { network: number; asr: number; llmFirstToken: number; llmSentence: number; ttsFirstChunk: number; }; messages: any[]; streaming: boolean; loading: boolean; streamState: string; currentVoiceName: null; currentVoicePath: null; currentSessionId: null; latestThought: string; latestCaption: string; latestRetrieval: string; micMuted: boolean; currentSpeakerId: null; }) => void) | null = null;
     const state = new Proxy(rawState, {
         set(target, prop, value) {
             target[prop] = value;
@@ -1393,12 +1397,12 @@ function createConversation(websocketURL = null, opts = null) {
                 break;
             case 'start_tts':
                 // Only mark the backend TTS stream as active; wait for actual audio playback before switching to speaking.
-                audioSession.markTTSStreamState('active');
+                audioSession!.markTTSStreamState('active');
                 break;
             case 'pause_tts': {
                 // Pure front-end mode: when the backend asks to pause TTS, simulate the local interruption start,
                 // Run the same local logic as window.vad.Message.SpeechStart without sending JSON.
-                try { audioSession.pauseTTSPlayback(); } catch (_) { }
+                try { audioSession!.pauseTTSPlayback(); } catch (_) { }
                 if (PURE_FRONTEND) {
                     const nowTs = Date.now();
                     // Trigger the same frontend state update as VADSpeechStart (no server call)
@@ -1407,18 +1411,18 @@ function createConversation(websocketURL = null, opts = null) {
                 break;
             }
             case 'stop_tts':
-                audioSession.stopAllPlayback();
+                audioSession!.stopAllPlayback();
                 break;
             case 'resume_tts':
                 removeLastUserMessage();
                 state.streamState = 'speaking';
                 // When resuming, check if there is audio left to play
                 // If nothing is queued and no source is playing, return to idle
-                audioSession.resumeTTSPlayback();
+                audioSession!.resumeTTSPlayback();
                 // Note: resumeTTSPlayback triggers playback and onended handles the state changes
                 break;
             case 'tts_finished':
-                audioSession.pendTTSStreamFinished();
+                audioSession!.pendTTSStreamFinished();
                 break;
             case 'update_resp': {
                 // Backend now computes synthesis latency and pushes it via latency_metrics
@@ -1573,7 +1577,7 @@ function createConversation(websocketURL = null, opts = null) {
         }
 
         if (state.streaming) {
-            await audioSession.stopStreaming();
+            await audioSession!.stopStreaming();
             state.streaming = false;
             state.streamState = 'idle';
             // When stopping, also clear assistant tracking to avoid truncating the next turn
@@ -1584,7 +1588,7 @@ function createConversation(websocketURL = null, opts = null) {
         } else {
             state.loading = true;
             try {
-                await audioSession.startStreaming();
+                await audioSession!.startStreaming();
                 state.streaming = true;
                 if (PURE_FRONTEND) {
                     // Pure front-end mode: without VAD start/end events treat it as "listening" by default,
@@ -1631,13 +1635,13 @@ function createConversation(websocketURL = null, opts = null) {
     async function restart() {
         try {
             if (state.streaming) {
-                await audioSession.stopStreaming();
+                await audioSession!.stopStreaming();
                 state.streaming = false;
             }
         } catch (_e) { }
-        try { audioSession.stopAllPlayback(); } catch (_e) { }
-        try { audioSession.closeWebSocket(); } catch (_e) { }
-        try { audioSession.initWebSocket(); } catch (_e) { }
+        try { audioSession!.stopAllPlayback(); } catch (_e) { }
+        try { audioSession!.closeWebSocket(); } catch (_e) { }
+        try { audioSession!.initWebSocket(); } catch (_e) { }
 
         resetConversationState();
     }

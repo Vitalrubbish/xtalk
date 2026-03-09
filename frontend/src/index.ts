@@ -8,10 +8,6 @@ import vadProcessorUrl from "../worklets/vad-processor.worklet.js";
 //   to make sure window.ort and window.vad are available;
 // - Pure front-end mode (pure_frontend) skips loading to avoid extra payload and requests.
 
-// ------------------------------
-// ORT/VAD Loader (lazy load)
-// ------------------------------
-let __ensureOrtVadPromise: Promise<void> | null = null;
 /**
  * Ensure onnxruntime-web and @ricky0123/vad-web are loaded.
  * - Use ORT 1.17.0 on iOS devices and 1.22.0 elsewhere to match the old HTML injection logic.
@@ -25,45 +21,6 @@ declare global {
         webkitAudioContext?: typeof AudioContext;
     }
 }
-async function ensureOrtVad() {
-    // Exit early when already loaded
-    if (window.ort && window.vad) return;
-    // TODO: remove this redundant logic
-    if (__ensureOrtVadPromise) {
-        await __ensureOrtVadPromise; return;
-    }
-
-    // Pick ORT version by UA (only iOS stays on 1.17.0)
-    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const ver = isIOS ? '1.17.0' : '1.22.0';
-    // Remember the version so downstream code can reuse it for wasm paths
-    try { window.__ortVersion = ver; } catch (_) { }
-
-    const inject = (src: string) => new Promise<void>((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = src;
-        s.onload = () => resolve();
-        s.onerror = (e) => reject(e);
-        document.head.appendChild(s);
-    });
-
-    __ensureOrtVadPromise = (async () => {
-        if (!window.ort) {
-            await inject(`https://cdn.jsdelivr.net/npm/onnxruntime-web@${ver}/dist/ort.js`);
-        }
-        if (!window.vad) {
-            await inject('https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/bundle.min.js');
-        }
-    })();
-
-    try {
-        await __ensureOrtVadPromise;
-    } finally {
-        // Release the reference so failures do not block retries; success returns immediately next time
-        __ensureOrtVadPromise = null;
-    }
-}
-
 // The second argument accepts an options object:
 // - Objects may include { pureFrontend?: bool, pure_frontend?: bool }
 //   pureFrontend = true enables "pure front-end mode": skip VAD/enhancer and only capture+forward raw audio.
@@ -72,32 +29,9 @@ interface AudioSessionOptions {
     ttsSampleRate?: number;
 }
 function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action: string; data: any; }): void; }, websocketURL = null, opts: AudioSessionOptions | null = null) {
-    const scriptUrl = new URL(import.meta.url);
-    if (typeof onIncomingJson !== 'function') {
-        throw new Error('onIncomingJson must be a function');
-    }
+    // --- Core configuration ---
     const pureFrontend = opts?.pureFrontend ?? false;
-    // Server PCM sample rate
-    const TTS_SAMPLE_RATE = opts?.ttsSampleRate ?? 48000;
-    let ws: WebSocket | null = null;
-    // Whether to suppress the "Lost connection" notice on the next WS close (one-shot)
-    let suppressNextCloseLog = false;
-    let vad: { stop: any; setMuted: any; stream?: MediaStream; audioContext?: AudioContext; sourceNode?: MediaStreamAudioSourceNode; workletNode?: AudioWorkletNode; frameProcessor?: any; } | null = null; // In pure front-end mode this encapsulates the raw mic capture lifecycle
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    let audioCtx: AudioContext | null = null;
-    let newAudioOutputCallback: ((arg0: any, arg1: any) => any) | null = null;
-    function onNewAudioOutput(cb: any) {
-        newAudioOutputCallback = cb;
-    }
-    const playingSources: any[] = [];
-    // Frontend TTS playback rate (local playback only, server synthesis unaffected), default 1.0x
-    // The UI adjusts via convo.changeTTSSpeed(x); recommended range [0.5, 1.5]
-    let ttsPlaybackRate = 1.0;
-    const audioQueue: any[] = [];
-    let streaming = false;
-    let pendingTTSStreamFinished = false;
-    // Whether mic input is muted (no capture/report)
-    let micMuted = false;
+    const TTS_SAMPLE_RATE = opts?.ttsSampleRate ?? 48000; // Server PCM sample rate
 
     // Simple frontend log forwarding so model-related logs appear as conversation messages
     // Note: log entries use English for easier debugging and search
@@ -105,68 +39,11 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
         try { onIncomingJson && onIncomingJson({ action: 'client_log', data: msg }); } catch (_) { }
     };
 
-    // Heartbeat management
-    let heartbeatInterval: number | null | undefined = null;
-    let heartbeatTimeout: number | null | undefined = null;
-    let missedHeartbeats = 0;
-    const HEARTBEAT_INTERVAL_MS = 15000;
-    const HEARTBEAT_TIMEOUT_MS = 10000;
-    const MAX_MISSED_HEARTBEATS = 3;
+    // --- WebSocket state ---
+    let ws: WebSocket | null = null;
+    // Whether to suppress the "Lost connection" notice on the next WS close (one-shot)
+    let suppressNextCloseLog = false;
 
-    // Clock synchronization
-    let pingTimestamp = 0; // Timestamp when ping was sent
-    let clockOffset = null; // Clock offset (ms): client_time - server_time
-    let clockSyncSamples: number[] = []; // Clock offset samples
-    const MAX_CLOCK_SYNC_SAMPLES = 5; // Keep the latest 5 samples 
-
-    // TTS stream flags
-    let ttsStreamActive = false;
-    let ttsStreamFinished = false;
-
-    let nextScheduledTime = 0;
-    // ===========================================
-
-    // Audio context local sample rate
-    const LOCAL_SAMPLE_RATE = 44100;
-
-    // VAD params
-    const NEGATIVE_SPEECH_THRESHOLD = 0.2;
-    const NEGATIVE_FRAMES_BEFORE_END = 50;
-
-    // AudioContext helper and streaming resampler state
-    function ensureAudioCtx() {
-        if (!audioCtx) {
-            try {
-                audioCtx = new AudioContext({ sampleRate: LOCAL_SAMPLE_RATE });
-            } catch (_e) {
-                audioCtx = new AudioContext();
-            }
-        }
-    }
-
-    // Use a stateless linear resampler per chunk
-    function resampleChunkPCM(src: string | any[] | Float32Array<ArrayBuffer>, fromRate: number, toRate: number) {
-        if (!src || src.length === 0) return src || new Float32Array(0);
-        if (fromRate === toRate) return src;
-        const outLen = Math.max(1, Math.round(src.length * toRate / fromRate));
-        const out = new Float32Array(outLen);
-        const ratio = fromRate / toRate; // input samples per output sample
-        for (let j = 0; j < outLen; j++) {
-            const pos = j * ratio;
-            const i = Math.floor(pos);
-            const frac = pos - i;
-            const s0 = src[i] ?? 0;
-            const i1 = i + 1 < src.length ? i + 1 : i;
-            const s1 = src[i1] ?? s0;
-            out[j] = s0 + (s1 - s0) * frac;
-        }
-        return out;
-    }
-
-    // Poll timer for "wait for next chunk" when active
-    let playPollTimer: number | null | undefined = null;
-
-    // Unified send helpers
     function sendJson(obj: { action: string; timestamp?: number; client_send_ts?: number; server_recv_ts?: number; client_recv_ts?: number; voice_name?: any; speed?: any; model_type?: any; config?: {}; model_name?: any; base_url?: string; api_key?: string; extra_body?: null; reason?: string; }) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             try { ws.send(JSON.stringify(obj)); } catch (_e) { }
@@ -178,7 +55,16 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
         }
     }
 
-    // Heartbeat functions
+    // --- Heartbeat management ---
+    let heartbeatInterval: number | null | undefined = null;
+    let heartbeatTimeout: number | null | undefined = null;
+    let missedHeartbeats = 0;
+    const HEARTBEAT_INTERVAL_MS = 15000;
+    const HEARTBEAT_TIMEOUT_MS = 10000;
+    const MAX_MISSED_HEARTBEATS = 3;
+    // Clock synchronization
+    let pingTimestamp = 0; // Timestamp when ping was sent
+    let clockSyncSamples: number[] = []; // Clock offset samples
     function startHeartbeat() {
         stopHeartbeat();
         missedHeartbeats = 0;
@@ -229,6 +115,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
         // Use server_recv_timestamp (server received ping) for more accurate NTP sync
         const serverRecvTs = pongData && (pongData.server_recv_timestamp || pongData.server_timestamp);
         if (serverRecvTs && pingTimestamp > 0) {
+            const MAX_CLOCK_SYNC_SAMPLES = 5; // Keep the latest 5 samples
             const clientRecvTs = Date.now(); // Client receives pong
             const clientSendTs = pingTimestamp; // Client sent ping
 
@@ -247,9 +134,10 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
             }
 
             // Use the median to stabilize the offset
+            let clockOffset: number;
             if (clockSyncSamples.length >= 3) {
                 const sorted = [...clockSyncSamples].sort((a, b) => a - b);
-                clockOffset = sorted[Math.floor(sorted.length / 2)];
+                clockOffset = sorted[Math.floor(sorted.length / 2)]!;
             } else {
                 clockOffset = offset;
             }
@@ -284,10 +172,44 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
     }
 
 
+    // --- VAD / Mic capture ---
+    let vad: { stop: any; setMuted: any; stream?: MediaStream; audioContext?: AudioContext; sourceNode?: MediaStreamAudioSourceNode; workletNode?: AudioWorkletNode; frameProcessor?: any; } | null = null;
+    // Whether mic input is muted (no capture/report)
+    let micMuted = false;
+    let streaming = false;
+
+    async function ensureOrtVad() {
+        // Exit early when already loaded
+        if (window.ort && window.vad) return;
+
+        // Pick ORT version by UA (only iOS stays on 1.17.0)
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const ver = isIOS ? '1.17.0' : '1.22.0';
+        // Remember the version so downstream code can reuse it for wasm paths
+        try { window.__ortVersion = ver; } catch (_) { }
+
+        const inject = (src: string) => new Promise<void>((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = src;
+            s.onload = () => resolve();
+            s.onerror = (e) => reject(e);
+            document.head.appendChild(s);
+        });
+
+        if (!window.ort) {
+            await inject(`https://cdn.jsdelivr.net/npm/onnxruntime-web@${ver}/dist/ort.js`);
+        }
+        if (!window.vad) {
+            await inject('https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/bundle.min.js');
+        }
+    }
+
     // Init Silero VAD manually (default mode)
     async function initVAD() {
-        // Lazily load ORT/VAD (moved here from HTML)
         await ensureOrtVad();
+        // VAD params
+        const NEGATIVE_SPEECH_THRESHOLD = 0.2;
+        const NEGATIVE_FRAMES_BEFORE_END = 50;
         // Counter for consecutive non-speech frames (enabled at SpeechStart, disabled/reset after triggering)
         let negEndCounterEnabled = false;
         let negEndCounter = 0;
@@ -681,8 +603,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
 
         // Audio context keeps the processing graph silent to avoid playback
         const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        await audioContext.audioWorklet.addModule(new URL("./vad-processor.js", scriptUrl).toString()
-        );
+        await audioContext.audioWorklet.addModule(vadProcessorUrl);
         const sourceNode = audioContext.createMediaStreamSource(stream);
         const workletNode = new AudioWorkletNode(audioContext, 'vad-processor', {
             processorOptions: { targetSampleRate: 16000, targetFrameSize: frameSamples }
@@ -732,7 +653,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
             ws = null;
         }
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-
+        const scriptUrl = new URL(import.meta.url);
         const wsPath = new URL('../../ws', scriptUrl);
 
         wsPath.protocol = wsProtocol;
@@ -765,6 +686,56 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
         ws.addEventListener('message', (event) => {
             onMessage(event);
         });
+    }
+
+    // --- Audio playback ---
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    let audioCtx: AudioContext | null = null;
+    const LOCAL_SAMPLE_RATE = 44100;
+    let newAudioOutputCallback: ((arg0: any, arg1: any) => any) | null = null;
+    function onNewAudioOutput(cb: any) {
+        newAudioOutputCallback = cb;
+    }
+    const playingSources: any[] = [];
+    // Frontend TTS playback rate (local playback only, server synthesis unaffected), default 1.0x
+    // The UI adjusts via convo.changeTTSSpeed(x); recommended range [0.5, 1.5]
+    let ttsPlaybackRate = 1.0;
+    const audioQueue: any[] = [];
+    let nextScheduledTime = 0;
+    let playPollTimer: number | null | undefined = null;
+
+    // TTS stream flags
+    let ttsStreamActive = false;
+    let ttsStreamFinished = false;
+    let pendingTTSStreamFinished = false;
+
+    function ensureAudioCtx() {
+        if (!audioCtx) {
+            try {
+                audioCtx = new AudioContext({ sampleRate: LOCAL_SAMPLE_RATE });
+            } catch (_e) {
+                audioCtx = new AudioContext();
+            }
+        }
+    }
+
+    // Use a stateless linear resampler per chunk
+    function resampleChunkPCM(src: string | any[] | Float32Array<ArrayBuffer>, fromRate: number, toRate: number) {
+        if (!src || src.length === 0) return src || new Float32Array(0);
+        if (fromRate === toRate) return src;
+        const outLen = Math.max(1, Math.round(src.length * toRate / fromRate));
+        const out = new Float32Array(outLen);
+        const ratio = fromRate / toRate; // input samples per output sample
+        for (let j = 0; j < outLen; j++) {
+            const pos = j * ratio;
+            const i = Math.floor(pos);
+            const frac = pos - i;
+            const s0 = src[i] ?? 0;
+            const i1 = i + 1 < src.length ? i + 1 : i;
+            const s1 = src[i1] ?? s0;
+            out[j] = s0 + (s1 - s0) * frac;
+        }
+        return out;
     }
 
     function enableAllPlayback() {
@@ -1010,6 +981,7 @@ function createAudioSession(onIncomingJson: { (json: any): void; (arg0: { action
         }
     }
 
+    // --- Streaming control ---
     // Start capture with auto VAD mode (default) or run raw capture in pure front-end mode
     async function startStreaming() {
         if (streaming) return;
@@ -1428,7 +1400,6 @@ function createConversation(websocketURL = null, opts: any = null) {
                 // Backend now computes synthesis latency and pushes it via latency_metrics
                 // We no longer compute it from the first update_resp
                 const fullText = normalizeDisplayText(json.data.text || '');
-                const last = rawState.messages[rawState.messages.length - 1];
                 const incomingTurn = resolveTurnId(json);
                 const targetTurn = incomingTurn || currentAssistantTurnId || 0;
                 if (incomingTurn && incomingTurn !== currentAssistantTurnId) {
@@ -1451,7 +1422,6 @@ function createConversation(websocketURL = null, opts: any = null) {
             }
             case 'finish_resp': {
                 const fullText = normalizeDisplayText(json.data.text || '');
-                const last = rawState.messages[rawState.messages.length - 1];
                 const incomingTurn = resolveTurnId(json);
                 const targetTurn = incomingTurn || currentAssistantTurnId || 0;
                 if (incomingTurn && incomingTurn !== currentAssistantTurnId) {
@@ -1476,7 +1446,6 @@ function createConversation(websocketURL = null, opts: any = null) {
             }
             case 'update_asr': {
                 if (lastClientVadStartTs) {
-                    const now = Date.now();
                     lastClientVadStartTs = null;
                 }
                 const incomingTurn = resolveTurnId(json);

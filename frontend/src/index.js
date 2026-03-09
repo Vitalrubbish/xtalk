@@ -1105,7 +1105,6 @@ function createAudioSession(onIncomingJson, websocketURL = null, opts = null) {
             case 'idle':
                 ttsStreamActive = false;
                 ttsStreamFinished = false;
-                pendingChunkIndex = null;
                 break;
             default:
                 break;

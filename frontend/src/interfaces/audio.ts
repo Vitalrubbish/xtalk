@@ -6,7 +6,7 @@ interface IInputAudioSession {
     get muted(): boolean;
     set muted(value: boolean);
 
-    onFrame(pcm_chunk_int16: ArrayBuffer): void;
+    onFrame?(pcm_chunk_int16: ArrayBuffer): void;
 }
 
 interface IOutputAudioSession {

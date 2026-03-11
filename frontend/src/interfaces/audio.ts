@@ -1,18 +1,32 @@
-export type { IInputAudioSession, IOutputAudioSession };
+export { IInputAudioSession, IOutputAudioSession };
 
-interface IInputAudioSession {
-    start(): Promise<void>;
-    stop(): Promise<void>;
-    get muted(): boolean;
-    set muted(value: boolean);
+abstract class IInputAudioSession {
+    abstract start(): Promise<void>;
+    abstract stop(): Promise<void>;
+    abstract get muted(): boolean;
+    abstract set muted(value: boolean);
 
-    onFrame?(pcm_chunk_int16: ArrayBuffer): void;
+    onFrame(pcm_chunk_int16: ArrayBuffer) {
+
+    };
+    /**
+     * Used only when VAD enabled
+     */
+    onSpeechStart() {
+
+    };
+    /**
+     * Used only when VAD enabled
+     */
+    onSpeechEnd() {
+
+    };
 }
 
-interface IOutputAudioSession {
-    push_audio(pcm_chunk_int16: ArrayBuffer): void;
-    pause(): Promise<void>;
-    resume(): Promise<void>;
-    start(): Promise<void>;
-    stop(): Promise<void>;
+abstract class IOutputAudioSession {
+    abstract push_audio(pcm_chunk_int16: ArrayBuffer): void;
+    abstract pause(): Promise<void>;
+    abstract resume(): Promise<void>;
+    abstract start(): Promise<void>;
+    abstract stop(): Promise<void>;
 }

@@ -6,6 +6,13 @@ interface Window {
     ort?: any
     vad?: any
 }
+interface WebInputAudioSessionCore {
+    audioContext: AudioContext;
+    sourceNode: MediaStreamAudioSourceNode;
+    framePreprocessNode: AudioWorkletNode;
+    silentGainNode: GainNode;
+    inputStream: MediaStream;
+}
 class WebInputAudioSession extends IInputAudioSession {
     readonly VAD_PARAMS = {
         vadFrameSamples: 512,
@@ -19,13 +26,16 @@ class WebInputAudioSession extends IInputAudioSession {
             submitUserSpeechOnPause: false
         }
     }
-    private audioContext: AudioContext | null = null;
     private _muted = false;
+    private session: WebInputAudioSessionCore | null = null;
     constructor(private sampleRate: number = 16000) {
         super()
     }
     async start(): Promise<void> {
-        this.audioContext = new window.AudioContext({ sampleRate: this.sampleRate })
+        if (this.session !== null) {
+            throw new Error('Session already started');
+        }
+        const audioContext = new window.AudioContext({ sampleRate: this.sampleRate })
         // Prepare input stream
         const inputStream = await navigator.mediaDevices.getUserMedia({
             audio: {
@@ -35,7 +45,7 @@ class WebInputAudioSession extends IInputAudioSession {
                 noiseSuppression: false
             }
         });
-        const sourceNode = this.audioContext.createMediaStreamSource(inputStream);
+        const sourceNode = audioContext.createMediaStreamSource(inputStream);
         // Prepare frame processor
         // VAD states
         const vadURL = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/silero_vad_v5.onnx';
@@ -50,8 +60,8 @@ class WebInputAudioSession extends IInputAudioSession {
         }
 
         await this.ensureModelsEnv();
-        await this.audioContext.audioWorklet.addModule(vadProcessorUrl);
-        const framePreprocessNode = new AudioWorkletNode(this.audioContext, 'vad-processor', {
+        await audioContext.audioWorklet.addModule(vadProcessorUrl);
+        const framePreprocessNode = new AudioWorkletNode(audioContext, 'vad-processor', {
             processorOptions: {
                 targetSampleRate: this.sampleRate,
                 targetFrameSize: this.VAD_PARAMS.vadFrameSamples
@@ -140,17 +150,32 @@ class WebInputAudioSession extends IInputAudioSession {
             }
         }
         // Connect nodes
-        const silentGainNode = this.audioContext.createGain();
+        const silentGainNode = audioContext.createGain();
         silentGainNode.gain.value = 0;
         sourceNode.connect(framePreprocessNode);
         framePreprocessNode.connect(silentGainNode);
-        silentGainNode.connect(this.audioContext.destination);
+        silentGainNode.connect(audioContext.destination);
 
         // Start processing
         frameProcessor.resume();
+
+        // Mount to session to keep alive local vars and for later clean up
+        this.session = {
+            audioContext,
+            sourceNode,
+            framePreprocessNode,
+            silentGainNode,
+            inputStream,
+        }
     }
     async stop(): Promise<void> {
-
+        if (!this.session) return;
+        this.session.sourceNode.disconnect();
+        this.session.framePreprocessNode.disconnect();
+        this.session.silentGainNode.disconnect();
+        this.session.audioContext.close();
+        this.session.inputStream.getAudioTracks().forEach(track => track.stop());
+        this.session = null;
     }
 
     get muted(): boolean {

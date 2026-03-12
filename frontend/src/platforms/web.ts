@@ -1,5 +1,5 @@
-import { IWebSocket } from "../interfaces/websocket";
-import { IInputAudioSession, IOutputAudioSession } from "../interfaces/audio-session";
+import { IWebSocket } from "../bases/websocket";
+import { BaseInputAudioSession, BaseOutputAudioSession } from "../bases/audio-session";
 
 import vadProcessorUrl from "../worklets/vad-processor.worklet.js";
 export { WebWebSocket, WebInputAudioSession, WebOutputAudioSession };
@@ -29,7 +29,7 @@ interface Window {
     ort?: any
     vad?: any
 }
-class WebInputAudioSession extends IInputAudioSession {
+class WebInputAudioSession extends BaseInputAudioSession {
     readonly VAD_PARAMS = {
         vadFrameSamples: 512,
         vadNegativeFramesBeforeEnd: 50,
@@ -48,6 +48,7 @@ class WebInputAudioSession extends IInputAudioSession {
         super()
     }
     async open(): Promise<void> {
+        // TODO: add enhancer
         if (this.audioContext !== null) {
             throw new Error('Session already started');
         }
@@ -216,7 +217,7 @@ class WebInputAudioSession extends IInputAudioSession {
     }
 }
 
-class WebOutputAudioSession extends IOutputAudioSession {
+class WebOutputAudioSession extends BaseOutputAudioSession {
     private audioContext: AudioContext | null = null;
     private audioBufferSources: AudioBufferSourceNode[] = [];
     private audioTimeToPlay = 0;

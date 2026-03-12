@@ -1273,7 +1273,7 @@ function createConversation(websocketURL = null, opts: any = null) {
 
     let lastClientVadStartTs: null = null;
 
-    function onIncomingJson(json: { action: any; data: any; position?: any; }) {
+    function onIncomingJson(json: { action: any; data: any }) {
         const normalizeDisplayText = (s: string) => {
             // Convert literal \"\n\" to real newlines while keeping actual newlines
             if (typeof s !== 'string') return '';
@@ -1285,7 +1285,7 @@ function createConversation(websocketURL = null, opts: any = null) {
         };
         switch (json.action) {
             case 'queue_status': {
-                const position = json.position ?? 1;
+                const position = json.data.position ?? 1;
                 state.loading = true;
                 state.queued = true;
                 const queueMsg = `In queue... Your position: ${position}. Please wait.`;

@@ -1,6 +1,6 @@
-export { IInputAudioSession, IOutputAudioSession };
+export { BaseInputAudioSession, BaseOutputAudioSession };
 
-abstract class IInputAudioSession {
+abstract class BaseInputAudioSession {
     abstract open(): Promise<void>;
     abstract close(): Promise<void>;
     abstract get muted(): boolean;
@@ -32,7 +32,7 @@ abstract class IInputAudioSession {
     };
 }
 
-abstract class IOutputAudioSession {
+abstract class BaseOutputAudioSession {
     abstract open(): Promise<void>;
     abstract close(): Promise<void>;
     abstract pause(): Promise<void>;

@@ -1,9 +1,9 @@
 import { getPlatform, Platform } from "./utils";
-import { IInputAudioSession, IOutputAudioSession } from "./interfaces/audio-session";
+import { BaseInputAudioSession, BaseOutputAudioSession } from "./bases/audio-session";
 import { WebInputAudioSession, WebOutputAudioSession } from "./platforms/web";
 export { createInputAudioSession, createOutputAudioSession };
 
-function createInputAudioSession(sampleRate: number = 16000): IInputAudioSession {
+function createInputAudioSession(sampleRate: number = 16000): BaseInputAudioSession {
     switch (getPlatform()) {
         case Platform.Web:
             return new WebInputAudioSession(sampleRate);
@@ -12,7 +12,7 @@ function createInputAudioSession(sampleRate: number = 16000): IInputAudioSession
     }
 }
 
-function createOutputAudioSession(sampleRate: number = 48000): IOutputAudioSession {
+function createOutputAudioSession(sampleRate: number = 48000): BaseOutputAudioSession {
     switch (getPlatform()) {
         case Platform.Web:
             return new WebOutputAudioSession(sampleRate);

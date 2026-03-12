@@ -84,9 +84,11 @@ class SessionLimiter:
             await websocket.send_json(
                 {
                     "action": "queue_status",
-                    "position": position,
-                    "limit": self.max_sessions,
-                    "active": self.active_sessions,
+                    "data": {
+                        "position": position,
+                        "limit": self.max_sessions,
+                        "active": self.active_sessions,
+                    },
                 }
             )
         except Exception as e:

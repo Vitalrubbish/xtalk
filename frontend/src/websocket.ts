@@ -1,5 +1,5 @@
 import { getPlatform, Platform } from "./utils";
-import { IWebSocket } from "./interfaces/websocket";
+import { IWebSocket } from "./bases/websocket";
 import { WebWebSocket } from "./platforms/web"
 export { createWebSocket };
 

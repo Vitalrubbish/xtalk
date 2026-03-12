@@ -1,5 +1,5 @@
 import { getPlatform, Platform } from "./utils";
-import { IInputAudioSession, IOutputAudioSession } from "./interfaces/audio";
+import { IInputAudioSession, IOutputAudioSession } from "./interfaces/audio-session";
 import { WebInputAudioSession, WebOutputAudioSession } from "./platforms/web";
 export { createInputAudioSession, createOutputAudioSession };
 

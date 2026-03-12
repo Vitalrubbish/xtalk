@@ -1,12 +1,13 @@
 import { IWebSocket } from "../interfaces/websocket";
-import { IInputAudioSession, IOutputAudioSession } from "../interfaces/audio";
+import { IInputAudioSession, IOutputAudioSession } from "../interfaces/audio-session";
 
 import vadProcessorUrl from "../worklets/vad-processor.worklet.js";
 export { WebWebSocket, WebInputAudioSession, WebOutputAudioSession };
 
-class WebWebSocket implements IWebSocket {
+class WebWebSocket extends IWebSocket {
     private instance: WebSocket;
     constructor(url: string | URL, protocols?: string | string[]) {
+        super();
         this.instance = new WebSocket(url, protocols);
         this.instance.binaryType = 'arraybuffer';
     }
@@ -116,7 +117,7 @@ class WebInputAudioSession extends IInputAudioSession {
                         vadHelpers.negEndCounter = nsHigh ? (vadHelpers.negEndCounter + 1) : 0;
                         if (vadHelpers.negEndCounter > this.VAD_PARAMS.vadNegativeFramesBeforeEnd) {
                             // Trigger speech end and disable/reset the counter
-                            this.onSpeechEnd();
+                            this.speechEndCallback();
                             vadHelpers.negEndCounterEnabled = false;
                             vadHelpers.negEndCounter = 0;
                         }
@@ -125,12 +126,12 @@ class WebInputAudioSession extends IInputAudioSession {
 
                     // Only trigger frame event to the backend when not muted
                     if (!this.muted) {
-                        this.onFrame(frame);
+                        this.frameCallback(frame);
                     }
                     break;
 
                 case window.vad.Message.SpeechStart:
-                    this.onSpeechStart();
+                    this.speechStartCallback();
 
                     // Enable the negative sample counter when speech starts
                     vadHelpers.negEndCounterEnabled = true;
@@ -139,7 +140,7 @@ class WebInputAudioSession extends IInputAudioSession {
                     break;
 
                 case window.vad.Message.SpeechEnd:
-                    this.onSpeechEnd();
+                    this.speechEndCallback();
 
                     // Disable/reset the counter when VAD reports speech end
                     vadHelpers.negEndCounterEnabled = false;
@@ -288,13 +289,13 @@ class WebOutputAudioSession extends IOutputAudioSession {
         this.audioTimeToPlay += buffer.duration / source.playbackRate.value;
         // Mount onended
         source.onended = () => {
-            this.onChunkPlayed();
+            this.chunkPlayedCallback();
             // Remove this source from the list
             const idx = this.audioBufferSources.indexOf(source);
             if (idx !== -1) this.audioBufferSources.splice(idx, 1);
             // If this is the last scheduled chunk, trigger onAllChunksPlayed
             if (this.audioBufferSources.length === 0) {
-                this.onAllChunksPlayed();
+                this.allChunksPlayedCallback();
             }
         };
         // Add to buffer sources list

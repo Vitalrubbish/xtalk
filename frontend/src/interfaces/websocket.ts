@@ -8,4 +8,12 @@ abstract class IWebSocket {
     abstract close(): void;
 
     abstract addEventListener(type: WebSocketEventType, listener: (evt?: any) => any): void;
+
+    sendJson(data: any): void {
+        this.send(JSON.stringify(data));
+    }
+
+    sendPCM(pcm_chunk_int16: ArrayBuffer): void {
+        this.send(pcm_chunk_int16);
+    }
 }

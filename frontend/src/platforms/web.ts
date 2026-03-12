@@ -6,13 +6,6 @@ interface Window {
     ort?: any
     vad?: any
 }
-interface WebInputAudioSessionCore {
-    audioContext: AudioContext;
-    sourceNode: MediaStreamAudioSourceNode;
-    framePreprocessNode: AudioWorkletNode;
-    silentGainNode: GainNode;
-    inputStream: MediaStream;
-}
 class WebInputAudioSession extends IInputAudioSession {
     readonly VAD_PARAMS = {
         vadFrameSamples: 512,
@@ -27,12 +20,12 @@ class WebInputAudioSession extends IInputAudioSession {
         }
     }
     private _muted = false;
-    private session: WebInputAudioSessionCore | null = null;
+    private audioContext: AudioContext | null = null;
     constructor(private sampleRate: number = 16000) {
         super()
     }
-    async start(): Promise<void> {
-        if (this.session !== null) {
+    async open(): Promise<void> {
+        if (this.audioContext !== null) {
             throw new Error('Session already started');
         }
         const audioContext = new window.AudioContext({ sampleRate: this.sampleRate })
@@ -160,22 +153,14 @@ class WebInputAudioSession extends IInputAudioSession {
         frameProcessor.resume();
 
         // Mount to session to keep alive local vars and for later clean up
-        this.session = {
-            audioContext,
-            sourceNode,
-            framePreprocessNode,
-            silentGainNode,
-            inputStream,
-        }
+        this.audioContext = audioContext;
     }
-    async stop(): Promise<void> {
-        if (!this.session) return;
-        this.session.sourceNode.disconnect();
-        this.session.framePreprocessNode.disconnect();
-        this.session.silentGainNode.disconnect();
-        this.session.audioContext.close();
-        this.session.inputStream.getAudioTracks().forEach(track => track.stop());
-        this.session = null;
+    async close(): Promise<void> {
+        if (!this.audioContext) {
+            throw new Error('Session not started');
+        };
+        this.audioContext.close();
+        this.audioContext = null;
     }
 
     get muted(): boolean {
@@ -205,5 +190,92 @@ class WebInputAudioSession extends IInputAudioSession {
         if (!window.vad) {
             await inject('https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/bundle.min.js');
         }
+    }
+}
+
+class WebOutputAudioSession extends IOutputAudioSession {
+    private audioContext: AudioContext | null = null;
+    private audioBufferSources: AudioBufferSourceNode[] = [];
+    private audioTimeToPlay = 0;
+    constructor(private sampleRate: number = 48000) {
+        super();
+    }
+    async open(): Promise<void> {
+        if (this.audioContext !== null) {
+            throw new Error('Session already started');
+        }
+        this.audioContext = new window.AudioContext({ sampleRate: this.sampleRate });
+        await this.audioContext.resume();
+    }
+    async close(): Promise<void> {
+        if (!this.audioContext) {
+            throw new Error('Session not started');
+        }
+        await this.stop();
+        this.audioContext.close();
+        this.audioContext = null;
+        this.audioTimeToPlay = 0;
+    }
+    async pause(): Promise<void> {
+        if (!this.audioContext) {
+            throw new Error('Session not started');
+        }
+        if (this.audioContext.state == 'suspended') {
+            throw new Error('Session already paused');
+        }
+        await this.audioContext.suspend();
+    }
+    async resume(): Promise<void> {
+        if (!this.audioContext) {
+            throw new Error('Session not started');
+        }
+        if (this.audioContext.state == 'running') {
+            throw new Error('Session not paused');
+        }
+        await this.audioContext.resume();
+    }
+    async stop(): Promise<void> {
+        await this.audioContext?.suspend();
+        this.audioBufferSources.forEach(source => source.disconnect());
+        this.audioBufferSources.length = 0;
+    }
+    push_audio(pcm_chunk_int16: ArrayBuffer): void {
+        if (!this.audioContext) {
+            throw new Error('Session not started');
+        }
+        const int16 = new Int16Array(pcm_chunk_int16);
+        if (int16.length === 0) return;
+        const float32 = new Float32Array(int16.length);
+        int16.forEach((value, index) => {
+            float32[index] = value / 32768;
+        });
+
+        // Schedule audio play
+        const buffer = this.audioContext.createBuffer(1, float32.length, this.sampleRate);
+        buffer.getChannelData(0).set(float32);
+        const source = this.audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.audioContext.destination);
+        // Schedule time to play
+        const currentTime = this.audioContext.currentTime;
+        if (this.audioTimeToPlay < currentTime) {
+            this.audioTimeToPlay = currentTime;
+        }
+        source.start(this.audioTimeToPlay);
+        // Update time to play for next chunk
+        this.audioTimeToPlay += buffer.duration / source.playbackRate.value;
+        // Mount onended
+        source.onended = () => {
+            this.onChunkPlayed();
+            // Remove this source from the list
+            const idx = this.audioBufferSources.indexOf(source);
+            if (idx !== -1) this.audioBufferSources.splice(idx, 1);
+            // If this is the last scheduled chunk, trigger onAllChunksPlayed
+            if (this.audioBufferSources.length === 0) {
+                this.onAllChunksPlayed();
+            }
+        };
+        // Add to buffer sources list
+        this.audioBufferSources.push(source);
     }
 }

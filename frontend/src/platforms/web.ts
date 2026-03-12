@@ -2,6 +2,7 @@ import { IWebSocket } from "../interfaces/websocket";
 import { IInputAudioSession, IOutputAudioSession } from "../interfaces/audio";
 
 import vadProcessorUrl from "../worklets/vad-processor.worklet.js";
+export { WebWebSocket, WebInputAudioSession, WebOutputAudioSession };
 
 class WebWebSocket implements IWebSocket {
     private instance: WebSocket;

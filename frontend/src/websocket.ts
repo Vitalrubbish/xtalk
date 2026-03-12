@@ -1,0 +1,13 @@
+import { getPlatform, Platform } from "./utils";
+import { IWebSocket } from "./interfaces/websocket";
+import { WebWebSocket } from "./platforms/web"
+export { createWebSocket };
+
+function createWebSocket(url: string | any, protocols?: string | string[]): IWebSocket {
+    switch (getPlatform()) {
+        case Platform.Web:
+            return new WebWebSocket(url, protocols);
+        default:
+            throw new Error("Unknown platform");
+    }
+}

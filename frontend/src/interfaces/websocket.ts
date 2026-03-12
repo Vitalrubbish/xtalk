@@ -1,12 +1,11 @@
-interface IWebSocket {
-    ready(): boolean;
+export { IWebSocket };
+type WebSocketEventType = 'open' | 'message' | 'close' | 'error';
+abstract class IWebSocket {
+    abstract ready(): boolean;
 
-    send(data: string | ArrayBuffer): void;
+    abstract send(data: string | ArrayBuffer): void;
 
-    close(): void;
+    abstract close(): void;
 
-    addEventListener(type: 'open', listener: (evt: Event) => void): void;
-    addEventListener(type: 'message', listener: (evt: MessageEvent) => void): void;
-    addEventListener(type: 'close', listener: (evt: CloseEvent) => void): void;
-    addEventListener(type: 'error', listener: (evt: Event) => void): void;
+    abstract addEventListener(type: WebSocketEventType, listener: (evt?: any) => any): void;
 }

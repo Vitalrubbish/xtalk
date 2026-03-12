@@ -1,6 +1,27 @@
+import { IWebSocket } from "../interfaces/websocket";
 import { IInputAudioSession, IOutputAudioSession } from "../interfaces/audio";
 
 import vadProcessorUrl from "../worklets/vad-processor.worklet.js";
+
+class WebWebSocket implements IWebSocket {
+    private instance: WebSocket;
+    constructor(url: string | URL, protocols?: string | string[]) {
+        this.instance = new WebSocket(url, protocols);
+        this.instance.binaryType = 'arraybuffer';
+    }
+    ready(): boolean {
+        return this.instance.readyState === WebSocket.OPEN;
+    }
+    send(data: string | ArrayBuffer): void {
+        this.instance.send(data);
+    }
+    close(): void {
+        this.instance.close();
+    }
+    addEventListener(type: "open" | "message" | "close" | "error", listener: (evt?: any) => any): void {
+        this.instance.addEventListener(type, listener);
+    }
+}
 
 interface Window {
     ort?: any

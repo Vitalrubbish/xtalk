@@ -1,10 +1,10 @@
-import { IWebSocket } from "../bases/websocket";
+import { BaseWebSocket } from "../bases/websocket";
 import { BaseInputAudioSession, BaseOutputAudioSession } from "../bases/audio-session";
 
 import vadProcessorUrl from "../worklets/vad-processor.worklet.js";
 export { WebWebSocket, WebInputAudioSession, WebOutputAudioSession };
 
-class WebWebSocket extends IWebSocket {
+class WebWebSocket extends BaseWebSocket {
     private instance: WebSocket;
     constructor(url: string | URL, protocols?: string | string[]) {
         super();
@@ -25,9 +25,11 @@ class WebWebSocket extends IWebSocket {
     }
 }
 
-interface Window {
-    ort?: any
-    vad?: any
+declare global {
+    interface Window {
+        ort?: any;
+        vad?: any;
+    }
 }
 class WebInputAudioSession extends BaseInputAudioSession {
     readonly VAD_PARAMS = {
@@ -127,7 +129,13 @@ class WebInputAudioSession extends BaseInputAudioSession {
 
                     // Only trigger frame event to the backend when not muted
                     if (!this.muted) {
-                        this.frameCallback(frame);
+                        // Convert frame to int16 for transmission
+                        const int16 = new Int16Array(frame.length);
+                        for (let i = 0; i < frame.length; i++) {
+                            const s = Math.max(-1, Math.min(1, frame[i]!));
+                            int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                        }
+                        this.frameCallback(int16.buffer);
                     }
                     break;
 
@@ -263,7 +271,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         this.audioBufferSources.forEach(source => source.disconnect());
         this.audioBufferSources.length = 0;
     }
-    push_audio(pcm_chunk_int16: ArrayBuffer): void {
+    pushAudioChunk(pcm_chunk_int16: ArrayBuffer): void {
         if (!this.audioContext) {
             throw new Error('Session not started');
         }

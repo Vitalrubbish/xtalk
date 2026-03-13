@@ -38,7 +38,7 @@ abstract class BaseOutputAudioSession {
     abstract pause(): Promise<void>;
     abstract resume(): Promise<void>;
     abstract stop(): Promise<void>;
-    abstract push_audio(pcm_chunk_int16: ArrayBuffer): void;
+    abstract pushAudioChunk(pcm_chunk_int16: ArrayBuffer): void;
 
     onChunkPlayed(callback: () => void) {
         this.chunkPlayedCallback = callback;

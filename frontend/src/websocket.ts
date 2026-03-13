@@ -1,9 +1,9 @@
 import { getPlatform, Platform } from "./utils";
-import { IWebSocket } from "./bases/websocket";
+import { BaseWebSocket } from "./bases/websocket";
 import { WebWebSocket } from "./platforms/web"
 export { createWebSocket };
 
-function createWebSocket(url: string | any, protocols?: string | string[]): IWebSocket {
+function createWebSocket(url: string | any, protocols?: string | string[]): BaseWebSocket {
     switch (getPlatform()) {
         case Platform.Web:
             return new WebWebSocket(url, protocols);

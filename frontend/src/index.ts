@@ -1,3 +1,3 @@
-import { createConversation } from "./core";
+import { createSession } from "./core";
 
-export { createConversation };
+export { createSession };

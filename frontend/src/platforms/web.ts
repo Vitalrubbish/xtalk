@@ -1,7 +1,7 @@
 import { BaseWebSocket } from "../bases/websocket";
 import { BaseInputAudioSession, BaseOutputAudioSession } from "../bases/audio-session";
 
-import vadProcessorUrl from "../worklets/vad-processor.worklet.js";
+import vadProcessorUrl from "../../worklets/vad-processor.worklet.js";
 export { WebWebSocket, WebInputAudioSession, WebOutputAudioSession };
 
 class WebWebSocket extends BaseWebSocket {
@@ -297,17 +297,17 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         // Mount onstarted
         const msForChunkStart = (this.audioTimeToPlay - currentTime) * 1000;
         if (msForChunkStart <= 0) {
-            this.chunkStartedCallback(int16);
+            this.chunkStartedCallback(int16.buffer);
         } else {
             setTimeout(() => {
-                this.chunkStartedCallback(int16);
+                this.chunkStartedCallback(int16.buffer);
             }, msForChunkStart);
         }
         // Update time to play for next chunk
         this.audioTimeToPlay += buffer.duration / source.playbackRate.value;
         // Mount onended
         source.onended = () => {
-            this.chunkPlayedCallback(int16);
+            this.chunkPlayedCallback(int16.buffer);
             // Remove this source from the list
             const idx = this.audioBufferSources.indexOf(source);
             if (idx !== -1) this.audioBufferSources.splice(idx, 1);

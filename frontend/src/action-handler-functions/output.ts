@@ -1,16 +1,16 @@
 import type { ActionToFunctionMap } from "./types";
 const outputMap: ActionToFunctionMap = {
-    "start_tts": (data, websocket, conversation, outputAudioSession) => {
+    "start_tts": async (data, websocket, conversation, outputAudioSession) => {
         // Leave blank, no use
     },
-    "pause_tts": (data, websocket, conversation, outputAudioSession) => {
-        outputAudioSession.pause();
+    "pause_tts": async (data, websocket, conversation, outputAudioSession) => {
+        await outputAudioSession.pause();
     },
-    "stop_tts": (data, websocket, conversation, outputAudioSession) => {
-        outputAudioSession.stop();
+    "stop_tts": async (data, websocket, conversation, outputAudioSession) => {
+        await outputAudioSession.stop();
     },
-    "resume_tts": (data, websocket, conversation, outputAudioSession) => {
-        outputAudioSession.resume();
+    "resume_tts": async (data, websocket, conversation, outputAudioSession) => {
+        await outputAudioSession.resume();
     },
 };
 

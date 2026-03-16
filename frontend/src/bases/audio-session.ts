@@ -6,28 +6,28 @@ abstract class BaseInputAudioSession {
     abstract get muted(): boolean;
     abstract set muted(value: boolean);
 
-    onFrame(callback: (pcmChunkInt16: ArrayBuffer) => void) {
+    onFrame(callback: (pcmChunkInt16: ArrayBuffer) => void | Promise<void>) {
         this.frameCallback = callback;
     }
-    onSpeechStart(callback: () => void) {
+    onSpeechStart(callback: () => void | Promise<void>) {
         this.speechStartCallback = callback;
     }
-    onSpeechEnd(callback: () => void) {
+    onSpeechEnd(callback: () => void | Promise<void>) {
         this.speechEndCallback = callback;
     }
-    protected frameCallback(_pcmChunkInt16: ArrayBuffer) {
+    protected frameCallback(_pcmChunkInt16: ArrayBuffer): void | Promise<void> {
 
     };
     /**
      * Used only when VAD enabled
      */
-    protected speechStartCallback() {
+    protected speechStartCallback(): void | Promise<void> {
 
     };
     /**
      * Used only when VAD enabled
      */
-    protected speechEndCallback() {
+    protected speechEndCallback(): void | Promise<void> {
 
     };
 }
@@ -40,22 +40,22 @@ abstract class BaseOutputAudioSession {
     abstract stop(): Promise<void>;
     abstract pushAudioChunk(pcmChunkInt16: ArrayBuffer): Promise<void>;
 
-    onChunkStarted(callback: (pcmChunkInt16: ArrayBuffer) => void) {
+    onChunkStarted(callback: (pcmChunkInt16: ArrayBuffer) => void | Promise<void>) {
         this.chunkStartedCallback = callback;
     }
-    onChunkPlayed(callback: (pcmChunkInt16: ArrayBuffer) => void) {
+    onChunkPlayed(callback: (pcmChunkInt16: ArrayBuffer) => void | Promise<void>) {
         this.chunkPlayedCallback = callback;
     }
-    onAllChunksPlayed(callback: () => void) {
+    onAllChunksPlayed(callback: () => void | Promise<void>) {
         this.allChunksPlayedCallback = callback;
     }
-    protected chunkStartedCallback(_pcmChunkInt16: ArrayBuffer) {
+    protected chunkStartedCallback(_pcmChunkInt16: ArrayBuffer): void | Promise<void> {
 
     }
-    protected chunkPlayedCallback(_pcmChunkInt16: ArrayBuffer) {
+    protected chunkPlayedCallback(_pcmChunkInt16: ArrayBuffer): void | Promise<void> {
 
     }
-    protected allChunksPlayedCallback() {
+    protected allChunksPlayedCallback(): void | Promise<void> {
 
     }
 }

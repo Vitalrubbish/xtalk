@@ -29,41 +29,41 @@ function createSession(websocketURL: string | URL, {
         const actionHandler = new ActionHandler();
 
         // Subscribe actions and audio chunks
-        websocket.addEventListener("message", (event: { data: string | ArrayBuffer }) => {
+        websocket.addEventListener("message", async (event: { data: string | ArrayBuffer }) => {
             if (typeof event.data === "string") {
                 const message: { action: string, data: any } = JSON.parse(event.data);
                 try {
-                    actionHandler.handleAction(message.action, message.data, websocket, conversation, outputAudioSession);
+                    await actionHandler.handleAction(message.action, message.data, websocket, conversation, outputAudioSession);
                 } catch (error) {
                     //TODO: Handle unknown action error
                 }
             } else if (event.data instanceof ArrayBuffer) {
-                outputAudioSession.pushAudioChunk(event.data);
+                await outputAudioSession.pushAudioChunk(event.data);
             }
         });
 
         // Bind audio input handling
-        inputAudioSession.onFrame((audioChunk) => {
+        inputAudioSession.onFrame(async (audioChunk) => {
             inputAudioChunkCallback(audioChunk, inputSampleRate);
             websocket.sendAudioChunk(audioChunk);
         });
-        inputAudioSession.onSpeechStart(() => {
-            actionHandler.handleAction("client_speech_start", null, websocket, conversation, outputAudioSession);
+        inputAudioSession.onSpeechStart(async () => {
+            await actionHandler.handleAction("client_speech_start", null, websocket, conversation, outputAudioSession);
         });
-        inputAudioSession.onSpeechEnd(() => {
-            actionHandler.handleAction("client_speech_end", null, websocket, conversation, outputAudioSession);
+        inputAudioSession.onSpeechEnd(async () => {
+            await actionHandler.handleAction("client_speech_end", null, websocket, conversation, outputAudioSession);
         });
 
         // Bind audio output handling
-        outputAudioSession.onChunkStarted((audioChunk) => {
+        outputAudioSession.onChunkStarted(async (audioChunk) => {
             outputAudioChunkCallback(audioChunk, outputSampleRate);
-            actionHandler.handleAction("client_audio_chunk_started", null, websocket, conversation, outputAudioSession);
+            await actionHandler.handleAction("client_audio_chunk_started", null, websocket, conversation, outputAudioSession);
         });
-        outputAudioSession.onChunkPlayed((_audioChunk) => {
-            actionHandler.handleAction("client_audio_chunk_played", null, websocket, conversation, outputAudioSession);
+        outputAudioSession.onChunkPlayed(async (_audioChunk) => {
+            await actionHandler.handleAction("client_audio_chunk_played", null, websocket, conversation, outputAudioSession);
         });
-        outputAudioSession.onAllChunksPlayed(() => {
-            actionHandler.handleAction("client_audio_playback_finished", null, websocket, conversation, outputAudioSession);
+        outputAudioSession.onAllChunksPlayed(async () => {
+            await actionHandler.handleAction("client_audio_playback_finished", null, websocket, conversation, outputAudioSession);
         });
     }
 

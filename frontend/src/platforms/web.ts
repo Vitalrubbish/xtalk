@@ -119,7 +119,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
                         vadHelpers.negEndCounter = nsHigh ? (vadHelpers.negEndCounter + 1) : 0;
                         if (vadHelpers.negEndCounter > this.VAD_PARAMS.vadNegativeFramesBeforeEnd) {
                             // Trigger speech end and disable/reset the counter
-                            this.speechEndCallback();
+                            Promise.resolve(this.speechEndCallback()).catch(() => {});
                             vadHelpers.negEndCounterEnabled = false;
                             vadHelpers.negEndCounter = 0;
                         }
@@ -134,12 +134,12 @@ class WebInputAudioSession extends BaseInputAudioSession {
                             const s = Math.max(-1, Math.min(1, frame[i]!));
                             int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
                         }
-                        this.frameCallback(int16.buffer);
+                        Promise.resolve(this.frameCallback(int16.buffer)).catch(() => {});
                     }
                     break;
 
                 case window.vad.Message.SpeechStart:
-                    this.speechStartCallback();
+                    Promise.resolve(this.speechStartCallback()).catch(() => {});
 
                     // Enable the negative sample counter when speech starts
                     vadHelpers.negEndCounterEnabled = true;
@@ -148,7 +148,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
                     break;
 
                 case window.vad.Message.SpeechEnd:
-                    this.speechEndCallback();
+                    Promise.resolve(this.speechEndCallback()).catch(() => {});
 
                     // Disable/reset the counter when VAD reports speech end
                     vadHelpers.negEndCounterEnabled = false;
@@ -295,13 +295,13 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
 
         // Mount onended callback before starting
         source.onended = () => {
-            this.chunkPlayedCallback(int16.buffer);
+            Promise.resolve(this.chunkPlayedCallback(int16.buffer)).catch(() => {});
             // Remove this source from the list
             const idx = this.audioBufferSources.indexOf(source);
             if (idx !== -1) this.audioBufferSources.splice(idx, 1);
             // If this is the last scheduled chunk, trigger onAllChunksPlayed
             if (this.audioBufferSources.length === 0) {
-                this.allChunksPlayedCallback();
+                Promise.resolve(this.allChunksPlayedCallback()).catch(() => {});
             }
         };
 
@@ -318,10 +318,10 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         // Mount onstarted
         const msForChunkStart = (this.audioTimeToPlay - currentTime) * 1000;
         if (msForChunkStart <= 0) {
-            this.chunkStartedCallback(int16.buffer);
+            Promise.resolve(this.chunkStartedCallback(int16.buffer)).catch(() => {});
         } else {
             setTimeout(() => {
-                this.chunkStartedCallback(int16.buffer);
+                Promise.resolve(this.chunkStartedCallback(int16.buffer)).catch(() => {});
             }, msForChunkStart);
         }
         // Update time to play for next chunk

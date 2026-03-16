@@ -1,6 +1,6 @@
 import type { ActionToFunctionMap } from "./types";
 const sessionMap: ActionToFunctionMap = {
-    "session_info": (data, websocket, conversation, outputAudioSession) => {
+    "session_info": async (data, websocket, conversation, outputAudioSession) => {
         const sid = data.session_id || null;
         conversation.state.currentSessionId = sid;
     },

@@ -14,7 +14,7 @@ function createSession(websocketURL: string | URL, {
     outputSampleRate = 48000,
 }: Partial<SessionConfig> = {
     }) {
-    let conversation: Conversation;
+    const conversation = new Conversation();
     let websocket: ReturnType<typeof createWebSocket>;
     let inputAudioSession: ReturnType<typeof createInputAudioSession>;
     let outputAudioSession: ReturnType<typeof createOutputAudioSession>;
@@ -23,7 +23,6 @@ function createSession(websocketURL: string | URL, {
     let outputAudioChunkCallback: ((pcmChunkInt16: ArrayBuffer, sampleRate: number) => void) = (_chunk, _sr) => { };
 
     function initialize() {
-        conversation = new Conversation();
         websocket = createWebSocket(websocketURL);
         inputAudioSession = createInputAudioSession(inputSampleRate);
         outputAudioSession = createOutputAudioSession(outputSampleRate);

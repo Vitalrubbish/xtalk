@@ -297,17 +297,17 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         // Mount onstarted
         const msForChunkStart = (this.audioTimeToPlay - currentTime) * 1000;
         if (msForChunkStart <= 0) {
-            this.chunkStartedCallback();
-        }else {
+            this.chunkStartedCallback(int16);
+        } else {
             setTimeout(() => {
-                this.chunkStartedCallback();
+                this.chunkStartedCallback(int16);
             }, msForChunkStart);
         }
         // Update time to play for next chunk
         this.audioTimeToPlay += buffer.duration / source.playbackRate.value;
         // Mount onended
         source.onended = () => {
-            this.chunkPlayedCallback();
+            this.chunkPlayedCallback(int16);
             // Remove this source from the list
             const idx = this.audioBufferSources.indexOf(source);
             if (idx !== -1) this.audioBufferSources.splice(idx, 1);

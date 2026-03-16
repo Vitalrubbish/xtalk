@@ -19,6 +19,9 @@ function createSession(websocketURL: string | URL, {
     let inputAudioSession: ReturnType<typeof createInputAudioSession>;
     let outputAudioSession: ReturnType<typeof createOutputAudioSession>;
 
+    let inputAudioChunkCallback: ((pcmChunkInt16: ArrayBuffer, sampleRate: number) => void) = (_chunk, _sr) => { };
+    let outputAudioChunkCallback: ((pcmChunkInt16: ArrayBuffer, sampleRate: number) => void) = (_chunk, _sr) => { };
+
     function initialize() {
         conversation = new Conversation();
         websocket = createWebSocket(websocketURL);
@@ -39,6 +42,7 @@ function createSession(websocketURL: string | URL, {
 
         // Bind audio input handling
         inputAudioSession.onFrame((audioChunk) => {
+            inputAudioChunkCallback(audioChunk, inputSampleRate);
             websocket.sendAudioChunk(audioChunk);
         });
         inputAudioSession.onSpeechStart(() => {
@@ -49,10 +53,11 @@ function createSession(websocketURL: string | URL, {
         });
 
         // Bind audio output handling
-        outputAudioSession.onChunkStarted(() => {
+        outputAudioSession.onChunkStarted((audioChunk) => {
+            outputAudioChunkCallback(audioChunk, outputSampleRate);
             actionHandler.handleAction("client_audio_chunk_started", null, websocket, conversation, outputAudioSession);
         });
-        outputAudioSession.onChunkPlayed(() => {
+        outputAudioSession.onChunkPlayed((_audioChunk) => {
             actionHandler.handleAction("client_audio_chunk_played", null, websocket, conversation, outputAudioSession);
         });
         outputAudioSession.onAllChunksPlayed(() => {
@@ -75,6 +80,12 @@ function createSession(websocketURL: string | URL, {
         },
         onStateChange: (callback: (state: Conversation["state"]) => void) => {
             conversation.onStateChange(callback);
+        },
+        onInputAudioChunk: (callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void) => {
+            inputAudioChunkCallback = callback;
+        },
+        onOutputAudioChunk: (callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void) => {
+            outputAudioChunkCallback = callback;
         },
         get muted() {
             return inputAudioSession.muted;

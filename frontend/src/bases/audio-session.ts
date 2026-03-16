@@ -6,7 +6,7 @@ abstract class BaseInputAudioSession {
     abstract get muted(): boolean;
     abstract set muted(value: boolean);
 
-    onFrame(callback: (pcm_chunk_int16: ArrayBuffer) => void) {
+    onFrame(callback: (pcmChunkInt16: ArrayBuffer) => void) {
         this.frameCallback = callback;
     }
     onSpeechStart(callback: () => void) {
@@ -15,7 +15,7 @@ abstract class BaseInputAudioSession {
     onSpeechEnd(callback: () => void) {
         this.speechEndCallback = callback;
     }
-    protected frameCallback(pcm_chunk_int16: ArrayBuffer) {
+    protected frameCallback(_pcmChunkInt16: ArrayBuffer) {
 
     };
     /**
@@ -38,21 +38,21 @@ abstract class BaseOutputAudioSession {
     abstract pause(): Promise<void>;
     abstract resume(): Promise<void>;
     abstract stop(): Promise<void>;
-    abstract pushAudioChunk(pcm_chunk_int16: ArrayBuffer): void;
+    abstract pushAudioChunk(pcmChunkInt16: ArrayBuffer): void;
 
-    onChunkStarted(callback: () => void) {
+    onChunkStarted(callback: (pcmChunkInt16: ArrayBuffer) => void) {
         this.chunkStartedCallback = callback;
     }
-    onChunkPlayed(callback: () => void) {
+    onChunkPlayed(callback: (pcmChunkInt16: ArrayBuffer) => void) {
         this.chunkPlayedCallback = callback;
     }
     onAllChunksPlayed(callback: () => void) {
         this.allChunksPlayedCallback = callback;
     }
-    protected chunkStartedCallback() {
+    protected chunkStartedCallback(_pcmChunkInt16: ArrayBuffer) {
 
     }
-    protected chunkPlayedCallback() {
+    protected chunkPlayedCallback(_pcmChunkInt16: ArrayBuffer) {
 
     }
     protected allChunksPlayedCallback() {

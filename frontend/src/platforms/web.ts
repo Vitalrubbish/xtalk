@@ -269,6 +269,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         await this.audioContext?.suspend();
         this.audioBufferSources.forEach(source => source.disconnect());
         this.audioBufferSources.length = 0;
+        this.audioTimeToPlay = 0;
     }
     async pushAudioChunk(pcm_chunk_int16: ArrayBuffer): Promise<void> {
         if (!this.audioContext) {

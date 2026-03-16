@@ -287,12 +287,29 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         const source = this.audioContext.createBufferSource();
         source.buffer = buffer;
         source.connect(this.audioContext.destination);
+
+        // Mount onended callback before starting
+        source.onended = () => {
+            this.chunkPlayedCallback(int16.buffer);
+            // Remove this source from the list
+            const idx = this.audioBufferSources.indexOf(source);
+            if (idx !== -1) this.audioBufferSources.splice(idx, 1);
+            // If this is the last scheduled chunk, trigger onAllChunksPlayed
+            if (this.audioBufferSources.length === 0) {
+                this.allChunksPlayedCallback();
+            }
+        };
+
+        // Add to buffer sources list BEFORE starting
+        this.audioBufferSources.push(source);
+
         // Schedule time to play
         const currentTime = this.audioContext.currentTime;
         if (this.audioTimeToPlay < currentTime) {
             this.audioTimeToPlay = currentTime;
         }
         source.start(this.audioTimeToPlay);
+
         // Mount onstarted
         const msForChunkStart = (this.audioTimeToPlay - currentTime) * 1000;
         if (msForChunkStart <= 0) {
@@ -304,18 +321,5 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         }
         // Update time to play for next chunk
         this.audioTimeToPlay += buffer.duration / source.playbackRate.value;
-        // Mount onended
-        source.onended = () => {
-            this.chunkPlayedCallback(int16.buffer);
-            // Remove this source from the list
-            const idx = this.audioBufferSources.indexOf(source);
-            if (idx !== -1) this.audioBufferSources.splice(idx, 1);
-            // If this is the last scheduled chunk, trigger onAllChunksPlayed
-            if (this.audioBufferSources.length === 0) {
-                this.allChunksPlayedCallback();
-            }
-        };
-        // Add to buffer sources list
-        this.audioBufferSources.push(source);
     }
 }

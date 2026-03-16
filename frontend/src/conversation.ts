@@ -14,6 +14,7 @@ class Conversation {
     private _state: ConversationState = defaultConversation();
     private stateChangeCallback: (state: ConversationState) => void = () => { };
     onStateChange(callback: (state: ConversationState) => void): void {
+        callback(this._state);
         this.stateChangeCallback = callback;
     }
     get state(): ConversationState {

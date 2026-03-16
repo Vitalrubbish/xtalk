@@ -270,9 +270,13 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         this.audioBufferSources.forEach(source => source.disconnect());
         this.audioBufferSources.length = 0;
     }
-    pushAudioChunk(pcm_chunk_int16: ArrayBuffer): void {
+    async pushAudioChunk(pcm_chunk_int16: ArrayBuffer): Promise<void> {
         if (!this.audioContext) {
             throw new Error('Session not started');
+        }
+        // Ensure audio context is running
+        if (this.audioContext.state === 'suspended') {
+            await this.audioContext.resume();
         }
         const int16 = new Int16Array(pcm_chunk_int16);
         if (int16.length === 0) return;
@@ -300,7 +304,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
             }
         };
 
-        // Add to buffer sources list BEFORE starting
+        // Add to buffer sources list before starting
         this.audioBufferSources.push(source);
 
         // Schedule time to play

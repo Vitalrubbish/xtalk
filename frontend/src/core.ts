@@ -35,6 +35,7 @@ function createSession(websocketURL: string | URL, {
                 try {
                     actionHandler.handleAction(message.action, message.data, websocket, conversation, outputAudioSession);
                 } catch (error) {
+                    //TODO: Handle unknown action error
                 }
             } else if (event.data instanceof ArrayBuffer) {
                 outputAudioSession.pushAudioChunk(event.data);

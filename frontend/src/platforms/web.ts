@@ -294,6 +294,15 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
             this.audioTimeToPlay = currentTime;
         }
         source.start(this.audioTimeToPlay);
+        // Mount onstarted
+        const msForChunkStart = (this.audioTimeToPlay - currentTime) * 1000;
+        if (msForChunkStart <= 0) {
+            this.chunkStartedCallback();
+        }else {
+            setTimeout(() => {
+                this.chunkStartedCallback();
+            }, msForChunkStart);
+        }
         // Update time to play for next chunk
         this.audioTimeToPlay += buffer.duration / source.playbackRate.value;
         // Mount onended

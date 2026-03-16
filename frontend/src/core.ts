@@ -43,18 +43,23 @@ function createSession(websocketURL: string | URL, {
     });
 
     // Bind audio output handling
+    outputAudioSession.onChunkStarted(() => {
+        actionHandler.handleAction("client_audio_chunk_started", null, websocket, conversation, outputAudioSession);
+    });
     outputAudioSession.onChunkPlayed(() => {
         actionHandler.handleAction("client_audio_chunk_played", null, websocket, conversation, outputAudioSession);
-    })
+    });
     outputAudioSession.onAllChunksPlayed(() => {
         actionHandler.handleAction("client_audio_playback_finished", null, websocket, conversation, outputAudioSession);
+    });
 
-    })
-
+    // Create API for external use
     const session = {
         open: async () => {
             await inputAudioSession.open();
             await outputAudioSession.open();
         }
     }
+
+    return session;
 }

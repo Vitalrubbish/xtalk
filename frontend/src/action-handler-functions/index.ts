@@ -13,4 +13,10 @@ function registerMap(partial_map: ActionToFunctionMap) {
 
 // ------------ Import and register action handler functions here ------------
 import clientMap from "./client";
+import messagesMap from "./messages";
+import outputMap from "./output";
+import sessionMap from "./session";
 registerMap(clientMap);
+registerMap(messagesMap);
+registerMap(outputMap);
+registerMap(sessionMap);

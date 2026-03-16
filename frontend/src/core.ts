@@ -32,8 +32,10 @@ function createSession(websocketURL: string | URL, {
         websocket.addEventListener("message", (event: { data: string | ArrayBuffer }) => {
             if (typeof event.data === "string") {
                 const message: { action: string, data: any } = JSON.parse(event.data);
-                actionHandler.handleAction(message.action, message.data, websocket, conversation, outputAudioSession);
-
+                try {
+                    actionHandler.handleAction(message.action, message.data, websocket, conversation, outputAudioSession);
+                } catch (error) {
+                }
             } else if (event.data instanceof ArrayBuffer) {
                 outputAudioSession.pushAudioChunk(event.data);
             }

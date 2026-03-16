@@ -54,6 +54,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
         if (this.audioContext !== null) {
             throw new Error('Session already started');
         }
+        await this.ensureModelsEnv();
         const audioContext = new window.AudioContext({ sampleRate: this.sampleRate })
         // Prepare input stream
         const inputStream = await navigator.mediaDevices.getUserMedia({
@@ -77,8 +78,6 @@ class WebInputAudioSession extends BaseInputAudioSession {
             negEndCounterEnabled: false,
             negEndCounter: 0
         }
-
-        await this.ensureModelsEnv();
         await audioContext.audioWorklet.addModule(vadProcessorUrl);
         const framePreprocessNode = new AudioWorkletNode(audioContext, 'vad-processor', {
             processorOptions: {

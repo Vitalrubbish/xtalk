@@ -1,12 +1,17 @@
 export { Conversation };
 
-interface ConversationState {
+function defaultConversation(): {
     streamState: "idle" | "listening" | "processing" | "speaking";
-}
-class Conversation {
-    private _state: ConversationState = {
-        streamState: "idle"
+    currentSessionId: string | null;
+} {
+    return {
+        streamState: "idle",
+        currentSessionId: null
     };
+}
+type ConversationState = ReturnType<typeof defaultConversation>;
+class Conversation {
+    private _state: ConversationState = defaultConversation();
     private stateChangeCallback: (state: ConversationState) => void = () => { };
     onStateChange(callback: (state: ConversationState) => void): void {
         this.stateChangeCallback = callback;

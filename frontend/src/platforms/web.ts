@@ -342,7 +342,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         });
         this.audioChunkStartedTimeouts.length = 0;
         this.audioBufferSources.forEach(source => {
-            source.stop();
+            source.onended = null;
             source.disconnect();
         });
         this.audioBufferSources.length = 0;

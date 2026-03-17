@@ -287,6 +287,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
     private audioBufferSources: AudioBufferSourceNode[] = [];
     private audioTimeToPlay = 0;
     private audioChunkStartedTimeouts: ReturnType<typeof createPausableTimeout>[] = [];
+    private audioChunksPaused: ArrayBuffer[] = [];
     constructor(private sampleRate: number = 48000) {
         super();
     }
@@ -329,27 +330,35 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
             timeout.resume();
         });
         await this.audioContext.resume();
+        // Play the paused chunks immediately
+        for (const chunk of this.audioChunksPaused) {
+            await this.pushAudioChunk(chunk);
+        }
+        this.audioChunksPaused.length = 0;
     }
     async stop(): Promise<void> {
         this.audioChunkStartedTimeouts.forEach(timeout => {
             timeout.cancel();
         });
-        this.audioChunkStartedTimeouts = [];
+        this.audioChunkStartedTimeouts.length = 0;
         this.audioBufferSources.forEach(source => {
             source.stop();
             source.disconnect();
         });
         this.audioBufferSources.length = 0;
         this.audioTimeToPlay = 0;
-        await this.audioContext?.suspend();
+        this.audioChunksPaused.length = 0;
+        // DO NOT suspend to avoid pop sounds after restart
+        // await this.audioContext?.suspend();
     }
     async pushAudioChunk(pcm_chunk_int16: ArrayBuffer): Promise<void> {
         if (!this.audioContext) {
             throw new Error('Session not started');
         }
-        // Ensure audio context is running
+        // If suspended, meaning that the session is paused; cache the incoming audio for future
         if (this.audioContext.state === 'suspended') {
-            await this.audioContext.resume();
+            this.audioChunksPaused.push(pcm_chunk_int16);
+            return;
         }
         const int16 = new Int16Array(pcm_chunk_int16);
         if (int16.length === 0) return;

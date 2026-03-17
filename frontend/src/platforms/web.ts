@@ -119,7 +119,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
                         vadHelpers.negEndCounter = nsHigh ? (vadHelpers.negEndCounter + 1) : 0;
                         if (vadHelpers.negEndCounter > this.VAD_PARAMS.vadNegativeFramesBeforeEnd) {
                             // Trigger speech end and disable/reset the counter
-                            Promise.resolve(this.speechEndCallback()).catch(() => { });
+                            this.speechEndCallback()
                             vadHelpers.negEndCounterEnabled = false;
                             vadHelpers.negEndCounter = 0;
                         }
@@ -134,12 +134,12 @@ class WebInputAudioSession extends BaseInputAudioSession {
                             const s = Math.max(-1, Math.min(1, frame[i]!));
                             int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
                         }
-                        Promise.resolve(this.frameCallback(int16.buffer)).catch(() => { });
+                        this.frameCallback(int16.buffer);
                     }
                     break;
 
                 case window.vad.Message.SpeechStart:
-                    Promise.resolve(this.speechStartCallback()).catch(() => { });
+                    this.speechStartCallback();
 
                     // Enable the negative sample counter when speech starts
                     vadHelpers.negEndCounterEnabled = true;
@@ -148,7 +148,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
                     break;
 
                 case window.vad.Message.SpeechEnd:
-                    Promise.resolve(this.speechEndCallback()).catch(() => { });
+                    this.speechEndCallback();
 
                     // Disable/reset the counter when VAD reports speech end
                     vadHelpers.negEndCounterEnabled = false;
@@ -224,10 +224,69 @@ class WebInputAudioSession extends BaseInputAudioSession {
     }
 }
 
+function createPausableTimeout(
+    callback: () => void,
+    delay: number
+): {
+    pause: () => void;
+    resume: () => void;
+    cancel: () => void;
+} {
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let startTime = 0;
+    let remaining = delay;
+    let running = false;
+    let cancelled = false;
+
+    function start(ms: number): void {
+        startTime = Date.now();
+        running = true;
+        timerId = setTimeout(() => {
+            running = false;
+            timerId = null;
+            remaining = 0;
+            if (!cancelled) {
+                callback();
+            }
+        }, ms);
+    }
+
+    function pause(): void {
+        if (!running || timerId === null) return;
+        clearTimeout(timerId);
+        timerId = null;
+        remaining -= Date.now() - startTime;
+        running = false;
+    }
+
+    function resume(): void {
+        if (running || cancelled || remaining <= 0) return;
+        start(remaining);
+    }
+
+    function cancel(): void {
+        if (timerId !== null) {
+            clearTimeout(timerId);
+            timerId = null;
+        }
+        running = false;
+        cancelled = true;
+        remaining = 0;
+    }
+
+    start(delay);
+
+    return {
+        pause,
+        resume,
+        cancel,
+    };
+}
 class WebOutputAudioSession extends BaseOutputAudioSession {
     private audioContext: AudioContext | null = null;
     private audioBufferSources: AudioBufferSourceNode[] = [];
     private audioTimeToPlay = 0;
+    private audioChunkStartedTimeouts: ReturnType<typeof createPausableTimeout>[] = [];
     constructor(private sampleRate: number = 48000) {
         super();
     }
@@ -254,6 +313,9 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         if (this.audioContext.state == 'suspended') {
             throw new Error('Session already paused');
         }
+        this.audioChunkStartedTimeouts.forEach(timeout => {
+            timeout.pause();
+        });
         await this.audioContext.suspend();
     }
     async resume(): Promise<void> {
@@ -263,9 +325,16 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         if (this.audioContext.state == 'running') {
             throw new Error('Session not paused');
         }
+        this.audioChunkStartedTimeouts.forEach(timeout => {
+            timeout.resume();
+        });
         await this.audioContext.resume();
     }
     async stop(): Promise<void> {
+        this.audioChunkStartedTimeouts.forEach(timeout => {
+            timeout.cancel();
+        });
+        this.audioChunkStartedTimeouts = [];
         this.audioBufferSources.forEach(source => {
             source.stop();
             source.disconnect();
@@ -298,13 +367,13 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
 
         // Mount onended callback before starting
         source.onended = () => {
-            Promise.resolve(this.chunkPlayedCallback(int16.buffer)).catch(() => { });
+            this.chunkPlayedCallback(int16.buffer);
             // Remove this source from the list
             const idx = this.audioBufferSources.indexOf(source);
             if (idx !== -1) this.audioBufferSources.splice(idx, 1);
             // If this is the last scheduled chunk, trigger onAllChunksPlayed
             if (this.audioBufferSources.length === 0) {
-                Promise.resolve(this.allChunksPlayedCallback()).catch(() => { });
+                this.allChunksPlayedCallback();
             }
         };
 
@@ -321,11 +390,15 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         // Mount onstarted
         const msForChunkStart = (this.audioTimeToPlay - currentTime) * 1000;
         if (msForChunkStart <= 0) {
-            Promise.resolve(this.chunkStartedCallback(int16.buffer)).catch(() => { });
+            this.chunkStartedCallback(int16.buffer);
         } else {
-            setTimeout(() => {
-                Promise.resolve(this.chunkStartedCallback(int16.buffer)).catch(() => { });
+            const timeout = createPausableTimeout(() => {
+                this.chunkStartedCallback(int16.buffer);
+                // Remove this timeout from the list
+                const idx = this.audioChunkStartedTimeouts.indexOf(timeout);
+                if (idx !== -1) this.audioChunkStartedTimeouts.splice(idx, 1);
             }, msForChunkStart);
+            this.audioChunkStartedTimeouts.push(timeout);
         }
         // Update time to play for next chunk
         this.audioTimeToPlay += buffer.duration / source.playbackRate.value;

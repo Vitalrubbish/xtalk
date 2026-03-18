@@ -11,7 +11,7 @@ const clientOperationMap: ActionToFunctionMap = {
         const file = data.file as Blob;
         const endpoint = data.endpoint as string | URL;
         const formData = new FormData();
-        formData.append("session_id", conversation.state.currentSessionId!);
+        formData.append("session_id", conversation.state.sessionId!);
         formData.append("file", file);
         const resp = await fetch(endpoint, {
             method: "POST",

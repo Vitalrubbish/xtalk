@@ -7,13 +7,19 @@ type Message = {
 }
 function defaultConversation(): {
     streamState: "idle" | "listening" | "processing" | "speaking";
-    currentSessionId: string | null;
+    sessionId: string | null;
     messages: Message[];
+    thought: string;
+    caption: string;
+    retrieval: string;
 } {
     return {
         streamState: "idle",
-        currentSessionId: null,
-        messages: []
+        sessionId: null,
+        messages: [],
+        thought: "",
+        caption: "",
+        retrieval: "",
     };
 }
 type ConversationState = ReturnType<typeof defaultConversation>;

@@ -142,7 +142,7 @@ function stopVisualization() {
 
 session.onStateChange((state) => {
     $streamState.textContent = state.streamState;
-    $sessionId.textContent = state.currentSessionId || '--';
+    $sessionId.textContent = state.sessionId || '--';
     currentStreamState = state.streamState;
 
     $messages.innerHTML = '';

@@ -39,6 +39,12 @@ const $panelRetrieval = document.getElementById('panel-retrieval');
 const $btnToggleThought = document.getElementById('btn-toggle-thought');
 const $btnToggleCaption = document.getElementById('btn-toggle-caption');
 const $btnToggleRetrieval = document.getElementById('btn-toggle-retrieval');
+const $latencyNetwork = document.getElementById('latency-network');
+const $latencyAsr = document.getElementById('latency-asr');
+const $latencyLlmFirst = document.getElementById('latency-llm-first');
+const $latencyLlmSentence = document.getElementById('latency-llm-sentence');
+const $latencyTts = document.getElementById('latency-tts');
+const $latencyE2e = document.getElementById('latency-e2e');
 
 let audioCtx = null;
 let inputAnalyser = null;
@@ -166,6 +172,15 @@ session.onStateChange((state) => {
     $thoughtContent.textContent = state.thought || '';
     $captionContent.textContent = state.caption || '';
     $retrievalContent.textContent = state.retrieval || '';
+
+    const l = state.latency || {};
+    $latencyNetwork.textContent = l.network ?? '--';
+    $latencyAsr.textContent = l.asr ?? '--';
+    $latencyLlmFirst.textContent = l.llmFirstToken ?? '--';
+    $latencyLlmSentence.textContent = l.llmSentence ?? '--';
+    $latencyTts.textContent = l.ttsFirstChunk ?? '--';
+    const e2eParts = [l.network, l.asr, l.llmSentence, l.ttsFirstChunk];
+    $latencyE2e.textContent = e2eParts.every(v => v != null) ? e2eParts.reduce((a, b) => a + b, 0) : '--';
 });
 
 session.onInputAudioChunk((pcmChunkInt16, sampleRate) => {

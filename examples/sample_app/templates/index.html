@@ -36,6 +36,14 @@
         </div>
     </header>
     <main class="container">
+        <div id="latency-bar" class="latency-bar">
+            <span class="latency-item">Network: <span id="latency-network">--</span>ms</span>
+            <span class="latency-item">ASR: <span id="latency-asr">--</span>ms</span>
+            <span class="latency-item">LLM First Token: <span id="latency-llm-first">--</span>ms</span>
+            <span class="latency-item">LLM Sentence: <span id="latency-llm-sentence">--</span>ms</span>
+            <span class="latency-item">TTS First Chunk: <span id="latency-tts">--</span>ms</span>
+            <span class="latency-item latency-e2e">E2E: <span id="latency-e2e">--</span>ms</span>
+        </div>
         <div class="card">
             <canvas id="waveform"></canvas>
         </div>

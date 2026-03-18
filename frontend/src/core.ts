@@ -101,9 +101,6 @@ function createSession(websocketURL: string | URL, {
         async changeVoice(voiceName: string) {
             await actionHandler.handleAction("client_change_voice", { voiceName }, websocket, conversation, outputAudioSession)
         },
-        async changeTTSSpeed(speed: number) {
-            await actionHandler.handleAction("client_change_tts_speed", { speed }, websocket, conversation, outputAudioSession)
-        },
         async uploadFile(file: Blob, endpoint: string | URL = "./api/upload") {
             await actionHandler.handleAction("client_upload_file", { file, endpoint }, websocket, conversation, outputAudioSession);
         }

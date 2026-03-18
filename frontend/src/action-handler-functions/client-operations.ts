@@ -6,12 +6,6 @@ const clientOperationMap: ActionToFunctionMap = {
             voice_name: data.voiceName,
         })
     },
-    "client_change_tts_speed": async (data, websocket, conversation, outputAudioSession) => {
-        websocket.sendJson({
-            action: "change_tts_speed",
-            speed: data.speed,
-        })
-    },
     "client_upload_file": async (data, websocket, conversation, outputAudioSession) => {
         conversation.state.streamState = "processing";
         const file = data.file as Blob;

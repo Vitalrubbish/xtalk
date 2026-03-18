@@ -8,6 +8,13 @@ type Message = {
 function defaultConversation(): {
     streamState: "idle" | "listening" | "processing" | "speaking";
     sessionId: string | null;
+    latency: {
+        network?: number,
+        asr?: number,
+        llmFirstToken?: number,
+        llmSentence?: number,
+        ttsFirstChunk?: number
+    };
     messages: Message[];
     thought: string;
     caption: string;
@@ -16,6 +23,7 @@ function defaultConversation(): {
     return {
         streamState: "idle",
         sessionId: null,
+        latency: {},
         messages: [],
         thought: "",
         caption: "",
@@ -67,6 +75,8 @@ class Conversation {
         // Otherwise, add as new message
         this.state.messages.push(message);
         this.stateChangeCallback(this._state);
-
+    }
+    updateLatency(latency: Conversation["state"]["latency"]) {
+        this.state.latency = { ...latency };
     }
 }

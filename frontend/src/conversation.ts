@@ -1,6 +1,6 @@
 export { Conversation };
 
-interface Message {
+type Message = {
     role: "user" | "assistant" | "info";
     content: string;
     turnId?: number;

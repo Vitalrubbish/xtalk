@@ -15,6 +15,7 @@ function createSession(websocketURL: string | URL, {
 }: Partial<SessionConfig> = {
     }) {
     const conversation = new Conversation();
+    const actionHandler = new ActionHandler();
     let websocket: ReturnType<typeof createWebSocket>;
     let inputAudioSession: ReturnType<typeof createInputAudioSession>;
     let outputAudioSession: ReturnType<typeof createOutputAudioSession>;
@@ -26,7 +27,6 @@ function createSession(websocketURL: string | URL, {
         websocket = createWebSocket(websocketURL);
         inputAudioSession = createInputAudioSession(inputSampleRate);
         outputAudioSession = createOutputAudioSession(outputSampleRate);
-        const actionHandler = new ActionHandler();
 
         // Subscribe actions and audio chunks
         websocket.addEventListener("message", async (event: { data: string | ArrayBuffer }) => {
@@ -83,6 +83,9 @@ function createSession(websocketURL: string | URL, {
         onStateChange: (callback: (state: Conversation["state"]) => void) => {
             conversation.onStateChange(callback);
         },
+        get state() {
+            return conversation.state;
+        },
         onInputAudioChunk: (callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void) => {
             inputAudioChunkCallback = callback;
         },
@@ -94,6 +97,15 @@ function createSession(websocketURL: string | URL, {
         },
         set muted(value: boolean) {
             inputAudioSession.muted = value;
+        },
+        async changeVoice(voiceName: string) {
+            await actionHandler.handleAction("client_change_voice", { voiceName }, websocket, conversation, outputAudioSession)
+        },
+        async changeTTSSpeed(speed: number) {
+            await actionHandler.handleAction("client_change_tts_speed", { speed }, websocket, conversation, outputAudioSession)
+        },
+        async uploadFile(file: Blob, endpoint: string | URL = "./api/upload") {
+            await actionHandler.handleAction("client_upload_file", { file, endpoint }, websocket, conversation, outputAudioSession);
         }
     }
 

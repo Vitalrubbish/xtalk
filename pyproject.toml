@@ -118,6 +118,9 @@ rubberband = [
   "pyrubberband"
 ]
 pyannote = ["pyannote.audio","torchvision"]
+soulx-duplug = [
+  "websocket-client",
+]
 example = [
   "pypdf"
 ]

@@ -2,10 +2,10 @@ import asyncio
 import uuid
 import base64
 import json
-from typing import Optional
+from typing import Optional, Literal
 
 import numpy as np
-import websocket
+import websockets
 
 from ..interfaces import (
     TurnDetector,
@@ -13,8 +13,6 @@ from ..interfaces import (
     TurnDetectionResult,
     TurnDetectionSemantic,
 )
-
-from typing import Literal
 
 _IDLE_RESULT = TurnDetectionResult(
     action=TurnDetectionAction.DO_NOTHING,
@@ -34,17 +32,15 @@ class SoulxDuplug(TurnDetector):
         self._server_url = server_url
         self._client_id = client_id or uuid.uuid4().hex
         self._timeout = timeout
-        self._ws: Optional[websocket.WebSocket] = None
+        self._ws: Optional[websockets.ClientConnection] = None
         self._listening = True
         self._listening_lock = asyncio.Lock()
 
-    def _connect(self) -> None:
-        self._ws = websocket.create_connection(self._server_url)
-        self._ws.settimeout(self._timeout)
+    async def _connect(self) -> None:
+        self._ws = await websockets.connect(self._server_url)
 
-    def _send_audio(self, audio: bytes) -> dict:
+    async def _send_audio(self, audio: bytes) -> dict:
         """Send audio to the server and return the parsed response."""
-        # Convert raw PCM 16-bit mono 16kHz bytes to float32
         pcm = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
         payload = {
             "type": "audio",
@@ -54,14 +50,14 @@ class SoulxDuplug(TurnDetector):
         msg = json.dumps(payload)
 
         try:
-            self._ws.send(msg)
-            response = self._ws.recv()
+            await self._ws.send(msg)
+            response = await asyncio.wait_for(self._ws.recv(), timeout=self._timeout)
             return json.loads(response)
         except Exception:
             # Reconnect on any failure and retry once
-            self._connect()
-            self._ws.send(msg)
-            response = self._ws.recv()
+            await self._connect()
+            await self._ws.send(msg)
+            response = await asyncio.wait_for(self._ws.recv(), timeout=self._timeout)
             return json.loads(response)
 
     def detect(
@@ -82,25 +78,34 @@ class SoulxDuplug(TurnDetector):
             return _IDLE_RESULT
 
         if self._ws is None:
-            self._connect()
+            await self._connect()
 
-        loop = asyncio.get_running_loop()
-        data = await loop.run_in_executor(None, self._send_audio, audio)
+        data = await self._send_audio(audio)
         state_name: Literal["idle", "nonidle", "speak", "blank"] = data.get(
             "state", {}
         ).get("state", "blank")
 
-        if state_name == "speak":
-            return TurnDetectionResult(
-                action=TurnDetectionAction.START_GENERATION,
-                semantic=TurnDetectionSemantic.COMPLETE,
-            )
-        if state_name == "nonidle":
-            return TurnDetectionResult(
-                action=TurnDetectionAction.DO_NOTHING,
-                semantic=TurnDetectionSemantic.INCOMPLETE,
-            )
-        # idle / blank / unknown
+        # Concrete logic
+        async with self._listening_lock:
+            if self._listening:
+                if state_name == "speak":
+                    self._listening = False
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.START_GENERATION,
+                        semantic=TurnDetectionSemantic.COMPLETE,
+                    )
+                if state_name == "nonidle":
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.DO_NOTHING,
+                        semantic=TurnDetectionSemantic.INCOMPLETE,
+                    )
+            else:
+                if state_name == "nonidle":
+                    self._listening = True
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.STOP_SPEAKING,
+                        semantic=TurnDetectionSemantic.INCOMPLETE,
+                    )
         return _IDLE_RESULT
 
     def clone(self) -> "SoulxDuplug":

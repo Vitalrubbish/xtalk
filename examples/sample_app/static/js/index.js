@@ -30,6 +30,15 @@ const $streamState = document.getElementById('stream-state');
 const $sessionId = document.getElementById('session-id');
 const $waveform = document.getElementById('waveform');
 const $messages = document.getElementById('messages');
+const $thoughtContent = document.getElementById('thought-content');
+const $captionContent = document.getElementById('caption-content');
+const $retrievalContent = document.getElementById('retrieval-content');
+const $panelThought = document.getElementById('panel-thought');
+const $panelCaption = document.getElementById('panel-caption');
+const $panelRetrieval = document.getElementById('panel-retrieval');
+const $btnToggleThought = document.getElementById('btn-toggle-thought');
+const $btnToggleCaption = document.getElementById('btn-toggle-caption');
+const $btnToggleRetrieval = document.getElementById('btn-toggle-retrieval');
 
 let audioCtx = null;
 let inputAnalyser = null;
@@ -153,6 +162,10 @@ session.onStateChange((state) => {
         $messages.appendChild(el);
     }
     $messages.scrollTop = $messages.scrollHeight;
+
+    $thoughtContent.textContent = state.thought || '';
+    $captionContent.textContent = state.caption || '';
+    $retrievalContent.textContent = state.retrieval || '';
 });
 
 session.onInputAudioChunk((pcmChunkInt16, sampleRate) => {
@@ -255,6 +268,16 @@ $btnMute.addEventListener('click', () => {
         alert('Failed to toggle mute: ' + (e?.message || e));
     }
 });
+
+function setupToggle(btn, panel) {
+    btn.addEventListener('click', () => {
+        const active = btn.classList.toggle('active');
+        panel.style.display = active ? '' : 'none';
+    });
+}
+setupToggle($btnToggleThought, $panelThought);
+setupToggle($btnToggleCaption, $panelCaption);
+setupToggle($btnToggleRetrieval, $panelRetrieval);
 
 window.addEventListener('resize', () => {
     resizeCanvas();

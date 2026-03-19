@@ -6,6 +6,9 @@ Manages turn detection by processing audio and ASR results through the TurnDetec
 Subscribes to:
 - EnhancedAudioFrameReceived: feeds audio to turn detector
 - ASRResultPartial: feeds text to turn detector
+- TTSChunkGenerated: sets turn detector to non-listening
+- TTSPlaybackFinished: resumes turn detector listening
+- TTSStopped: resumes turn detector listening
 
 Emits:
 - TurnDetectorStopSpeaking: when action is STOP_SPEAKING
@@ -23,6 +26,9 @@ from ..interfaces import Manager
 from ..events import (
     EnhancedAudioFrameReceived,
     ASRResultPartial,
+    TTSChunkGenerated,
+    TTSPlaybackFinished,
+    TTSStopped,
     TurnDetectorStopSpeaking,
     TurnDetectorStartGeneration,
 )
@@ -84,6 +90,31 @@ class TurnDetectorManager(Manager):
 
         except Exception as e:
             logger.error("[TurnDetectorManager] ASR partial processing failed: %s", e)
+
+    @Manager.event_handler(TTSChunkGenerated)
+    async def _on_tts_chunk_generated(self, event: TTSChunkGenerated) -> None:
+        # TODO: subscribe client audio start playing event for accurate control
+        """Set turn detector to non-listening when TTS starts producing audio."""
+        if self.turn_detector is None:
+            return
+        # No lock needed: single bool assignment is atomic (GIL), no compound read-then-write
+        self.turn_detector.listening = False
+
+    @Manager.event_handler(TTSPlaybackFinished)
+    async def _on_tts_playback_finished(self, event: TTSPlaybackFinished) -> None:
+        """Resume listening when TTS playback finishes."""
+        if self.turn_detector is None:
+            return
+        # No lock needed: single bool assignment is atomic (GIL), no compound read-then-write
+        self.turn_detector.listening = True
+
+    @Manager.event_handler(TTSStopped)
+    async def _on_tts_stopped(self, event: TTSStopped) -> None:
+        """Resume listening when TTS is stopped (e.g. interrupted)."""
+        if self.turn_detector is None:
+            return
+        # No lock needed: single bool assignment is atomic (GIL), no compound read-then-write
+        self.turn_detector.listening = True
 
     async def _handle_detection_result(
         self, result: TurnDetectionResult | list[TurnDetectionResult]

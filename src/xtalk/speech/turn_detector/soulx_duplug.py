@@ -29,12 +29,11 @@ class SoulxDuplug(TurnDetector):
         client_id: Optional[str] = None,
         timeout: float = 1.0,
     ) -> None:
+        super().__init__()
         self._server_url = server_url
         self._client_id = client_id or uuid.uuid4().hex
         self._timeout = timeout
         self._ws: Optional[websockets.ClientConnection] = None
-        self._listening = True
-        self._listening_lock = asyncio.Lock()
 
     async def _connect(self) -> None:
         self._ws = await websockets.connect(self._server_url)
@@ -86,10 +85,11 @@ class SoulxDuplug(TurnDetector):
         ).get("state", "blank")
 
         # Concrete logic
-        async with self._listening_lock:
-            if self._listening:
+        async with self.listening_lock():
+            if state_name not in ["blank", "idle"]:
+                print(f"{'listening' if self.listening else 'speaking'}:{state_name}")
+            if self.listening:
                 if state_name == "speak":
-                    self._listening = False
                     return TurnDetectionResult(
                         action=TurnDetectionAction.START_GENERATION,
                         semantic=TurnDetectionSemantic.COMPLETE,
@@ -101,7 +101,6 @@ class SoulxDuplug(TurnDetector):
                     )
             else:
                 if state_name == "nonidle":
-                    self._listening = True
                     return TurnDetectionResult(
                         action=TurnDetectionAction.STOP_SPEAKING,
                         semantic=TurnDetectionSemantic.INCOMPLETE,

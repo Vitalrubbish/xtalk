@@ -77,229 +77,15 @@ class WebInputAudioSession extends BaseInputAudioSession {
         }
         await this.ensureModelsEnv();
 
-        // Enhancer related
-        const identifyMapFrame = async (frame: Float32Array) => {
-            return frame;
-        };
-        let enhanceFrame = identifyMapFrame;
-        let resetEnhancer = () => { };
-        if (this.config.enableEnhancer) {
-            let enhancerCache: Record<string, any>;
-            let enhancerInputBuffer: any[];
-            let enhancerOutputBuffer: any[];
-            let isFirstEnhancerFrame: boolean;
-
-            try {
-                const enhancerArrayBuffer = await fetch(fastEnhancerOnnxUrl).then(r => r.arrayBuffer());
-                const enhancerSession = await window.ort.InferenceSession.create(enhancerArrayBuffer);
-                enhancerCache = {
-                    'cache_in_0': new window.ort.Tensor('float32', new Float32Array(1 * 256).fill(0), [1, 256]),
-                    'cache_in_1': new window.ort.Tensor('float32', new Float32Array(1 * 256).fill(0), [1, 256]),
-                    'cache_in_2': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48]),
-                    'cache_in_3': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48]),
-                    'cache_in_4': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48])
-                };
-                enhancerInputBuffer = [];
-                enhancerOutputBuffer = [];
-                isFirstEnhancerFrame = true;
-
-                enhanceFrame = async (frame: Float32Array) => {
-                    for (let i = 0; i < frame.length; i++) {
-                        enhancerInputBuffer.push(frame[i]);
-                    }
-                    while (enhancerInputBuffer.length >= this.ENHANCER_PARAMS.hopSize) {
-                        const chunk = enhancerInputBuffer.splice(0, this.ENHANCER_PARAMS.hopSize);
-                        const chunkArray = new Float32Array(chunk);
-                        const wavIn = new window.ort.Tensor('float32', chunkArray, [1, this.ENHANCER_PARAMS.hopSize]);
-                        const inputs: Record<string, any> = { wav_in: wavIn };
-                        for (const inputName of Object.keys(enhancerCache)) {
-                            inputs[inputName] = enhancerCache[inputName];
-                        }
-                        const outputs = await enhancerSession.run(inputs);
-                        const outputNames = enhancerSession.outputNames;
-                        const enhancedChunk = outputs[outputNames[0]].data;
-                        for (let i = 1; i < outputNames.length; i++) {
-                            const cacheName = `cache_in_${i - 1}`;
-                            enhancerCache[cacheName] = outputs[outputNames[i]];
-                        }
-                        for (let i = 0; i < enhancedChunk.length; i++) {
-                            enhancerOutputBuffer.push(enhancedChunk[i]);
-                        }
-                        if (isFirstEnhancerFrame && enhancerOutputBuffer.length >= (this.ENHANCER_PARAMS.nFFT - this.ENHANCER_PARAMS.hopSize)) {
-                            enhancerOutputBuffer.splice(0, this.ENHANCER_PARAMS.nFFT - this.ENHANCER_PARAMS.hopSize);
-                            isFirstEnhancerFrame = false;
-                        }
-                    }
-                    if (enhancerOutputBuffer.length >= frame.length) {
-                        const output = enhancerOutputBuffer.splice(0, frame.length);
-                        return new Float32Array(output);
-                    } else {
-                        return frame;
-                    }
-                }
-                resetEnhancer = () => {
-                    enhancerInputBuffer = [];
-                    enhancerOutputBuffer = [];
-                    isFirstEnhancerFrame = true;
-                    for (const cacheName of Object.keys(enhancerCache)) {
-                        const shape = enhancerCache[cacheName].dims;
-                        const zeros = new Float32Array(shape.reduce((a: number, b: number) => a * b, 1)).fill(0);
-                        enhancerCache[cacheName] = new window.ort.Tensor('float32', zeros, shape);
-                    }
-                }
-            } catch (e) {
-                enhanceFrame = identifyMapFrame;
-                resetEnhancer = () => { };
-            }
-        }
-
-
-        const audioContext = new window.AudioContext({ sampleRate: this.config.sampleRate })
-        // Prepare input stream
-        const inputStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                channelCount: 1,
-                echoCancellation: true,
-                autoGainControl: true,
-                noiseSuppression: false
-            }
-        });
-        const sourceNode = audioContext.createMediaStreamSource(inputStream);
-        // Prepare frame processor
-        await audioContext.audioWorklet.addModule(vadProcessorUrl);
-        const frameProcessNode = new AudioWorkletNode(audioContext, 'vad-processor', {
-            processorOptions: {
-                targetSampleRate: this.config.sampleRate,
-                targetFrameSize: this.VAD_PARAMS.vadFrameSamples
-            }
-        })
-        // Connect nodes
-        const silentGainNode = audioContext.createGain();
-        silentGainNode.gain.value = 0;
-        sourceNode.connect(frameProcessNode);
-        frameProcessNode.connect(silentGainNode);
-        silentGainNode.connect(audioContext.destination);
+        const { enhanceFrame, resetEnhancer } = await this.setupEnhancer();
+        const { audioContext, frameProcessNode } = await this.setupAudioPipeline();
 
         if (this.config.enableVAD) {
-            // VAD states
-            const vadURL = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/silero_vad_v5.onnx';
-            const vadArrayBuffer = await fetch(vadURL).then(r => r.arrayBuffer());
-            const vadSession = await window.ort.InferenceSession.create(vadArrayBuffer);
-            const vadStateZeros = Array(2 * 128).fill(0);
-            let vadState = new window.ort.Tensor('float32', vadStateZeros, [2, 1, 128]);
-            const vadSr = new window.ort.Tensor('int64', [BigInt(this.config.sampleRate)]);
-            const vadHelpers = {
-                negEndCounterEnabled: false,
-                negEndCounter: 0
-            }
-
-            const frameProcessorProcess = async (frame: Float32Array) => {
-                const enhancedFrame = await enhanceFrame(frame);
-                const audioTensor = new window.ort.Tensor('float32', enhancedFrame, [1, enhancedFrame.length]);
-                const inputs = { input: audioTensor, state: vadState, sr: vadSr };
-                const out = await vadSession.run(inputs);
-                vadState = out.stateN;
-                const isSpeech = out.output.data[0];
-                return { isSpeech, notSpeech: 1 - isSpeech };
-            }
-            const frameProcessorReset = () => {
-                // VAD reset
-                vadState = new window.ort.Tensor('float32', vadStateZeros, [2, 1, 128]);
-
-                // Enhancer reset
-                resetEnhancer();
-            }
-            const frameProcessor = new window.vad.FrameProcessor(
-                frameProcessorProcess,
-                frameProcessorReset,
-                this.VAD_PARAMS.vadConfig,
-                this.VAD_PARAMS.vadFrameSamples / this.config.sampleRate * 1000
-            )
-            const onFrameProcessorEvent = (ev: { msg: any; frame: Float32Array; probs: { notSpeech: number; }; }) => {
-                switch (ev.msg) {
-                    case window.vad.Message.FrameProcessed:
-                        const frame = ev.frame; // Original frame from input
-                        // Use consecutive notSpeech samples to trigger early speech end
-                        if (vadHelpers.negEndCounterEnabled) {
-                            const ns = Number(ev?.probs?.notSpeech ?? 0);
-                            const nsHigh = ns > (1 - this.VAD_PARAMS.vadConfig.negativeSpeechThreshold);
-                            vadHelpers.negEndCounter = nsHigh ? (vadHelpers.negEndCounter + 1) : 0;
-                            if (vadHelpers.negEndCounter > this.VAD_PARAMS.vadNegativeFramesBeforeEnd) {
-                                // Trigger speech end and disable/reset the counter
-                                this.speechEndCallback()
-                                vadHelpers.negEndCounterEnabled = false;
-                                vadHelpers.negEndCounter = 0;
-                            }
-                        }
-                        // const enhancedFrame = lastEnhancedFrame || frame; // Use enhanced frame if available
-
-                        // Only trigger frame event to the backend when not muted
-                        if (!this.muted) {
-                            // Convert frame to int16 for transmission
-                            const int16 = new Int16Array(frame.length);
-                            for (let i = 0; i < frame.length; i++) {
-                                const s = Math.max(-1, Math.min(1, frame[i]!));
-                                int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-                            }
-                            this.frameCallback(int16.buffer);
-                        }
-                        break;
-
-                    case window.vad.Message.SpeechStart:
-                        this.speechStartCallback();
-
-                        // Enable the negative sample counter when speech starts
-                        vadHelpers.negEndCounterEnabled = true;
-                        vadHelpers.negEndCounter = 0;
-
-                        break;
-
-                    case window.vad.Message.SpeechEnd:
-                        this.speechEndCallback();
-
-                        // Disable/reset the counter when VAD reports speech end
-                        vadHelpers.negEndCounterEnabled = false;
-                        vadHelpers.negEndCounter = 0;
-                        break;
-                }
-            };
-            const frameQueue: Float32Array[] = [];
-            let isProcessingFrameQueue: boolean = false;
-            frameProcessNode.port.onmessage = async (event) => {
-                // See frontend/worklets/vad-processor.worklet.js for data fields
-                if (event.data.type === 'audioFrame') {
-                    if (this.muted) return;
-                    frameQueue.push(event.data.frame);
-                    // Process frames
-                    if (isProcessingFrameQueue) return;
-                    isProcessingFrameQueue = true;
-                    while (frameQueue.length > 0) {
-                        const frame = frameQueue.shift();
-                        await frameProcessor.process(frame, onFrameProcessorEvent);
-                    }
-                    isProcessingFrameQueue = false;
-                }
-            }
-            // Start processing
-            frameProcessor.resume();
+            await this.setupVAD(frameProcessNode, enhanceFrame, resetEnhancer);
         } else {
-            frameProcessNode.port.onmessage = async (event) => {
-                if (event.data.type === 'audioFrame') {
-                    if (this.muted) return;
-                    const frame = event.data.frame;
-                    const enhancedFrame = await enhanceFrame(frame);
-                    // Convert frame to int16 for transmission
-                    const int16 = new Int16Array(enhancedFrame.length);
-                    for (let i = 0; i < enhancedFrame.length; i++) {
-                        const s = Math.max(-1, Math.min(1, enhancedFrame[i]!));
-                        int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-                    }
-                    this.frameCallback(int16.buffer);
-                }
-            }
+            this.setupDirectProcessing(frameProcessNode, enhanceFrame);
         }
 
-        // Mount to session to keep alive local vars and for later clean up
         this.audioContext = audioContext;
     }
     async close(): Promise<void> {
@@ -315,6 +101,218 @@ class WebInputAudioSession extends BaseInputAudioSession {
     }
     set muted(value: boolean) {
         this._muted = value;
+    }
+
+    private setupDirectProcessing(
+        frameProcessNode: AudioWorkletNode,
+        enhanceFrame: (frame: Float32Array) => Promise<Float32Array>
+    ): void {
+        frameProcessNode.port.onmessage = async (event) => {
+            if (event.data.type === 'audioFrame') {
+                if (this.muted) return;
+                const frame = event.data.frame;
+                const enhancedFrame = await enhanceFrame(frame);
+                this.frameCallback(this.float32ToInt16(enhancedFrame));
+            }
+        };
+    }
+
+    private async setupVAD(
+        frameProcessNode: AudioWorkletNode,
+        enhanceFrame: (frame: Float32Array) => Promise<Float32Array>,
+        resetEnhancer: () => void
+    ): Promise<void> {
+        const vadURL = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/silero_vad_v5.onnx';
+        const vadArrayBuffer = await fetch(vadURL).then(r => r.arrayBuffer());
+        const vadSession = await window.ort.InferenceSession.create(vadArrayBuffer);
+        const vadStateZeros = Array(2 * 128).fill(0);
+        let vadState = new window.ort.Tensor('float32', vadStateZeros, [2, 1, 128]);
+        const vadSr = new window.ort.Tensor('int64', [BigInt(this.config.sampleRate)]);
+        const vadHelpers = {
+            negEndCounterEnabled: false,
+            negEndCounter: 0
+        };
+
+        const frameProcessorProcess = async (frame: Float32Array) => {
+            const enhancedFrame = await enhanceFrame(frame);
+            const audioTensor = new window.ort.Tensor('float32', enhancedFrame, [1, enhancedFrame.length]);
+            const inputs = { input: audioTensor, state: vadState, sr: vadSr };
+            const out = await vadSession.run(inputs);
+            vadState = out.stateN;
+            const isSpeech = out.output.data[0];
+            return { isSpeech, notSpeech: 1 - isSpeech };
+        };
+        const frameProcessorReset = () => {
+            vadState = new window.ort.Tensor('float32', vadStateZeros, [2, 1, 128]);
+            resetEnhancer();
+        };
+        const frameProcessor = new window.vad.FrameProcessor(
+            frameProcessorProcess,
+            frameProcessorReset,
+            this.VAD_PARAMS.vadConfig,
+            this.VAD_PARAMS.vadFrameSamples / this.config.sampleRate * 1000
+        );
+        const onFrameProcessorEvent = (ev: { msg: any; frame: Float32Array; probs: { notSpeech: number; }; }) => {
+            switch (ev.msg) {
+                case window.vad.Message.FrameProcessed:
+                    const frame = ev.frame;
+                    if (vadHelpers.negEndCounterEnabled) {
+                        const ns = Number(ev?.probs?.notSpeech ?? 0);
+                        const nsHigh = ns > (1 - this.VAD_PARAMS.vadConfig.negativeSpeechThreshold);
+                        vadHelpers.negEndCounter = nsHigh ? (vadHelpers.negEndCounter + 1) : 0;
+                        if (vadHelpers.negEndCounter > this.VAD_PARAMS.vadNegativeFramesBeforeEnd) {
+                            this.speechEndCallback();
+                            vadHelpers.negEndCounterEnabled = false;
+                            vadHelpers.negEndCounter = 0;
+                        }
+                    }
+                    if (!this.muted) {
+                        this.frameCallback(this.float32ToInt16(frame));
+                    }
+                    break;
+
+                case window.vad.Message.SpeechStart:
+                    this.speechStartCallback();
+                    vadHelpers.negEndCounterEnabled = true;
+                    vadHelpers.negEndCounter = 0;
+                    break;
+
+                case window.vad.Message.SpeechEnd:
+                    this.speechEndCallback();
+                    vadHelpers.negEndCounterEnabled = false;
+                    vadHelpers.negEndCounter = 0;
+                    break;
+            }
+        };
+        const frameQueue: Float32Array[] = [];
+        let isProcessingFrameQueue = false;
+        frameProcessNode.port.onmessage = async (event) => {
+            if (event.data.type === 'audioFrame') {
+                if (this.muted) return;
+                frameQueue.push(event.data.frame);
+                if (isProcessingFrameQueue) return;
+                isProcessingFrameQueue = true;
+                while (frameQueue.length > 0) {
+                    const frame = frameQueue.shift();
+                    await frameProcessor.process(frame, onFrameProcessorEvent);
+                }
+                isProcessingFrameQueue = false;
+            }
+        };
+        frameProcessor.resume();
+    }
+
+    private async setupAudioPipeline(): Promise<{
+        audioContext: AudioContext;
+        frameProcessNode: AudioWorkletNode;
+    }> {
+        const audioContext = new window.AudioContext({ sampleRate: this.config.sampleRate });
+        const inputStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                channelCount: 1,
+                echoCancellation: true,
+                autoGainControl: true,
+                noiseSuppression: false
+            }
+        });
+        const sourceNode = audioContext.createMediaStreamSource(inputStream);
+        await audioContext.audioWorklet.addModule(vadProcessorUrl);
+        const frameProcessNode = new AudioWorkletNode(audioContext, 'vad-processor', {
+            processorOptions: {
+                targetSampleRate: this.config.sampleRate,
+                targetFrameSize: this.VAD_PARAMS.vadFrameSamples
+            }
+        });
+        const silentGainNode = audioContext.createGain();
+        silentGainNode.gain.value = 0;
+        sourceNode.connect(frameProcessNode);
+        frameProcessNode.connect(silentGainNode);
+        silentGainNode.connect(audioContext.destination);
+        return { audioContext, frameProcessNode };
+    }
+
+    private async setupEnhancer(): Promise<{
+        enhanceFrame: (frame: Float32Array) => Promise<Float32Array>;
+        resetEnhancer: () => void;
+    }> {
+        const identityMap = async (frame: Float32Array) => frame;
+        if (!this.config.enableEnhancer) {
+            return { enhanceFrame: identityMap, resetEnhancer: () => {} };
+        }
+
+        try {
+            const enhancerArrayBuffer = await fetch(fastEnhancerOnnxUrl).then(r => r.arrayBuffer());
+            const enhancerSession = await window.ort.InferenceSession.create(enhancerArrayBuffer);
+            const enhancerCache: Record<string, any> = {
+                'cache_in_0': new window.ort.Tensor('float32', new Float32Array(1 * 256).fill(0), [1, 256]),
+                'cache_in_1': new window.ort.Tensor('float32', new Float32Array(1 * 256).fill(0), [1, 256]),
+                'cache_in_2': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48]),
+                'cache_in_3': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48]),
+                'cache_in_4': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48])
+            };
+            let enhancerInputBuffer: number[] = [];
+            let enhancerOutputBuffer: number[] = [];
+            let isFirstEnhancerFrame = true;
+
+            const enhanceFrame = async (frame: Float32Array) => {
+                for (let i = 0; i < frame.length; i++) {
+                    enhancerInputBuffer.push(frame[i]!);
+                }
+                while (enhancerInputBuffer.length >= this.ENHANCER_PARAMS.hopSize) {
+                    const chunk = enhancerInputBuffer.splice(0, this.ENHANCER_PARAMS.hopSize);
+                    const chunkArray = new Float32Array(chunk);
+                    const wavIn = new window.ort.Tensor('float32', chunkArray, [1, this.ENHANCER_PARAMS.hopSize]);
+                    const inputs: Record<string, any> = { wav_in: wavIn };
+                    for (const inputName of Object.keys(enhancerCache)) {
+                        inputs[inputName] = enhancerCache[inputName];
+                    }
+                    const outputs = await enhancerSession.run(inputs);
+                    const outputNames = enhancerSession.outputNames;
+                    const enhancedChunk = outputs[outputNames[0]].data;
+                    for (let i = 1; i < outputNames.length; i++) {
+                        const cacheName = `cache_in_${i - 1}`;
+                        enhancerCache[cacheName] = outputs[outputNames[i]];
+                    }
+                    for (let i = 0; i < enhancedChunk.length; i++) {
+                        enhancerOutputBuffer.push(enhancedChunk[i]);
+                    }
+                    if (isFirstEnhancerFrame && enhancerOutputBuffer.length >= (this.ENHANCER_PARAMS.nFFT - this.ENHANCER_PARAMS.hopSize)) {
+                        enhancerOutputBuffer.splice(0, this.ENHANCER_PARAMS.nFFT - this.ENHANCER_PARAMS.hopSize);
+                        isFirstEnhancerFrame = false;
+                    }
+                }
+                if (enhancerOutputBuffer.length >= frame.length) {
+                    const output = enhancerOutputBuffer.splice(0, frame.length);
+                    return new Float32Array(output);
+                } else {
+                    return frame;
+                }
+            };
+
+            const resetEnhancer = () => {
+                enhancerInputBuffer = [];
+                enhancerOutputBuffer = [];
+                isFirstEnhancerFrame = true;
+                for (const cacheName of Object.keys(enhancerCache)) {
+                    const shape = enhancerCache[cacheName].dims;
+                    const zeros = new Float32Array(shape.reduce((a: number, b: number) => a * b, 1)).fill(0);
+                    enhancerCache[cacheName] = new window.ort.Tensor('float32', zeros, shape);
+                }
+            };
+
+            return { enhanceFrame, resetEnhancer };
+        } catch {
+            return { enhanceFrame: identityMap, resetEnhancer: () => {} };
+        }
+    }
+
+    private float32ToInt16(frame: Float32Array): ArrayBuffer {
+        const int16 = new Int16Array(frame.length);
+        for (let i = 0; i < frame.length; i++) {
+            const s = Math.max(-1, Math.min(1, frame[i]!));
+            int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        return int16.buffer;
     }
 
     private async ensureModelsEnv() {

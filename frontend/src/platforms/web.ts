@@ -30,6 +30,8 @@ class WebWebSocket extends BaseWebSocket {
 interface WebInputAudioSessionConfig extends InputAudioSessionConfig {
     // Whether to enable VAD on client. Defaults to true.
     enableVAD?: boolean;
+    // Whether to enable enhancer on client. Defaults to true if enhancer model is available.
+    enableEnhancer?: boolean;
 }
 declare global {
     interface Window {
@@ -54,17 +56,104 @@ class WebInputAudioSession extends BaseInputAudioSession {
         hopSize: 256,
         nFFT: 512,
     }
+    private config: WebInputAudioSessionConfig;
     private _muted = false;
     private audioContext: AudioContext | null = null;
-    constructor(private config: WebInputAudioSessionConfig) {
+    constructor(config: WebInputAudioSessionConfig) {
         super()
+        // Default config
+        config = { ...config };
+        if (config.enableVAD === undefined) {
+            config.enableVAD = true;
+        }
+        if (config.enableEnhancer === undefined) {
+            config.enableEnhancer = true;
+        }
+        this.config = config;
     }
     async open(): Promise<void> {
-        // TODO: add enhancer
         if (this.audioContext !== null) {
             throw new Error('Session already started');
         }
         await this.ensureModelsEnv();
+
+        // Enhancer related
+        const identifyMapFrame = async (frame: Float32Array) => {
+            return frame;
+        };
+        let enhanceFrame = identifyMapFrame;
+        let resetEnhancer = () => { };
+        if (this.config.enableEnhancer) {
+            let enhancerCache: Record<string, any>;
+            let enhancerInputBuffer: any[];
+            let enhancerOutputBuffer: any[];
+            let isFirstEnhancerFrame: boolean;
+
+            try {
+                const enhancerArrayBuffer = await fetch(fastEnhancerOnnxUrl).then(r => r.arrayBuffer());
+                const enhancerSession = await window.ort.InferenceSession.create(enhancerArrayBuffer);
+                enhancerCache = {
+                    'cache_in_0': new window.ort.Tensor('float32', new Float32Array(1 * 256).fill(0), [1, 256]),
+                    'cache_in_1': new window.ort.Tensor('float32', new Float32Array(1 * 256).fill(0), [1, 256]),
+                    'cache_in_2': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48]),
+                    'cache_in_3': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48]),
+                    'cache_in_4': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48])
+                };
+                enhancerInputBuffer = [];
+                enhancerOutputBuffer = [];
+                isFirstEnhancerFrame = true;
+
+                enhanceFrame = async (frame: Float32Array) => {
+                    for (let i = 0; i < frame.length; i++) {
+                        enhancerInputBuffer.push(frame[i]);
+                    }
+                    while (enhancerInputBuffer.length >= this.ENHANCER_PARAMS.hopSize) {
+                        const chunk = enhancerInputBuffer.splice(0, this.ENHANCER_PARAMS.hopSize);
+                        const chunkArray = new Float32Array(chunk);
+                        const wavIn = new window.ort.Tensor('float32', chunkArray, [1, this.ENHANCER_PARAMS.hopSize]);
+                        const inputs: Record<string, any> = { wav_in: wavIn };
+                        for (const inputName of Object.keys(enhancerCache)) {
+                            inputs[inputName] = enhancerCache[inputName];
+                        }
+                        const outputs = await enhancerSession.run(inputs);
+                        const outputNames = enhancerSession.outputNames;
+                        const enhancedChunk = outputs[outputNames[0]].data;
+                        for (let i = 1; i < outputNames.length; i++) {
+                            const cacheName = `cache_in_${i - 1}`;
+                            enhancerCache[cacheName] = outputs[outputNames[i]];
+                        }
+                        for (let i = 0; i < enhancedChunk.length; i++) {
+                            enhancerOutputBuffer.push(enhancedChunk[i]);
+                        }
+                        if (isFirstEnhancerFrame && enhancerOutputBuffer.length >= (this.ENHANCER_PARAMS.nFFT - this.ENHANCER_PARAMS.hopSize)) {
+                            enhancerOutputBuffer.splice(0, this.ENHANCER_PARAMS.nFFT - this.ENHANCER_PARAMS.hopSize);
+                            isFirstEnhancerFrame = false;
+                        }
+                    }
+                    if (enhancerOutputBuffer.length >= frame.length) {
+                        const output = enhancerOutputBuffer.splice(0, frame.length);
+                        return new Float32Array(output);
+                    } else {
+                        return frame;
+                    }
+                }
+                resetEnhancer = () => {
+                    enhancerInputBuffer = [];
+                    enhancerOutputBuffer = [];
+                    isFirstEnhancerFrame = true;
+                    for (const cacheName of Object.keys(enhancerCache)) {
+                        const shape = enhancerCache[cacheName].dims;
+                        const zeros = new Float32Array(shape.reduce((a: number, b: number) => a * b, 1)).fill(0);
+                        enhancerCache[cacheName] = new window.ort.Tensor('float32', zeros, shape);
+                    }
+                }
+            } catch (e) {
+                enhanceFrame = identifyMapFrame;
+                resetEnhancer = () => { };
+            }
+        }
+
+
         const audioContext = new window.AudioContext({ sampleRate: this.config.sampleRate })
         // Prepare input stream
         const inputStream = await navigator.mediaDevices.getUserMedia({
@@ -95,69 +184,6 @@ class WebInputAudioSession extends BaseInputAudioSession {
                 targetFrameSize: this.VAD_PARAMS.vadFrameSamples
             }
         })
-        // Enhancer related
-        let useEnhancer = false;
-        let enhancerCache: Record<string, any>;
-        let enhancerInputBuffer: any[];
-        let enhancerOutputBuffer: any[];
-        let isFirstEnhancerFrame: boolean;
-        const identifyMapFrame = async (frame: Float32Array) => {
-            return frame;
-        };
-        let enhanceFrame = identifyMapFrame;
-        try {
-            const enhancerArrayBuffer = await fetch(fastEnhancerOnnxUrl).then(r => r.arrayBuffer());
-            const enhancerSession = await window.ort.InferenceSession.create(enhancerArrayBuffer);
-            enhancerCache = {
-                'cache_in_0': new window.ort.Tensor('float32', new Float32Array(1 * 256).fill(0), [1, 256]),
-                'cache_in_1': new window.ort.Tensor('float32', new Float32Array(1 * 256).fill(0), [1, 256]),
-                'cache_in_2': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48]),
-                'cache_in_3': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48]),
-                'cache_in_4': new window.ort.Tensor('float32', new Float32Array(1 * 36 * 48).fill(0), [1, 36, 48])
-            };
-            enhancerInputBuffer = [];
-            enhancerOutputBuffer = [];
-            isFirstEnhancerFrame = true;
-
-            useEnhancer = true;
-            enhanceFrame = async (frame: Float32Array) => {
-                for (let i = 0; i < frame.length; i++) {
-                    enhancerInputBuffer.push(frame[i]);
-                }
-                while (enhancerInputBuffer.length >= this.ENHANCER_PARAMS.hopSize) {
-                    const chunk = enhancerInputBuffer.splice(0, this.ENHANCER_PARAMS.hopSize);
-                    const chunkArray = new Float32Array(chunk);
-                    const wavIn = new window.ort.Tensor('float32', chunkArray, [1, this.ENHANCER_PARAMS.hopSize]);
-                    const inputs: Record<string, any> = { wav_in: wavIn };
-                    for (const inputName of Object.keys(enhancerCache)) {
-                        inputs[inputName] = enhancerCache[inputName];
-                    }
-                    const outputs = await enhancerSession.run(inputs);
-                    const outputNames = enhancerSession.outputNames;
-                    const enhancedChunk = outputs[outputNames[0]].data;
-                    for (let i = 1; i < outputNames.length; i++) {
-                        const cacheName = `cache_in_${i - 1}`;
-                        enhancerCache[cacheName] = outputs[outputNames[i]];
-                    }
-                    for (let i = 0; i < enhancedChunk.length; i++) {
-                        enhancerOutputBuffer.push(enhancedChunk[i]);
-                    }
-                    if (isFirstEnhancerFrame && enhancerOutputBuffer.length >= (this.ENHANCER_PARAMS.nFFT - this.ENHANCER_PARAMS.hopSize)) {
-                        enhancerOutputBuffer.splice(0, this.ENHANCER_PARAMS.nFFT - this.ENHANCER_PARAMS.hopSize);
-                        isFirstEnhancerFrame = false;
-                    }
-                }
-                if (enhancerOutputBuffer.length >= frame.length) {
-                    const output = enhancerOutputBuffer.splice(0, frame.length);
-                    return new Float32Array(output);
-                } else {
-                    return frame;
-                }
-            }
-        } catch (e) {
-            useEnhancer = false;
-            enhanceFrame = identifyMapFrame;
-        }
 
         const frameProcessorProcess = async (frame: Float32Array) => {
             const enhancedFrame = await enhanceFrame(frame);
@@ -173,16 +199,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
             vadState = new window.ort.Tensor('float32', vadStateZeros, [2, 1, 128]);
 
             // Enhancer reset
-            if (useEnhancer && enhancerCache) {
-                enhancerInputBuffer = [];
-                enhancerOutputBuffer = [];
-                isFirstEnhancerFrame = true;
-                for (const cacheName of Object.keys(enhancerCache)) {
-                    const shape = enhancerCache[cacheName].dims;
-                    const zeros = new Float32Array(shape.reduce((a: number, b: number) => a * b, 1)).fill(0);
-                    enhancerCache[cacheName] = new window.ort.Tensor('float32', zeros, shape);
-                }
-            }
+            resetEnhancer();
         }
         const frameProcessor = new window.vad.FrameProcessor(
             frameProcessorProcess,
@@ -284,6 +301,10 @@ class WebInputAudioSession extends BaseInputAudioSession {
     }
 
     private async ensureModelsEnv() {
+        if (!this.config.enableEnhancer && !this.config.enableVAD) {
+            // No need to load models
+            return;
+        }
         // Inject window.ort and window.vad
         const inject = (src: string) => new Promise<void>((resolve, reject) => {
             const s = document.createElement('script');
@@ -300,7 +321,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
             await inject(`https://cdn.jsdelivr.net/npm/onnxruntime-web@${ortVersion}/dist/ort.js`);
             window.ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ortVersion}/dist/`;
         }
-        if (!window.vad) {
+        if (this.config.enableVAD && !window.vad) {
             await inject('https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/bundle.min.js');
         }
     }

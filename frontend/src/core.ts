@@ -6,14 +6,20 @@ import { ActionHandler } from "./action-handler";
 export { createSession };
 
 interface SessionConfig {
-    inputSampleRate: number;
-    outputSampleRate: number;
+    input: {
+        sampleRate: number;
+    },
+    output: {
+        sampleRate: number;
+    }
 }
-function createSession(websocketURL: string | URL, {
-    inputSampleRate = 16000,
-    outputSampleRate = 48000,
-}: Partial<SessionConfig> = {
-    }) {
+function createSession(
+    websocketURL: string | URL,
+    {
+        input: inputConfig = { sampleRate: 16000 },
+        output: outputConfig = { sampleRate: 48000 },
+    }: Partial<SessionConfig> = {},
+) {
     const conversation = new Conversation();
     const actionHandler = new ActionHandler();
     let websocket: ReturnType<typeof createWebSocket>;
@@ -25,8 +31,8 @@ function createSession(websocketURL: string | URL, {
 
     function initialize() {
         websocket = createWebSocket(websocketURL);
-        inputAudioSession = createInputAudioSession(inputSampleRate);
-        outputAudioSession = createOutputAudioSession(outputSampleRate);
+        inputAudioSession = createInputAudioSession(inputConfig.sampleRate);
+        outputAudioSession = createOutputAudioSession(outputConfig.sampleRate);
 
         // Subscribe actions and audio chunks
         websocket.addEventListener("message", async (event: { data: string | ArrayBuffer }) => {
@@ -44,7 +50,7 @@ function createSession(websocketURL: string | URL, {
 
         // Bind audio input handling
         inputAudioSession.onFrame(async (audioChunk) => {
-            inputAudioChunkCallback(audioChunk, inputSampleRate);
+            inputAudioChunkCallback(audioChunk, inputConfig.sampleRate);
             websocket.sendAudioChunk(audioChunk);
         });
         inputAudioSession.onSpeechStart(async () => {
@@ -56,7 +62,7 @@ function createSession(websocketURL: string | URL, {
 
         // Bind audio output handling
         outputAudioSession.onChunkStarted(async (audioChunk) => {
-            outputAudioChunkCallback(audioChunk, outputSampleRate);
+            outputAudioChunkCallback(audioChunk, outputConfig.sampleRate);
             await actionHandler.handleAction("client_audio_chunk_started", null, websocket, conversation, outputAudioSession);
         });
         outputAudioSession.onChunkPlayed(async (_audioChunk) => {

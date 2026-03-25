@@ -1,4 +1,5 @@
 import { createWebSocket } from "./websocket";
+import type { InputAudioSessionConfig, OutputAudioSessionConfig } from "./bases/audio-session";
 import { createInputAudioSession, createOutputAudioSession } from "./audio-session";
 import { Conversation } from "./conversation";
 import { ActionHandler } from "./action-handler";
@@ -6,12 +7,8 @@ import { ActionHandler } from "./action-handler";
 export { createSession };
 
 interface SessionConfig {
-    input: {
-        sampleRate: number;
-    },
-    output: {
-        sampleRate: number;
-    }
+    input: InputAudioSessionConfig,
+    output: OutputAudioSessionConfig
 }
 function createSession(
     websocketURL: string | URL,
@@ -31,8 +28,8 @@ function createSession(
 
     function initialize() {
         websocket = createWebSocket(websocketURL);
-        inputAudioSession = createInputAudioSession(inputConfig.sampleRate);
-        outputAudioSession = createOutputAudioSession(outputConfig.sampleRate);
+        inputAudioSession = createInputAudioSession(inputConfig);
+        outputAudioSession = createOutputAudioSession(outputConfig);
 
         // Subscribe actions and audio chunks
         websocket.addEventListener("message", async (event: { data: string | ArrayBuffer }) => {

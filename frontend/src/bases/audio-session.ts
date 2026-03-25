@@ -1,5 +1,10 @@
 export { BaseInputAudioSession, BaseOutputAudioSession };
+export type { InputAudioSessionConfig, OutputAudioSessionConfig };
 
+interface InputAudioSessionConfig {
+    sampleRate: number;
+    [key: string]: any;
+}
 abstract class BaseInputAudioSession {
     abstract open(): Promise<void>;
     abstract close(): Promise<void>;
@@ -32,6 +37,10 @@ abstract class BaseInputAudioSession {
     };
 }
 
+interface OutputAudioSessionConfig {
+    sampleRate: number;
+    [key: string]: any;
+}
 abstract class BaseOutputAudioSession {
     abstract open(): Promise<void>;
     abstract close(): Promise<void>;

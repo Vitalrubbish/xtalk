@@ -1,21 +1,22 @@
 import { getPlatform, Platform } from "./utils";
 import { BaseInputAudioSession, BaseOutputAudioSession } from "./bases/audio-session";
+import type { InputAudioSessionConfig, OutputAudioSessionConfig } from "./bases/audio-session";
 import { WebInputAudioSession, WebOutputAudioSession } from "./platforms/web";
 export { createInputAudioSession, createOutputAudioSession };
 
-function createInputAudioSession(sampleRate: number = 16000): BaseInputAudioSession {
+function createInputAudioSession(config: InputAudioSessionConfig): BaseInputAudioSession {
     switch (getPlatform()) {
         case Platform.Web:
-            return new WebInputAudioSession(sampleRate);
+            return new WebInputAudioSession(config);
         default:
             throw new Error("Unknown platform");
     }
 }
 
-function createOutputAudioSession(sampleRate: number = 48000): BaseOutputAudioSession {
+function createOutputAudioSession(config: OutputAudioSessionConfig): BaseOutputAudioSession {
     switch (getPlatform()) {
         case Platform.Web:
-            return new WebOutputAudioSession(sampleRate);
+            return new WebOutputAudioSession(config);
         default:
             throw new Error("Unknown platform");
     }

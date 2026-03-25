@@ -1,5 +1,6 @@
 import { BaseWebSocket } from "../bases/websocket";
 import { BaseInputAudioSession, BaseOutputAudioSession } from "../bases/audio-session";
+import type { InputAudioSessionConfig, OutputAudioSessionConfig } from "../bases/audio-session";
 
 import vadProcessorUrl from "../../worklets/vad-processor.worklet.js";
 import fastEnhancerOnnxUrl from "../../models/fastenhancer_s.onnx";
@@ -26,6 +27,10 @@ class WebWebSocket extends BaseWebSocket {
     }
 }
 
+interface WebInputAudioSessionConfig extends InputAudioSessionConfig {
+    // Whether to enable VAD on client. Defaults to true.
+    enableVAD?: boolean;
+}
 declare global {
     interface Window {
         ort?: any;
@@ -51,7 +56,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
     }
     private _muted = false;
     private audioContext: AudioContext | null = null;
-    constructor(private sampleRate: number = 16000) {
+    constructor(private config: WebInputAudioSessionConfig) {
         super()
     }
     async open(): Promise<void> {
@@ -60,7 +65,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
             throw new Error('Session already started');
         }
         await this.ensureModelsEnv();
-        const audioContext = new window.AudioContext({ sampleRate: this.sampleRate })
+        const audioContext = new window.AudioContext({ sampleRate: this.config.sampleRate })
         // Prepare input stream
         const inputStream = await navigator.mediaDevices.getUserMedia({
             audio: {
@@ -78,7 +83,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
         const vadSession = await window.ort.InferenceSession.create(vadArrayBuffer);
         const vadStateZeros = Array(2 * 128).fill(0);
         let vadState = new window.ort.Tensor('float32', vadStateZeros, [2, 1, 128]);
-        const vadSr = new window.ort.Tensor('int64', [BigInt(this.sampleRate)]);
+        const vadSr = new window.ort.Tensor('int64', [BigInt(this.config.sampleRate)]);
         const vadHelpers = {
             negEndCounterEnabled: false,
             negEndCounter: 0
@@ -86,7 +91,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
         await audioContext.audioWorklet.addModule(vadProcessorUrl);
         const framePreprocessNode = new AudioWorkletNode(audioContext, 'vad-processor', {
             processorOptions: {
-                targetSampleRate: this.sampleRate,
+                targetSampleRate: this.config.sampleRate,
                 targetFrameSize: this.VAD_PARAMS.vadFrameSamples
             }
         })
@@ -183,7 +188,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
             frameProcessorProcess,
             frameProcessorReset,
             this.VAD_PARAMS.vadConfig,
-            this.VAD_PARAMS.vadFrameSamples / this.sampleRate * 1000
+            this.VAD_PARAMS.vadFrameSamples / this.config.sampleRate * 1000
         )
         const onFrameProcessorEvent = (ev: { msg: any; frame: Float32Array; probs: { notSpeech: number; }; }) => {
             switch (ev.msg) {
@@ -365,14 +370,14 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
     private audioTimeToPlay = 0;
     private audioChunkStartedTimeouts: ReturnType<typeof createPausableTimeout>[] = [];
     private audioChunksPaused: ArrayBuffer[] = [];
-    constructor(private sampleRate: number = 48000) {
+    constructor(private config: OutputAudioSessionConfig) {
         super();
     }
     async open(): Promise<void> {
         if (this.audioContext !== null) {
             throw new Error('Session already started');
         }
-        this.audioContext = new window.AudioContext({ sampleRate: this.sampleRate });
+        this.audioContext = new window.AudioContext({ sampleRate: this.config.sampleRate });
         await this.audioContext.resume();
     }
     async close(): Promise<void> {
@@ -445,7 +450,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         });
 
         // Schedule audio play
-        const buffer = this.audioContext.createBuffer(1, float32.length, this.sampleRate);
+        const buffer = this.audioContext.createBuffer(1, float32.length, this.config.sampleRate);
         buffer.getChannelData(0).set(float32);
         const source = this.audioContext.createBufferSource();
         source.buffer = buffer;

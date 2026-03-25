@@ -98,6 +98,7 @@ class TextMsgHandler(EventListenerMixin):
             vad_event = VADSpeechStart(
                 session_id=self.session_id,
                 confidence=message_data.get("confidence", 0.8),
+                from_server=False,
             )
             await self.event_bus.publish(vad_event)
 
@@ -110,6 +111,7 @@ class TextMsgHandler(EventListenerMixin):
             vad_event = VADSpeechEnd(
                 session_id=self.session_id,
                 confidence=message_data.get("confidence", 0.8),
+                from_server=False,
             )
             await self.event_bus.publish(vad_event)
 

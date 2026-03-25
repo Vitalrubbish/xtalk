@@ -24,6 +24,8 @@ from ..events import (
     TTSPlaybackFinished,
     TTSVoiceChange,
     TTSEmotionChange,
+    VADSpeechStart,
+    VADSpeechEnd,
 )
 from ..events import (
     ThoughtUpdated,
@@ -158,6 +160,52 @@ class OutputGateway(EventListenerMixin):
     @EventListenerMixin.event_handler(TTSPlaybackFinished, priority=5)
     async def _on_tts_playback_finished(self, event) -> None:
         self.state.tts_active = False
+
+    @EventListenerMixin.event_handler(VADSpeechStart, priority=5)
+    async def _send_vad_speech_start_signal(self, event: VADSpeechStart) -> None:
+        """Send backend-generated VAD speech start to the frontend."""
+        if not event.from_server:
+            return
+        try:
+            await self.send_signal(
+                self._build_message(
+                    "vad_speech_start",
+                    {
+                        "confidence": getattr(event, "confidence", 0.0),
+                        "speech_probability": getattr(event, "speech_probability", 0.0),
+                    },
+                    event,
+                )
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to send vad_speech_start signal - session: %s, error: %s",
+                self.session_id,
+                e,
+            )
+
+    @EventListenerMixin.event_handler(VADSpeechEnd, priority=5)
+    async def _send_vad_speech_end_signal(self, event: VADSpeechEnd) -> None:
+        """Send backend-generated VAD speech end to the frontend."""
+        if not event.from_server:
+            return
+        try:
+            await self.send_signal(
+                self._build_message(
+                    "vad_speech_end",
+                    {
+                        "confidence": getattr(event, "confidence", 0.0),
+                        "speech_probability": getattr(event, "speech_probability", 0.0),
+                    },
+                    event,
+                )
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to send vad_speech_end signal - session: %s, error: %s",
+                self.session_id,
+                e,
+            )
 
     @EventListenerMixin.event_handler(ASRResultPartial, priority=5)
     async def _send_update_asr_signal(self, event: ASRResultPartial) -> None:

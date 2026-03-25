@@ -68,6 +68,7 @@ class VADSpeechStart(BaseEvent):
     TYPE: ClassVar[str] = "vad.speech_start"
     confidence: float = 0.0
     speech_probability: float = 0.0
+    from_server: bool = False
 
 
 @dataclass
@@ -75,6 +76,7 @@ class VADSpeechEnd(BaseEvent):
     TYPE: ClassVar[str] = "vad.speech_end"
     confidence: float = 0.0
     speech_probability: float = 0.0
+    from_server: bool = False
 
 
 # TODO: remove unused fields

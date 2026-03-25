@@ -142,6 +142,7 @@ class VADManager(Manager):
             session_id=self.session_id,
             confidence=0.8,
             speech_probability=0.8,
+            from_server=True,
         )
         await self.event_bus.publish(evt)
 
@@ -160,6 +161,7 @@ class VADManager(Manager):
             session_id=self.session_id,
             confidence=0.8,
             speech_probability=0.0,
+            from_server=True,
         )
         await self.event_bus.publish(evt)
 

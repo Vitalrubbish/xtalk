@@ -171,7 +171,6 @@ class EventBus:
                     session_id=event.session_id,
                     error_type="event_bus_publish_error",
                     error_message=str(e),
-                    component="EventBus",
                 )
                 # Fire-and-forget to avoid recursion
                 asyncio.create_task(self.publish(error_event))
@@ -200,7 +199,9 @@ class EventBus:
             handler.last_error = e
             self._stats["errors_occurred"] += 1
 
-            logger.error("Event handler raised: %s, event_type: %s", e, event.event_type)
+            logger.error(
+                "Event handler raised: %s, event_type: %s", e, event.event_type
+            )
 
             # Publish error event
             if event.event_type != "error.occurred":
@@ -208,7 +209,6 @@ class EventBus:
                     session_id=event.session_id,
                     error_type="event_handler_error",
                     error_message=str(e),
-                    component=f"Handler:{handler.handler.__name__}",
                 )
                 # Schedule async publication to avoid blocking
                 error_task = asyncio.create_task(self.publish(error_event))

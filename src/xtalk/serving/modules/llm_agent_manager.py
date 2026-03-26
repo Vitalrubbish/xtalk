@@ -260,7 +260,6 @@ class LLMAgentManager(Manager):
                 session_id=self.session_id,
                 error_type=error_type,
                 error_message=message,
-                component="LLMAgentManager",
             )
         )
 

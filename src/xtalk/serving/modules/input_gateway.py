@@ -97,7 +97,6 @@ class TextMsgHandler(EventListenerMixin):
         if message_type == "vad_speech_start":
             vad_event = VADSpeechStart(
                 session_id=self.session_id,
-                confidence=message_data.get("confidence", 0.8),
             )
             await self.event_bus.publish(vad_event)
 
@@ -109,7 +108,6 @@ class TextMsgHandler(EventListenerMixin):
             await self.event_bus.publish(final_audio_event, wait_for_completion=True)
             vad_event = VADSpeechEnd(
                 session_id=self.session_id,
-                confidence=message_data.get("confidence", 0.8),
             )
             await self.event_bus.publish(vad_event)
 

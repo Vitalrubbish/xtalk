@@ -46,9 +46,7 @@ class AudioFrameReceived(BaseEvent):
     TYPE: ClassVar[str] = "audio.frame_received"
     audio_data: bytes
     sample_rate: int = 16000
-    channels: int = 1
     is_final: bool = False
-    audio_format: str = "pcm_s16le"
 
 
 @dataclass
@@ -58,32 +56,22 @@ class EnhancedAudioFrameReceived(BaseEvent):
     TYPE: ClassVar[str] = "audio.enhanced_frame_received"
     audio_data: bytes
     sample_rate: int = 16000
-    channels: int = 1
-    is_final: bool = False  # TODO: deprecate unused fields
-    audio_format: str = "pcm_s16le"
 
 
 @dataclass
 class VADSpeechStart(BaseEvent):
     TYPE: ClassVar[str] = "vad.speech_start"
-    confidence: float = 0.0
-    speech_probability: float = 0.0
 
 
 @dataclass
 class VADSpeechEnd(BaseEvent):
     TYPE: ClassVar[str] = "vad.speech_end"
-    confidence: float = 0.0
-    speech_probability: float = 0.0
 
 
-# TODO: remove unused fields and remove turn id?
 @dataclass
 class ASRResultPartial(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_partial"
     text: str = ""
-    confidence: float = 0.0
-    is_final: bool = False
     display_text: str = ""  # Cleaned text for frontend display
     turn_id: int = 0
 
@@ -92,10 +80,7 @@ class ASRResultPartial(BaseEvent):
 class ASRResultFinal(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_final"
     text: str = ""
-    confidence: float = 0.0
-    is_final: bool = True
     display_text: str = ""  # Cleaned text for frontend display
-    semantic_tag: str = "<complete>"
     turn_id: int = 0
 
 
@@ -202,11 +187,6 @@ class TTSPlaybackFinished(BaseEvent):
 class VerificationResult(BaseEvent):
     TYPE: ClassVar[str] = "verification.result"
     is_valid: bool = False
-    text: str = ""
-    confidence: float = 0.0
-    reason: str = ""
-    text_length: int = 0
-    chunk_count: int = 0
 
 
 @dataclass
@@ -214,7 +194,6 @@ class ErrorOccurred(BaseEvent):
     TYPE: ClassVar[str] = "error.occurred"
     error_type: str = ""
     error_message: str = ""
-    component: str = ""
 
 
 @dataclass
@@ -307,7 +286,6 @@ class TurnLLMAgentStartRequested(BaseEvent):
 @dataclass
 class TurnLLMAgentResumeRequested(BaseEvent):
     TYPE: ClassVar[str] = "turn.llm_agent_resume_requested"
-    text: str = ""
 
 
 @dataclass

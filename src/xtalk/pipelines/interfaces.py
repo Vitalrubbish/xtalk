@@ -1,8 +1,6 @@
-import asyncio
 from abc import abstractmethod, ABC
-from typing import Optional, TypedDict, Iterable, AsyncIterator
+from typing import Optional, TypedDict
 from typing import Dict, Any
-import numpy as np
 from langchain_core.embeddings import Embeddings
 from ..speech.interfaces import (
     ASR,

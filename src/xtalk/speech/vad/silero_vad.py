@@ -3,7 +3,6 @@ Silero VAD wrapper that mimics webrtcvad.Vad API (`is_speech`).
 It keeps an internal VADIterator so it can be called chunk-by-chunk.
 """
 
-from typing import Dict, Tuple
 
 import numpy as np
 import torch

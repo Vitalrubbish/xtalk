@@ -19,7 +19,7 @@ from ..speech.interfaces import (
     SpeechSpeedController,
     SpeakerEncoder,
 )
-from .interfaces import Pipeline, PipelineOutput
+from .interfaces import Pipeline
 
 
 def _maybe_clone(obj: Any) -> Any:

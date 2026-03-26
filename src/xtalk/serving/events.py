@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import time
-import uuid
-from dataclasses import dataclass, field, asdict, make_dataclass
+from dataclasses import dataclass, field, make_dataclass
 from typing import ClassVar, Dict, Any, Type
 
 

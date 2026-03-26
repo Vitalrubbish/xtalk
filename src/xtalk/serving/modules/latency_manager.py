@@ -35,7 +35,6 @@ from ..events import (
     ClockSyncReceived,
 )
 from ..interfaces import EventListenerMixin, Manager
-from ...log_utils import logger
 
 
 class LatencyManager(EventListenerMixin):

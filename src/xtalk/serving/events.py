@@ -184,12 +184,6 @@ class TTSPlaybackFinished(BaseEvent):
 
 
 @dataclass
-class VerificationResult(BaseEvent):
-    TYPE: ClassVar[str] = "verification.result"
-    is_valid: bool = False
-
-
-@dataclass
 class ErrorOccurred(BaseEvent):
     TYPE: ClassVar[str] = "error.occurred"
     error_type: str = ""

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
 from fastapi import WebSocket
-from dataclasses import dataclass
 from ...log_utils import logger
 from typing import Any
 
@@ -10,7 +9,6 @@ from ..interfaces import EventListenerMixin
 from ..events import (
     ASRResultPartial,
     ASRResultFinal,
-    VerificationResult,
     TTSStarted,
     TTSStopped,
     TTSPaused,
@@ -20,7 +18,6 @@ from ..events import (
     LLMAgentResponseFinish,
     ErrorOccurred,
     TTSChunkGenerated,
-    TTSPlaybackFinished,
     TTSVoiceChange,
     TTSEmotionChange,
     ThoughtUpdated,
@@ -30,13 +27,6 @@ from ..events import (
     RetrievalUpdated,
     SpeakerRecognized,
 )
-
-
-@dataclass
-class ModulesState:
-    """State snapshot for downstream modules."""
-
-    tts_active: bool = False
 
 
 class OutputGateway(EventListenerMixin):
@@ -53,7 +43,6 @@ class OutputGateway(EventListenerMixin):
         self.session_id = session_id
         self.websocket = websocket
         self.config: dict[str, Any] = config or {}
-        self.state = ModulesState()
 
     # ── WebSocket helpers ───────────────────────────────────────────
 
@@ -161,10 +150,6 @@ class OutputGateway(EventListenerMixin):
 
     # ── Event handlers ──────────────────────────────────────────────
 
-    @EventListenerMixin.event_handler(TTSPlaybackFinished, priority=5)
-    async def _on_tts_playback_finished(self, event) -> None:
-        self.state.tts_active = False
-
     @EventListenerMixin.event_handler(ASRResultPartial, priority=5)
     async def _send_update_asr_signal(self, event: ASRResultPartial) -> None:
         await self._forward_asr("update_asr", event)
@@ -173,16 +158,8 @@ class OutputGateway(EventListenerMixin):
     async def _send_finish_asr_signal(self, event: ASRResultFinal) -> None:
         await self._forward_asr("finish_asr", event)
 
-    @EventListenerMixin.event_handler(VerificationResult, priority=5)
-    async def _handle_verification_result(self, event: VerificationResult) -> None:
-        if self.state.tts_active:
-            return
-        if not event.is_valid:
-            await self._forward("invalid_asr_result", "")
-
     @EventListenerMixin.event_handler(TTSStarted, priority=5)
     async def _on_start_tts(self, event) -> None:
-        self.state.tts_active = True
         await self._forward("start_tts", "")
 
     @EventListenerMixin.event_handler(TTSStopped, priority=5)

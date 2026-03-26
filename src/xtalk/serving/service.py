@@ -65,7 +65,7 @@ class Service:
             manager = self._instantiate_manager(manager_cls)
             self._managers.append(manager)
         self.input_gateway = InputGateway(
-            self.event_bus, self.session_id, _websocket, config=self.service_config
+            self.event_bus, self.session_id, _websocket
         )
         self.output_gateway = OutputGateway(
             self.event_bus,

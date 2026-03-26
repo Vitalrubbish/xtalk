@@ -54,8 +54,7 @@ class DefaultAgent(Agent):
     fallbacks and only forwards LangChain-provided tool calls.
     """
 
-    _BASE_PROMPT: str = (
-        """
+    _BASE_PROMPT: str = """
 You are a friendly conversational partner whose response will be converted to speech using TTS. Please follow rules below:
 1. Respond with the same language as user.
 Examples:
@@ -101,15 +100,13 @@ The system should distinguish users based on their speaker IDs, with one user ma
 请礼貌地请求用户重复上一句内容。
 5. 有几个不同说话人id就有几个不同的对话用户，每个说话人id对应一个用户，你要根据说话人id来区分用户。
 """
-    )
-    _CONTEXT_AWARE_PROMPT: str = (
-        """
+    _CONTEXT_AWARE_PROMPT: str = ("""
 You are a multimodal conversational assistant with access to:
 1) Non-verbal environmental context extracted from recent audio, wrapped in <caption>...</caption>.
 2) Your internal reasoning summary for the latest turn, wrapped in <thought>...</thought>.
 
 About <caption>:
-- It describes the user’s environment, emotional cues, ambient sounds, and relevant non-verbal context.
+- It describes the user's environment, emotional cues, ambient sounds, and relevant non-verbal context.
 - It may contain incomplete or approximate descriptions; treat it as helpful hints, not absolute truth.
 - Use it only to enrich understanding and respond more naturally, not to hallucinate details that are not implied.
 - DO NOT reveal <caption> content directly in your replies.
@@ -126,11 +123,33 @@ When generating your final response:
 - Never output the tags themselves, nor refer to them explicitly.
 - Do NOT invent nonexistent sensations, emotions, or events.
 - Focus on giving a helpful, grounded, natural reply to the user's last message.
-- If caption and user text conflict, ALWAYS prioritize the user’s explicit message.
+- If caption and user text conflict, ALWAYS prioritize the user's explicit message.
 
 Caption and thought:
+""").strip()
+
+    _PRE_TOOL_FILLER_PROMPT: str = (
+        """You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence before a tool call is executed. 
+Your response should sound like friendly spoken language.
+Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
 """
-    ).strip()
+    )
+
+    _EMBEDDING_PROCESSING_PROMPT: str = (
+        """You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence to indicate that you are aware of a Doc uploaded. 
+You should mention that you are aware that the User uploaded a Doc, and mention that you are processing it.
+Your response should sound like friendly spoken language.
+Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
+"""
+    )
+
+    _EMBEDDING_FINISHED_PROMPT: str = (
+        """You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence to indicate that you have processed a Doc user just uploaded, and user can ask about it. 
+Your response should sound like friendly spoken language.
+You should mention the Doc summary.
+Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
+"""
+    )
 
     def __init__(
         self,
@@ -371,12 +390,7 @@ Caption and thought:
         ]:
             return
         prompt_history = [
-            SystemMessage(
-                content="""You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence before a tool call is executed. 
-Your response should sound like friendly spoken language.
-Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
-"""
-            ),
+            SystemMessage(content=self._PRE_TOOL_FILLER_PROMPT),
             HumanMessage(
                 content=f"Tool call name: {tool_call['name']}\nTool call arguments: {tool_call['args']}\nChat history:\n{self.get_chat_history()}"
             ),
@@ -403,6 +417,129 @@ Your response should be catered to the given Chat history, e.g. respond in the s
         """Stream the response while forwarding tool calls."""
         yield from self._sync_iter_from_async(self.async_generate_stream(input))
 
+    def _prepare_context(
+        self, ctx: Optional[PipelineContext]
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Extract caption, thought, and speaker_id from context; update system prompt."""
+        caption = (ctx.get("caption") if isinstance(ctx, dict) else None) or None
+        thought = (ctx.get("thought") if isinstance(ctx, dict) else None) or None
+        speaker_id = (ctx.get("speaker_id") if isinstance(ctx, dict) else None) or None
+        self._update_first_system(caption, thought)
+        return caption, thought, speaker_id
+
+    @staticmethod
+    def _summarize_doc(doc: str, max_sentences: int | None = None) -> str:
+        """
+        Language-agnostic rule-based extractive summary.
+        """
+
+        # === Helper: sentence split ===
+        def split_sentences(text: str) -> List[str]:
+            # Normalize newlines
+            text = re.sub(r"[\r\n]+", "\n", text)
+            # Split by punctuation (language-agnostic via symbols)
+            text = re.sub(r"([.!?。！？；;:])\s*", r"\1\n", text)
+            parts = [s.strip() for s in text.split("\n")]
+            return [s for s in parts if s]
+
+        # === Helper: tokenization (language-agnostic) ===
+        def tokenize(sentence: str) -> List[str]:
+            # Use unicode \w+ for tokenization without language assumptions
+            return re.findall(r"\w+", sentence.lower())
+
+        # =============================================
+        # Main logic
+        # =============================================
+
+        if not doc:
+            return ""
+
+        text = re.sub(r"\s+", " ", doc).strip()
+        if len(text) <= 80:
+            return text
+
+        sentences = split_sentences(text)
+        if len(sentences) <= 2:
+            return text
+
+        tokenized = [tokenize(s) for s in sentences]
+        all_tokens = [t for sent in tokenized for t in sent]
+
+        if not all_tokens:
+            k = max_sentences or min(3, len(sentences))
+            return " ".join(sentences[:k])
+
+        # Global token frequency
+        freq = Counter(all_tokens)
+        max_freq = max(freq.values())
+
+        # Sentence scoring: high-frequency tokens + position
+        n = len(sentences)
+        scores = []
+        for idx, tokens in enumerate(tokenized):
+            if not tokens:
+                scores.append(0.0)
+                continue
+
+            tf_score = sum(freq[t] / max_freq for t in tokens) / len(tokens)
+
+            # Positional weight: boost start and slightly boost ending sentence
+            if n > 1:
+                pos_norm = 1.0 - idx / (n - 1)
+            else:
+                pos_norm = 1.0
+            pos_score = 0.2 * pos_norm
+            if idx == n - 1:
+                pos_score += 0.05
+
+            scores.append(tf_score + pos_score)
+
+        # Default number of summary sentences
+        if max_sentences is None:
+            max_sentences = min(6, max(1, n // 3))
+
+        # Choose sentences with highest scores
+        top_indices = sorted(range(n), key=lambda i: scores[i], reverse=True)[
+            :max_sentences
+        ]
+
+        top_indices.sort()
+        return " ".join(sentences[i] for i in top_indices)
+
+    async def _response_to_history(self, history: List[BaseMessage], stream: bool):
+        """Stream or invoke model and append the AI response to session history."""
+        response = AIMessage(content="")
+        if stream:
+            appended_to_history = False
+            async for chunk in self.model.astream(history):
+                response.content += chunk.content
+                yield chunk.content
+                if not appended_to_history:
+                    # Append the "processing" message, merging with latest AI if possible.
+                    last_ai: Optional[AIMessage] = None
+                    if isinstance(self.session_history[-1], AIMessage):
+                        last_ai = self.session_history[-1]
+                    if last_ai is not None:
+                        prev = last_ai.content
+                        self.session_history[-1] = response
+                        response.content = prev + response.content
+                    else:
+                        self.session_history.append(response)
+                    appended_to_history = True
+        else:
+            processing_msg = await self.model.ainvoke(history)
+            response.content = processing_msg.content
+            yield processing_msg.content
+            # Append the "processing" message, merging with latest AI if possible.
+            last_ai: Optional[AIMessage] = None
+            if isinstance(self.session_history[-1], AIMessage):
+                last_ai = self.session_history[-1]
+            if last_ai is not None:
+                prev = last_ai.content
+                last_ai.content = f"{prev}{response.content}"
+            else:
+                self.session_history.append(response)
+
     async def _try_process_embeddings(
         self, ctx: Optional[PipelineContext], stream: bool
     ):
@@ -410,119 +547,6 @@ Your response should be catered to the given Chat history, e.g. respond in the s
         Return whether this method fully handled the request (True means skip the
         regular dialogue generation upstream).
         """
-
-        def summarize_doc(doc: str, max_sentences: int | None = None) -> str:
-            """
-            Language-agnostic rule-based extractive summary helper with nested
-            utilities defined inline for portability.
-            """
-
-            # === Helper: sentence split ===
-            def split_sentences(text: str) -> List[str]:
-                # Normalize newlines
-                text = re.sub(r"[\r\n]+", "\n", text)
-                # Split by punctuation (language-agnostic via symbols)
-                text = re.sub(r"([.!?。！？；;:])\s*", r"\1\n", text)
-                parts = [s.strip() for s in text.split("\n")]
-                return [s for s in parts if s]
-
-            # === Helper: tokenization (language-agnostic) ===
-            def tokenize(sentence: str) -> List[str]:
-                # Use unicode \w+ for tokenization without language assumptions
-                return re.findall(r"\w+", sentence.lower())
-
-            # =============================================
-            # Main logic
-            # =============================================
-
-            if not doc:
-                return ""
-
-            text = re.sub(r"\s+", " ", doc).strip()
-            if len(text) <= 80:
-                return text
-
-            sentences = split_sentences(text)
-            if len(sentences) <= 2:
-                return text
-
-            tokenized = [tokenize(s) for s in sentences]
-            all_tokens = [t for sent in tokenized for t in sent]
-
-            if not all_tokens:
-                k = max_sentences or min(3, len(sentences))
-                return " ".join(sentences[:k])
-
-            # Global token frequency
-            freq = Counter(all_tokens)
-            max_freq = max(freq.values())
-
-            # Sentence scoring: high-frequency tokens + position
-            n = len(sentences)
-            scores = []
-            for idx, tokens in enumerate(tokenized):
-                if not tokens:
-                    scores.append(0.0)
-                    continue
-
-                tf_score = sum(freq[t] / max_freq for t in tokens) / len(tokens)
-
-                # Positional weight: boost start and slightly boost ending sentence
-                if n > 1:
-                    pos_norm = 1.0 - idx / (n - 1)
-                else:
-                    pos_norm = 1.0
-                pos_score = 0.2 * pos_norm
-                if idx == n - 1:
-                    pos_score += 0.05
-
-                scores.append(tf_score + pos_score)
-
-            # Default number of summary sentences
-            if max_sentences is None:
-                max_sentences = min(6, max(1, n // 3))
-
-            # Choose sentences with highest scores
-            top_indices = sorted(range(n), key=lambda i: scores[i], reverse=True)[
-                :max_sentences
-            ]
-
-            top_indices.sort()
-            return " ".join(sentences[i] for i in top_indices)
-
-        async def response_to_history(history: List[BaseMessage]):
-            response = AIMessage(content="")
-            if stream:
-                appended_to_history = False
-                async for chunk in self.model.astream(history):
-                    response.content += chunk.content
-                    yield chunk.content
-                    if not appended_to_history:
-                        # Append the "processing" message, merging with latest AI if possible.
-                        last_ai: Optional[AIMessage] = None
-                        if isinstance(self.session_history[-1], AIMessage):
-                            last_ai = self.session_history[-1]
-                        if last_ai is not None:
-                            prev = last_ai.content
-                            self.session_history[-1] = response
-                            response.content = prev + response.content
-                        else:
-                            self.session_history.append(response)
-                        appended_to_history = True
-            else:
-                processing_msg = await self.model.ainvoke(history)
-                response.content = processing_msg.content
-                yield processing_msg.content
-                # Append the "processing" message, merging with latest AI if possible.
-                last_ai: Optional[AIMessage] = None
-                if isinstance(self.session_history[-1], AIMessage):
-                    last_ai = self.session_history[-1]
-                if last_ai is not None:
-                    prev = last_ai.content
-                    last_ai.content = f"{prev}{response.content}"
-                else:
-                    self.session_history.append(response)
-
         status = ctx.get("embedding_status") if ctx is not None else None
         if not status or status == "idle":
             yield False
@@ -533,16 +557,12 @@ Your response should be catered to the given Chat history, e.g. respond in the s
         if status == "processing":
             # Generate transitional speech acknowledging document reception
             processing_prompt_history = [
-                SystemMessage(
-                    content="""You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence to indicate that you are aware of a Doc uploaded. 
-You should mention that you are aware that the User uploaded a Doc, and mention that you are processing it.
-Your response should sound like friendly spoken language.
-Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
-"""
-                ),
+                SystemMessage(content=self._EMBEDDING_PROCESSING_PROMPT),
                 HumanMessage(content=f"Chat history:\n{self.get_chat_history()}"),
             ]
-            async for content in response_to_history(processing_prompt_history):
+            async for content in self._response_to_history(
+                processing_prompt_history, stream
+            ):
                 yield content
 
         if status == "finished":
@@ -556,20 +576,16 @@ Your response should be catered to the given Chat history, e.g. respond in the s
                     self.model.bind_tools(self.tools) if self.tools else self.model
                 )
             # Generate completion acknowledgement so the user can ask about doc
-            doc_summary = summarize_doc(text_to_embed)
+            doc_summary = self._summarize_doc(text_to_embed)
             finished_prompt_history = [
-                SystemMessage(
-                    content="""You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence to indicate that you have processed a Doc user just uploaded, and user can ask about it. 
-Your response should sound like friendly spoken language.
-You should mention the Doc summary.
-Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
-"""
-                ),
+                SystemMessage(content=self._EMBEDDING_FINISHED_PROMPT),
                 HumanMessage(
                     content=f"Doc summary:\n{doc_summary}\n\nChat history:\n{self.get_chat_history()}"
                 ),
             ]
-            async for content in response_to_history(finished_prompt_history):
+            async for content in self._response_to_history(
+                finished_prompt_history, stream
+            ):
                 yield content
 
         yield True
@@ -588,9 +604,7 @@ Your response should be catered to the given Chat history, e.g. respond in the s
         #             return
         #     else:
         #         yield content
-        caption = (ctx.get("caption") if isinstance(ctx, dict) else None) or None
-        thought = (ctx.get("thought") if isinstance(ctx, dict) else None) or None
-        self._update_first_system(caption, thought)
+        self._prepare_context(ctx)
 
         user_prompt = HumanMessage(content)
         self.session_history.append(user_prompt)
@@ -693,10 +707,7 @@ Your response should be catered to the given Chat history, e.g. respond in the s
                     return
             else:
                 yield content_or_status
-        caption = (ctx.get("caption") if isinstance(ctx, dict) else None) or None
-        thought = (ctx.get("thought") if isinstance(ctx, dict) else None) or None
-        speaker_id = (ctx.get("speaker_id") if isinstance(ctx, dict) else None) or None
-        self._update_first_system(caption, thought)
+        _, _, speaker_id = self._prepare_context(ctx)
         if speaker_id:
             user_prompt = HumanMessage(
                 f"The current speaker is {ctx['speaker_id']}, saying: {content}",

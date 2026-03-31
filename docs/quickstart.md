@@ -10,7 +10,7 @@ pip install jinja2 python-multipart 'uvicorn[standard]'
 
 Then, obtain an API key from [AliCloud Bailian Platform](https://bailian.console.aliyun.com/?tab=model#/api-key). We will be using free-tier service from AliCloud.
 
-> Online service may be unstable and of high latency. We recommend using locally deployed models for better user experience. See [server config tutorial](#config-the-server) and [supported models](#supported-models) for details.
+> Online service may be unstable and of high latency. We recommend using locally deployed models for better user experience. See [server config tutorial](tutorial/config_the_server.md) and [supported models](docs/supported_models.md) for details.
 
 After that, create a JSON config specifying the models to use, and **fill in <API_KEY>** with the key you obtained:
 

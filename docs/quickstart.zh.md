@@ -10,7 +10,7 @@ pip install jinja2 python-multipart 'uvicorn[standard]'
 
 然后，从[阿里云百炼平台](https://bailian.console.aliyun.com/?tab=model#/api-key)获取 API 密钥。我们将使用阿里云的免费服务。
 
-> 在线服务可能不稳定且延迟较高。我们建议使用本地部署的模型以获得更好的用户体验。详情请参阅[服务器配置教程](#config-the-server)和[支持的模型](#supported-models)。
+> 在线服务可能不稳定且延迟较高。我们建议使用本地部署的模型以获得更好的用户体验。详情请参阅[服务器配置教程](tutorial/config_the_server.md)和[支持的模型](docs/supported_models.md)。
 
 之后，创建一个 JSON 配置文件来指定要使用的模型，并**用您获取的密钥填写 <API_KEY>**：
 

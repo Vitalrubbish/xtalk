@@ -1,5 +1,3 @@
-#### Sample Config for Fully Local Deployment
-
 Below is an example config file for X-Talk when you want to have all models hosted locally. `SherpaOnnxASR` is used for speech recognition, and you can see [here](https://k2-fsa.github.io/sherpa/onnx/sense-voice/python-api.html#websocket-server-and-client-example) to set up the server. For LLM agent and embeddings, any model adhering to OpenAI protocol is fine. You should provide `api_key`, `base_url` and `model`. `IndexTTS` is used for speech generation, and see [here](https://github.com/Ksuriuri/index-tts-vllm) for server setup. Reference voices can be downloaded [here](https://github.com/xcc-zach/xtalk/releases/tag/audio-v0.1). The captioner is hard to set up, but you can refer to the tutorial [here](https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Captioner). **Finally, remember to look into each model type in [Supported Models](#supported-models) for how to install the optional dependencies of X-Talk for that model**.
 
 ```json

@@ -80,7 +80,6 @@ class EnhancerManager(Manager):
             enhanced_event = EnhancedAudioFrameReceived(
                 session_id=event.session_id,
                 audio_data=enhanced_data,
-                is_final=event.is_final,
                 sample_rate=event.sample_rate,
             )
             await self.event_bus.publish(enhanced_event)

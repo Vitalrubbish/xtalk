@@ -4,7 +4,6 @@ import soundfile as sf
 import librosa
 import grpc
 from grpc import aio
-from ...log_utils import logger
 import logging
 from typing import Optional, Generator, AsyncGenerator
 from contextlib import asynccontextmanager

@@ -3,98 +3,85 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Xtalk Demo</title>
+    <title>Xtalk Dev</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="./static/css/index.css" />
-
-    <!-- ORT/VAD scripts are now loaded on demand in /static/js/index.js -->
 </head>
 
 <body>
     <header>
         <div class="container">
-            <h1>Xtalk Full Integration Demo</h1>
-            <div class="metrics" id="metrics">
-                <div>Network: <span id="latency-net">--</span> ms</div>
-                <div>ASR: <span id="latency-asr">--</span> ms</div>
-                <div>LLM first token: <span id="latency-llm-token">--</span> ms</div>
-                <div>LLM sentence: <span id="latency-llm-sentence">--</span> ms</div>
-                <div>TTS first chunk: <span id="latency-tts">--</span> ms</div>
-                <div>End to end: <span id="latency-e2e">--</span> ms</div>
-                <div>Speaker: <span id="speaker-id">--</span></div>
-                <span id="streaming-state">--</span>
+            <h1>Xtalk Dev</h1>
+            <div class="status">
+                <div>State: <span id="stream-state">--</span></div>
+                <div>Session: <span id="session-id">--</span></div>
             </div>
             <div class="controls">
-                <button id="btn-toggle">Loading</button>
-                <button id="btn-restart">Restart</button>
-                <button id="btn-stop" class="danger">Disconnect</button>
-                <button id="btn-mic">Mute</button>
-                <button id="btn-view">Hide chat history</button>
-                <button id="btn-thought">Show thought</button>
-                <button id="btn-caption">Show caption</button>
-                <button id="btn-retrieval">Retrieved information</button>
+                <button id="btn-start">Start</button>
+                <button id="btn-stop">Stop</button>
+                <button id="btn-mute">Mute</button>
+            </div>
+            <div class="controls">
                 <div class="voice-selector">
                     <label for="voice-select">Voice:</label>
                     <select id="voice-select" disabled>
                         <option value="">Loading...</option>
                     </select>
                 </div>
-                <div class="speed-control">
-                    <label for="speed-select">TTS Speed:</label>
-                    <select id="speed-select">
-                        <option value="0.5">0.5x</option>
-                        <option value="0.75">0.75x</option>
-                        <option value="1.0" selected>1.0x</option>
-                        <option value="1.25">1.25x</option>
-                        <option value="1.5">1.5x</option>
-                    </select>
-                </div>
-                <div class="model-selector" style="display: none;">
-                    <label for="tts-model-select">TTS Model:</label>
-                    <select id="tts-model-select" disabled>
-                        <option value=\"\">Loading...</option>
-                    </select>
-                </div>
-                <div class="model-selector" style="display: none;">
-                    <label for="llm-model-select">LLM Model:</label>
-                    <select id="llm-model-select" disabled>
-                        <option value=\"\">Loading...</option>
-                    </select>
-                </div>
                 <div class="upload-btn">
                     <button id="btn-upload-file">Upload Doc</button>
                     <input id="file-input" type="file" accept="text/*,.pdf,application/pdf" style="display:none;" />
                 </div>
-                <button id="btn-switch-ui" onclick="window.location.href='/modern'" title="Switch to Modern UI">🎨
-                    Modern
-                    UI</button>
+                <button id="btn-toggle-recent-audio" class="recent-audio-toggle">Recent 60s Audio</button>
             </div>
         </div>
     </header>
     <main class="container">
-        <div class="card" id="waveform-card">
+        <div id="latency-bar" class="latency-bar">
+            <span class="latency-item">Network: <span id="latency-network">--</span>ms</span>
+            <span class="latency-item">ASR: <span id="latency-asr">--</span>ms</span>
+            <span class="latency-item">LLM First Token: <span id="latency-llm-first">--</span>ms</span>
+            <span class="latency-item">LLM Sentence: <span id="latency-llm-sentence">--</span>ms</span>
+            <span class="latency-item">TTS First Chunk: <span id="latency-tts">--</span>ms</span>
+            <span class="latency-item latency-e2e">E2E: <span id="latency-e2e">--</span>ms</span>
+        </div>
+        <div id="recent-audio-card" class="card recent-audio-card is-hidden" aria-hidden="true">
+            <div class="recent-audio-header">
+                <span id="recent-audio-status" class="recent-audio-status">Waiting for server full audio stream</span>
+            </div>
+            <div id="recent-audio-panel" class="recent-audio-panel">
+                <audio id="recent-audio-player" class="recent-audio-player" controls preload="metadata"></audio>
+                <div class="recent-audio-hint">Shows a snapshot of the latest 60 seconds of server full audio.</div>
+            </div>
+        </div>
+        <div class="card">
             <canvas id="waveform"></canvas>
         </div>
-        <div class="card hidden" id="thought-card">
-            <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Thought</div>
-            <div id="thought-content" style="white-space:pre-wrap;word-break:break-word;color:#e5e7eb;"></div>
+        <div class="card">
+            <div id="messages"></div>
         </div>
-        <div class="card hidden" id="caption-card">
-            <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Caption</div>
-            <div id="caption-content" style="white-space:pre-wrap;word-break:break-word;color:#e5e7eb;"></div>
+        <div class="toggle-bar">
+            <button id="btn-toggle-thought" class="toggle-btn active">Thought</button>
+            <button id="btn-toggle-caption" class="toggle-btn active">Caption</button>
+            <button id="btn-toggle-retrieval" class="toggle-btn active">Retrieval</button>
         </div>
-        <div class="card hidden" id="retrieval-card">
-            <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Retrieved Information</div>
-            <div id="retrieval-content" style="white-space:pre-wrap;word-break:break-word;color:#e5e7eb;"></div>
+        <div id="panel-thought" class="card panel">
+            <div class="panel-label">Thought</div>
+            <div id="thought-content" class="panel-content"></div>
         </div>
-        <div class="card" id="messages"></div>
+        <div id="panel-caption" class="card panel">
+            <div class="panel-label">Caption</div>
+            <div id="caption-content" class="panel-content"></div>
+        </div>
+        <div id="panel-retrieval" class="card panel">
+            <div class="panel-label">Retrieval</div>
+            <div id="retrieval-content" class="panel-content"></div>
+        </div>
     </main>
     <footer>
-        Xtalk Demo
+        Xtalk Dev
     </footer>
-    <script type="module" src="./static/js/index.js">
-
-    </script>
+    <script type="module" src="./static/js/index.js"></script>
 </body>
 
 </html>

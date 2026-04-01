@@ -31,6 +31,7 @@ from ..event_bus import EventBus
 from ..interfaces import Manager
 from ..events import (
     AudioFrameReceived,
+    FullAudioFrameReady,
     TTSChunkGenerated,
     TTSChunkPlayed,
     TTSStarted,
@@ -53,13 +54,16 @@ class RecordingManager(Manager):
         self.session_id = session_id
         self.config: dict[str, Any] = config or {}
 
-        # Check if recording is enabled
-        self._enabled: bool = self.config.get("recording") is True
+        self._recording_enabled: bool = self.config.get("recording") is True
+        self._send_full_audio_enabled: bool = (
+            self.config.get("send_full_audio_to_client") is True
+        )
+        self._enabled: bool = self._recording_enabled or self._send_full_audio_enabled
         if not self._enabled:
             return
 
         # Defer file creation until SessionConfigReceived or first audio
-        self._output_initialized = False
+        self._file_initialized = False
         self._out_dir: str = ""
         self._out_path: str = ""
 
@@ -80,12 +84,14 @@ class RecordingManager(Manager):
         # Concurrency primitives
         self._lock = asyncio.Lock()
         self._io_lock = asyncio.Lock()
-        self._flush_task: Optional[asyncio.Task] = None
+        self._flush_task: Optional[asyncio.Task] = asyncio.create_task(
+            self._periodic_flush_loop()
+        )
         self._wf: Optional[wave.Wave_write] = None
 
     def _init_file(self, custom_path: str | None = None) -> None:
         """Initialize WAV file. Called lazily on first audio or config message."""
-        if self._output_initialized:
+        if not self._recording_enabled or self._file_initialized:
             return
 
         if custom_path:
@@ -107,10 +113,7 @@ class RecordingManager(Manager):
         self._wf.setnchannels(2)
         self._wf.setsampwidth(2)
         self._wf.setframerate(self.TARGET_SR)
-
-        # Start periodic flush task
-        self._flush_task = asyncio.create_task(self._periodic_flush_loop())
-        self._output_initialized = True
+        self._file_initialized = True
 
     def _init_audio_timer(self):
         """Initialize audio timers on first audio frame (user/tts)."""
@@ -122,7 +125,7 @@ class RecordingManager(Manager):
 
     def _init_on_audio(self):
         """Initialize recording on first audio frame if not yet initialized."""
-        if not self._output_initialized:
+        if self._recording_enabled and not self._file_initialized:
             self._init_file(None)
         self._init_audio_timer()
 
@@ -131,7 +134,7 @@ class RecordingManager(Manager):
     @Manager.event_handler(SessionConfigReceived, priority=100)
     async def _on_session_config(self, event: SessionConfigReceived) -> None:
         """Initialize recording with client-provided path."""
-        if not self._enabled or self._output_initialized:
+        if not self._recording_enabled or self._file_initialized:
             return
         self._init_file(event.recording_path)
 
@@ -264,20 +267,31 @@ class RecordingManager(Manager):
             while True:
                 await asyncio.sleep(self.FLUSH_INTERVAL_SEC)
                 try:
-                    await self._flush_to_file()
+                    await self._flush_outputs()
                 except Exception as e:
                     logger.warning("RecordingManager: periodic flush error: %s", e)
         except asyncio.CancelledError:
             pass
 
-    async def _flush_to_file(self) -> bool:
-        """Flush aligned buffers to disk."""
-        if not self._output_initialized:
-            return False
+    def _interleave_stereo(
+        self, user_bytes: bytes, tts_bytes: bytes, n_samples: int
+    ) -> bytes:
+        """Interleave user/TTS mono PCM bytes into stereo int16 PCM."""
+        if n_samples <= 0:
+            return b""
+        user = np.frombuffer(user_bytes, dtype=np.int16)
+        tts = np.frombuffer(tts_bytes, dtype=np.int16)
+        interleaved = np.empty((n_samples * 2,), dtype=np.int16)
+        interleaved[0::2] = user
+        interleaved[1::2] = tts
+        return interleaved.tobytes()
+
+    async def _drain_aligned_stereo_chunk(self) -> bytes:
+        """Drain the aligned portion shared by both channels as stereo PCM."""
         async with self._lock:
             n_write = min(self._samples_user, self._samples_tts)
             if n_write <= 0:
-                return False
+                return b""
 
             bytes_len = n_write * 2
             user_bytes = bytes(self._ch_user[:bytes_len])
@@ -288,28 +302,84 @@ class RecordingManager(Manager):
 
             self._samples_user -= n_write
             self._samples_tts -= n_write
+        return self._interleave_stereo(user_bytes, tts_bytes, n_write)
 
-        loop = asyncio.get_running_loop()
-
-        def _interleave_and_write(u_b: bytes, t_b: bytes, n_samples: int) -> None:
-            u = np.frombuffer(u_b, dtype=np.int16)
-            t = np.frombuffer(t_b, dtype=np.int16)
-            inter = np.empty((n_samples * 2,), dtype=np.int16)
-            inter[0::2] = u
-            inter[1::2] = t
-            self._wf.writeframes(inter.tobytes())
-
-        async with self._io_lock:
-            await loop.run_in_executor(
-                None, _interleave_and_write, user_bytes, tts_bytes, n_write
-            )
+    async def _flush_outputs(self) -> bool:
+        """Flush aligned stereo audio to every enabled sink."""
+        stereo_chunk = await self._drain_aligned_stereo_chunk()
+        if not stereo_chunk:
+            return False
+        if self._recording_enabled:
+            await self._write_stereo_chunk(stereo_chunk)
+        if self._send_full_audio_enabled:
+            await self._publish_full_audio_chunk(stereo_chunk)
         return True
+
+    async def _write_stereo_chunk(self, stereo_chunk: bytes) -> None:
+        """Write a stereo PCM chunk into the WAV file."""
+        if not stereo_chunk:
+            return
+        if self._wf is None:
+            self._init_file(None)
+        if self._wf is None:
+            return
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, self._wf.writeframes, stereo_chunk)
+
+    async def _publish_full_audio_chunk(self, stereo_chunk: bytes) -> None:
+        """Publish a full-conversation stereo PCM chunk for downstream transport."""
+        if not stereo_chunk:
+            return
+        await self.event_bus.publish(
+            FullAudioFrameReady(
+                session_id=self.session_id,
+                audio_chunk=stereo_chunk,
+                sample_rate=self.TARGET_SR,
+                channels=2,
+                format="pcm_s16le",
+            ),
+            wait_for_completion=True,
+        )
+
+    def _reset_buffers(self) -> None:
+        """Reset in-memory audio assembly state."""
+        self._ch_user.clear()
+        self._ch_tts.clear()
+        self._samples_user = 0
+        self._samples_tts = 0
+        self._pending_tts_chunks.clear()
+        self._timer_user = None
+        self._timer_tts = None
+
+    async def _build_final_stereo_chunk(self) -> bytes:
+        """Build the final padded stereo chunk from any remaining buffered audio."""
+        async with self._lock:
+            n_samples = max(self._samples_user, self._samples_tts)
+            if n_samples <= 0:
+                self._reset_buffers()
+                return b""
+            user = np.frombuffer(bytes(self._ch_user), dtype=np.int16)
+            tts = np.frombuffer(bytes(self._ch_tts), dtype=np.int16)
+            if user.size < n_samples:
+                user = np.concatenate(
+                    [user, np.zeros((n_samples - user.size,), dtype=np.int16)]
+                )
+            if tts.size < n_samples:
+                tts = np.concatenate(
+                    [tts, np.zeros((n_samples - tts.size,), dtype=np.int16)]
+                )
+            stereo_chunk = self._interleave_stereo(
+                user.tobytes(), tts.tobytes(), n_samples
+            )
+            self._reset_buffers()
+            return stereo_chunk
 
     # ==================== Lifecycle ====================
 
     async def shutdown(self) -> None:
         """Finalize recording by flushing remaining buffers and closing the file."""
-        if not self._enabled or not self._output_initialized:
+        if not self._enabled:
             return
         # Stop periodic flush
         if self._flush_task and not self._flush_task.done():
@@ -322,43 +392,18 @@ class RecordingManager(Manager):
 
         # Final flush
         try:
-            await self._flush_to_file()
+            await self._flush_outputs()
         except Exception:
             pass
 
-        # Handle any leftover samples
-        async with self._lock:
-            ns = max(self._samples_user, self._samples_tts)
-            if ns > 0:
-                u = np.frombuffer(bytes(self._ch_user), dtype=np.int16)
-                t = np.frombuffer(bytes(self._ch_tts), dtype=np.int16)
-                # Pad to match lengths
-                if u.size < ns:
-                    u = np.concatenate([u, np.zeros((ns - u.size,), dtype=np.int16)])
-                if t.size < ns:
-                    t = np.concatenate([t, np.zeros((ns - t.size,), dtype=np.int16)])
-                inter = np.empty((ns * 2,), dtype=np.int16)
-                inter[0::2] = u
-                inter[1::2] = t
-
-                loop = asyncio.get_running_loop()
-                async with self._io_lock:
-                    await loop.run_in_executor(
-                        None, self._wf.writeframes, inter.tobytes()
-                    )
-
-            # Clear buffers
-            self._ch_user.clear()
-            self._ch_tts.clear()
-            self._samples_user = 0
-            self._samples_tts = 0
-            self._pending_tts_chunks.clear()
-            self._timer_user = None
-            self._timer_tts = None
+        final_chunk = await self._build_final_stereo_chunk()
+        if final_chunk:
+            if self._recording_enabled:
+                await self._write_stereo_chunk(final_chunk)
 
         # Close file handle
         try:
-            if self._wf is not None:
+            if self._recording_enabled and self._wf is not None:
                 self._wf.close()
         finally:
             self._wf = None

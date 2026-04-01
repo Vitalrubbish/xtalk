@@ -35,7 +35,6 @@ from ..events import (
     ClockSyncReceived,
 )
 from ..interfaces import EventListenerMixin, Manager
-from ...log_utils import logger
 
 
 class LatencyManager(EventListenerMixin):
@@ -206,9 +205,7 @@ class LatencyManager(EventListenerMixin):
         # 2. ASR latency: t2 - t1
         vad_end_ts = self._backend_vad_end_recv_ts or self._vad_end_ts
         if vad_end_ts and self._asr_final_ts:
-            asr_latency = int(
-                max(0.0, (self._asr_final_ts - vad_end_ts) * 1000.0)
-            )
+            asr_latency = int(max(0.0, (self._asr_final_ts - vad_end_ts) * 1000.0))
 
         # 3. LLM first-token latency: t3 - t2
         if self._asr_final_ts and self._llm_first_token_ts:

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import time
-import uuid
-from dataclasses import dataclass, field, asdict, make_dataclass
+from dataclasses import dataclass, field, make_dataclass
 from typing import ClassVar, Dict, Any, Type
+from ..pipelines.context import PipelineContext
 
 
 @dataclass
@@ -46,9 +46,7 @@ class AudioFrameReceived(BaseEvent):
     TYPE: ClassVar[str] = "audio.frame_received"
     audio_data: bytes
     sample_rate: int = 16000
-    channels: int = 1
     is_final: bool = False
-    audio_format: str = "pcm_s16le"
 
 
 @dataclass
@@ -58,35 +56,27 @@ class EnhancedAudioFrameReceived(BaseEvent):
     TYPE: ClassVar[str] = "audio.enhanced_frame_received"
     audio_data: bytes
     sample_rate: int = 16000
-    channels: int = 1
-    is_final: bool = False  # TODO: deprecate unused fields
-    audio_format: str = "pcm_s16le"
 
 
 @dataclass
 class VADSpeechStart(BaseEvent):
     TYPE: ClassVar[str] = "vad.speech_start"
-    confidence: float = 0.0
-    speech_probability: float = 0.0
+    origin: str = "client"
 
 
 @dataclass
 class VADSpeechEnd(BaseEvent):
     TYPE: ClassVar[str] = "vad.speech_end"
-    confidence: float = 0.0
-    speech_probability: float = 0.0
+    origin: str = "client"
 
 
-# TODO: remove unused fields
 @dataclass
 class ASRResultPartial(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_partial"
     text: str = ""
-    confidence: float = 0.0
-    # Indicates whether user has a pause on his speech (often triggered by VAD end)
-    speech_pause: bool = False
     display_text: str = ""  # Cleaned text for frontend display
     turn_id: int = 0
+    speech_pause: bool = False
 
 
 @dataclass
@@ -94,10 +84,7 @@ class ASRResultFinal(BaseEvent):
     # Emit when ready for generation
     TYPE: ClassVar[str] = "asr.result_final"
     text: str = ""
-    confidence: float = 0.0
-    is_final: bool = True
     display_text: str = ""  # Cleaned text for frontend display
-    semantic_tag: str = "<complete>"
     turn_id: int = 0
 
 
@@ -201,11 +188,13 @@ class TTSPlaybackFinished(BaseEvent):
     TYPE: ClassVar[str] = "tts.playback_finished"
 
 
-# TODO: remove this event and its related logic on frontend
 @dataclass
-class VerificationResult(BaseEvent):
-    TYPE: ClassVar[str] = "verification.result"
-    is_valid: bool = False
+class FullAudioFrameReady(BaseEvent):
+    TYPE: ClassVar[str] = "audio.full_frame_ready"
+    audio_chunk: bytes = b""
+    sample_rate: int = 48000
+    channels: int = 2
+    format: str = "pcm_s16le"
 
 
 @dataclass
@@ -213,7 +202,6 @@ class ErrorOccurred(BaseEvent):
     TYPE: ClassVar[str] = "error.occurred"
     error_type: str = ""
     error_message: str = ""
-    component: str = ""
 
 
 @dataclass
@@ -301,12 +289,12 @@ class TurnTTSFlushRequested(BaseEvent):
 class TurnLLMAgentStartRequested(BaseEvent):
     TYPE: ClassVar[str] = "turn.llm_agent_start_requested"
     text: str = ""
+    context_snapshot: PipelineContext | None = None
 
 
 @dataclass
 class TurnLLMAgentResumeRequested(BaseEvent):
     TYPE: ClassVar[str] = "turn.llm_agent_resume_requested"
-    text: str = ""
 
 
 @dataclass
@@ -330,6 +318,7 @@ class TurnASREndRequested(BaseEvent):
     """
     Indicates hard turn end. ASR model state is reset. Turn moves to next.
     """
+
     TYPE: ClassVar[str] = "turn.asr_end_requested"
 
 
@@ -338,6 +327,7 @@ class TurnASRPauseRequested(BaseEvent):
     """
     Used when user indicates a wait, or pauses in the speech. Triggers recognition once. ASR model state is preserved; turn unchanged.
     """
+
     TYPE: ClassVar[str] = "turn.asr_pause_requested"
 
 

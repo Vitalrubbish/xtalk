@@ -181,6 +181,7 @@ Return only the label string with no extra text.
 """
 
     def __init__(self, model: dict | BaseChatModel) -> None:
+        super().__init__()
         if isinstance(model, dict):
             model = ChatOpenAI(**model)
         self._model = model
@@ -212,15 +213,14 @@ Return only the label string with no extra text.
                 action=TurnDetectionAction.DO_NOTHING,
                 semantic=TurnDetectionSemantic.IDLE,
             )
-        async with self._listening_lock:
-            if self._listening:
+        async with self.listening_lock():
+            if self.listening:
                 messages = [
                     SystemMessage(content=self.START_GENERATION_PROMPT),
                     HumanMessage(content=text),
                 ]
                 response = (await self._model.ainvoke(messages)).content
                 if speech_pause and "complete" in response.lower():
-                    self._listening = False
                     return TurnDetectionResult(
                         action=TurnDetectionAction.START_GENERATION,
                         semantic=TurnDetectionSemantic.COMPLETE,
@@ -247,13 +247,11 @@ Return only the label string with no extra text.
                         semantic=TurnDetectionSemantic.BACKCHANNEL,
                     )
                 if "wait" in response.lower():
-                    self._listening = True
                     return TurnDetectionResult(
                         action=TurnDetectionAction.STOP_SPEAKING,
                         semantic=TurnDetectionSemantic.WAIT,
                     )
                 if "interrupt" in response.lower():
-                    self._listening = True
                     result = TurnDetectionResult(
                         action=TurnDetectionAction.STOP_SPEAKING,
                         semantic=TurnDetectionSemantic.INCOMPLETE,

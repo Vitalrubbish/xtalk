@@ -2,6 +2,7 @@ from abc import abstractmethod, ABC
 from typing import Iterable, AsyncIterator, Any, Optional
 import numpy as np
 import asyncio
+import threading
 from functools import partial
 from enum import Enum
 from dataclasses import dataclass
@@ -394,6 +395,22 @@ class TurnDetectionResult:
 
 
 class TurnDetector(ABC):
+    def __init__(self) -> None:
+        self._listening = True
+        self._listening_lock = threading.Lock()
+        self._listening_async_lock = asyncio.Lock()
+
+    @property
+    def listening(self) -> bool:
+        return self._listening
+
+    @listening.setter
+    def listening(self, value: bool) -> None:
+        self._listening = value
+
+    def listening_lock(self, is_async: bool = True):
+        return self._listening_async_lock if is_async else self._listening_lock
+
     @abstractmethod
     def detect(
         self,

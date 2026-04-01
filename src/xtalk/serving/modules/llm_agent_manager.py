@@ -24,6 +24,7 @@ from ..events import (
 )
 from ..interfaces import Manager
 from ...pipelines import Pipeline
+from ...pipelines.context import PipelineContext
 from ...llm_agent import Agent
 
 
@@ -78,9 +79,12 @@ class LLMAgentManager(Manager):
     ) -> None:
         """Start generation for a new turn."""
         text = event.text
+        context_snapshot = event.context_snapshot
 
         await self._cancel_running_task()
-        self._llm_task = asyncio.create_task(self._generate_response(text))
+        self._llm_task = asyncio.create_task(
+            self._generate_response(text, context_snapshot=context_snapshot)
+        )
         self._turn_id += 1
 
     @Manager.event_handler(TurnLLMAgentResumeRequested, priority=95)
@@ -144,7 +148,9 @@ class LLMAgentManager(Manager):
         self._llm_task = None
         self._resume_event.set()
 
-    async def _generate_response(self, text: str) -> None:
+    async def _generate_response(
+        self, text: str, context_snapshot: PipelineContext | None = None
+    ) -> None:
         """Invoke the LLM agent and trigger streaming TTS."""
         agent = self.llm_agent
         if not agent:
@@ -152,7 +158,14 @@ class LLMAgentManager(Manager):
             await self._publish_error("llm_not_configured", "LLM agent missing")
             return
 
-        llm_input = {"content": text, "context": self.pipeline.context}
+        llm_input = {
+            "content": text,
+            "context": (
+                context_snapshot
+                if context_snapshot is not None
+                else self.pipeline.context
+            ),
+        }
         try:
             await self._stream_tts(agent, llm_input)
         except asyncio.CancelledError:
@@ -300,7 +313,6 @@ class LLMAgentManager(Manager):
                 session_id=self.session_id,
                 error_type=error_type,
                 error_message=message,
-                component="LLMAgentManager",
             )
         )
 

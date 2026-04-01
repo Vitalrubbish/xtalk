@@ -9,3 +9,17 @@ from .modules.thought_manager import ThoughtManager
 from .modules.tts_manager import TTSManager
 from .modules.turn_taking_manager import TurnTakingManager
 from .modules.vad_manager import VADManager
+
+__all__ = [
+    "OutputGateway",
+    "ASRManager",
+    "EmbeddingsManager",
+    "EnhancerManager",
+    "LatencyManager",
+    "LLMAgentManager",
+    "SpeakerManager",
+    "ThoughtManager",
+    "TTSManager",
+    "TurnTakingManager",
+    "VADManager",
+]

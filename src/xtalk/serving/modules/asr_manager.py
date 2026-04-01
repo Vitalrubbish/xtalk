@@ -119,10 +119,10 @@ class AudioConsumer:
     async def pause(self):
         # Stop consumer, do one recognition and publish
         # Break pause-once invariance warning
-        if self._paused or self._ended:
-            logger.warning(
-                f"AudioConsumer paused repeatedly/pause after end; do early return"
-            )
+        if self._paused:
+            logger.warning(f"AudioConsumer paused repeatedly; do early return")
+            return
+        if self._ended:
             return
         self._paused = True
         await self._stop_consumer()

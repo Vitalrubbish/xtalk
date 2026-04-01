@@ -34,9 +34,15 @@ type ConversationState = ReturnType<typeof defaultConversation>;
 class Conversation {
     private _state: ConversationState = defaultConversation();
     private stateChangeCallback: (state: ConversationState) => void = () => { };
+    private fullAudioChunkCallback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void = (_chunk, _sr) => { };
     onStateChange(callback: (state: ConversationState) => void): void {
         callback(this._state);
         this.stateChangeCallback = callback;
+    }
+    onFullAudioChunk(
+        callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void
+    ): void {
+        this.fullAudioChunkCallback = callback;
     }
     get state(): ConversationState {
         return new Proxy(this._state, {
@@ -78,5 +84,8 @@ class Conversation {
     }
     updateLatency(latency: Conversation["state"]["latency"]) {
         this.state.latency = { ...latency };
+    }
+    emitFullAudioChunk(pcmChunkInt16: ArrayBuffer, sampleRate: number): void {
+        this.fullAudioChunkCallback(pcmChunkInt16, sampleRate);
     }
 }

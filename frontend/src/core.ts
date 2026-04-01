@@ -95,6 +95,9 @@ function createSession(
         onOutputAudioChunk: (callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void) => {
             outputAudioChunkCallback = callback;
         },
+        onFullAudioChunk: (callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void) => {
+            conversation.onFullAudioChunk(callback);
+        },
         get muted() {
             return inputAudioSession.muted;
         },

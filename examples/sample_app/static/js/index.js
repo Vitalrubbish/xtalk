@@ -422,7 +422,6 @@ $btnStop.addEventListener('click', async () => {
     try {
         await session.close();
         stopVisualization();
-        resetRecentAudioBuffer();
         $btnStart.disabled = false;
         $btnStop.disabled = true;
     } catch (e) {

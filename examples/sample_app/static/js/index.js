@@ -45,6 +45,10 @@ const $latencyLlmFirst = document.getElementById('latency-llm-first');
 const $latencyLlmSentence = document.getElementById('latency-llm-sentence');
 const $latencyTts = document.getElementById('latency-tts');
 const $latencyE2e = document.getElementById('latency-e2e');
+const $btnToggleRecentAudio = document.getElementById('btn-toggle-recent-audio');
+const $recentAudioStatus = document.getElementById('recent-audio-status');
+const $recentAudioPanel = document.getElementById('recent-audio-panel');
+const $recentAudioPlayer = document.getElementById('recent-audio-player');
 
 let audioCtx = null;
 let inputAnalyser = null;
@@ -56,6 +60,16 @@ let outputBufferLength = 0;
 let rafId = null;
 let isActive = false;
 let currentStreamState = 'idle';
+let recentAudioObjectUrl = null;
+
+const FULL_AUDIO_CHANNELS = 2;
+const FULL_AUDIO_BYTES_PER_SAMPLE = 2;
+const FULL_AUDIO_FRAME_BYTES = FULL_AUDIO_CHANNELS * FULL_AUDIO_BYTES_PER_SAMPLE;
+const MAX_RECENT_AUDIO_SECONDS = 60;
+let recentFullAudioSampleRate = 48000;
+let recentFullAudioChunks = [];
+let recentFullAudioTotalBytes = 0;
+let recentAudioSnapshotDirty = false;
 
 const canvasCtx = $waveform.getContext('2d');
 
@@ -153,6 +167,130 @@ function stopVisualization() {
     const h = $waveform.height;
     canvasCtx.fillStyle = '#0f172a';
     canvasCtx.fillRect(0, 0, w, h);
+}
+
+function updateRecentAudioStatus(text) {
+    $recentAudioStatus.textContent = text;
+}
+
+function revokeRecentAudioUrl() {
+    if (recentAudioObjectUrl) {
+        URL.revokeObjectURL(recentAudioObjectUrl);
+        recentAudioObjectUrl = null;
+    }
+}
+
+function resetRecentAudioBuffer() {
+    recentFullAudioSampleRate = 48000;
+    recentFullAudioChunks = [];
+    recentFullAudioTotalBytes = 0;
+    recentAudioSnapshotDirty = false;
+    revokeRecentAudioUrl();
+    $recentAudioPlayer.removeAttribute('src');
+    $recentAudioPlayer.load();
+    updateRecentAudioStatus('Waiting for server full audio stream');
+}
+
+function trimRecentAudioBuffer(maxBytes) {
+    while (recentFullAudioTotalBytes > maxBytes && recentFullAudioChunks.length > 0) {
+        const overflowBytes = recentFullAudioTotalBytes - maxBytes;
+        const firstChunk = recentFullAudioChunks[0];
+        if (!firstChunk) {
+            break;
+        }
+        if (overflowBytes >= firstChunk.length) {
+            recentFullAudioChunks.shift();
+            recentFullAudioTotalBytes -= firstChunk.length;
+            continue;
+        }
+        const bytesToDrop = overflowBytes - (overflowBytes % FULL_AUDIO_FRAME_BYTES);
+        if (bytesToDrop <= 0) {
+            break;
+        }
+        recentFullAudioChunks[0] = firstChunk.slice(bytesToDrop);
+        recentFullAudioTotalBytes -= bytesToDrop;
+        break;
+    }
+}
+
+function appendRecentFullAudioChunk(pcmChunkInt16, sampleRate) {
+    if (!(pcmChunkInt16 instanceof ArrayBuffer) || pcmChunkInt16.byteLength === 0) {
+        return;
+    }
+    if (recentFullAudioTotalBytes > 0 && sampleRate !== recentFullAudioSampleRate) {
+        resetRecentAudioBuffer();
+    }
+    recentFullAudioSampleRate = sampleRate;
+    const chunk = new Uint8Array(pcmChunkInt16.slice(0));
+    recentFullAudioChunks.push(chunk);
+    recentFullAudioTotalBytes += chunk.byteLength;
+    const maxBytes = sampleRate * MAX_RECENT_AUDIO_SECONDS * FULL_AUDIO_FRAME_BYTES;
+    trimRecentAudioBuffer(maxBytes);
+    recentAudioSnapshotDirty = true;
+    const bufferedSeconds = recentFullAudioTotalBytes / (sampleRate * FULL_AUDIO_FRAME_BYTES);
+    updateRecentAudioStatus(`Buffered ${Math.min(MAX_RECENT_AUDIO_SECONDS, bufferedSeconds).toFixed(1)}s of server full audio`);
+}
+
+function flattenRecentAudioBuffer() {
+    if (recentFullAudioTotalBytes <= 0) {
+        return new Uint8Array(0);
+    }
+    const merged = new Uint8Array(recentFullAudioTotalBytes);
+    let offset = 0;
+    for (const chunk of recentFullAudioChunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return merged;
+}
+
+function buildWavBlobFromPcm(pcmBytes, sampleRate, channels) {
+    const header = new ArrayBuffer(44);
+    const view = new DataView(header);
+    const byteRate = sampleRate * channels * FULL_AUDIO_BYTES_PER_SAMPLE;
+    const blockAlign = channels * FULL_AUDIO_BYTES_PER_SAMPLE;
+
+    view.setUint32(0, 0x52494646, false);
+    view.setUint32(4, 36 + pcmBytes.length, true);
+    view.setUint32(8, 0x57415645, false);
+    view.setUint32(12, 0x666d7420, false);
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, channels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    view.setUint32(36, 0x64617461, false);
+    view.setUint32(40, pcmBytes.length, true);
+
+    return new Blob([header, pcmBytes], { type: 'audio/wav' });
+}
+
+function refreshRecentAudioSnapshot(force = false) {
+    if (!force && !recentAudioSnapshotDirty) {
+        return;
+    }
+    if (recentFullAudioTotalBytes <= 0) {
+        updateRecentAudioStatus('Waiting for server full audio stream');
+        return;
+    }
+    const pcmBytes = flattenRecentAudioBuffer();
+    const wavBlob = buildWavBlobFromPcm(
+        pcmBytes,
+        recentFullAudioSampleRate,
+        FULL_AUDIO_CHANNELS
+    );
+    const nextObjectUrl = URL.createObjectURL(wavBlob);
+    const wasPlaying = !$recentAudioPlayer.paused && !$recentAudioPlayer.ended;
+    revokeRecentAudioUrl();
+    recentAudioObjectUrl = nextObjectUrl;
+    $recentAudioPlayer.src = recentAudioObjectUrl;
+    $recentAudioPlayer.load();
+    recentAudioSnapshotDirty = false;
+    if (wasPlaying) {
+        $recentAudioPlayer.play().catch(() => { });
+    }
 }
 
 session.onStateChange((state) => {
@@ -253,8 +391,18 @@ session.onOutputAudioChunk((pcmChunkInt16, sampleRate) => {
     }
 });
 
+session.onFullAudioChunk((pcmChunkInt16, sampleRate) => {
+    appendRecentFullAudioChunk(pcmChunkInt16, sampleRate);
+    const canRefreshSnapshot = $recentAudioPlayer.ended
+        || ($recentAudioPlayer.paused && $recentAudioPlayer.currentTime === 0);
+    if (!$recentAudioPanel.hidden && canRefreshSnapshot) {
+        refreshRecentAudioSnapshot();
+    }
+});
+
 $btnStart.addEventListener('click', async () => {
     try {
+        resetRecentAudioBuffer();
         await session.open();
         startVisualization();
         $btnStart.disabled = true;
@@ -268,6 +416,7 @@ $btnStop.addEventListener('click', async () => {
     try {
         await session.close();
         stopVisualization();
+        resetRecentAudioBuffer();
         $btnStart.disabled = false;
         $btnStop.disabled = true;
     } catch (e) {
@@ -294,8 +443,21 @@ setupToggle($btnToggleThought, $panelThought);
 setupToggle($btnToggleCaption, $panelCaption);
 setupToggle($btnToggleRetrieval, $panelRetrieval);
 
+$btnToggleRecentAudio.addEventListener('click', () => {
+    const willOpen = $recentAudioPanel.hidden;
+    $recentAudioPanel.hidden = !willOpen;
+    $btnToggleRecentAudio.textContent = willOpen ? 'Hide Recent Audio' : 'Recent 60s Audio';
+    if (willOpen) {
+        refreshRecentAudioSnapshot(true);
+    }
+});
+
 window.addEventListener('resize', () => {
     resizeCanvas();
+});
+
+window.addEventListener('beforeunload', () => {
+    revokeRecentAudioUrl();
 });
 
 $btnStop.disabled = true;

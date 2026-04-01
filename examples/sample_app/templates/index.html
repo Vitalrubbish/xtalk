@@ -47,6 +47,16 @@
         <div class="card">
             <canvas id="waveform"></canvas>
         </div>
+        <div class="card recent-audio-card">
+            <div class="recent-audio-header">
+                <button id="btn-toggle-recent-audio" class="recent-audio-toggle">Recent 60s Audio</button>
+                <span id="recent-audio-status" class="recent-audio-status">Waiting for server full audio stream</span>
+            </div>
+            <div id="recent-audio-panel" class="recent-audio-panel" hidden>
+                <audio id="recent-audio-player" class="recent-audio-player" controls preload="metadata"></audio>
+                <div class="recent-audio-hint">Shows a snapshot of the latest 60 seconds of server full audio.</div>
+            </div>
+        </div>
         <div class="card">
             <div id="messages"></div>
         </div>

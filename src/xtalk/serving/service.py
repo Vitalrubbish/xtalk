@@ -66,7 +66,7 @@ class Service:
             manager = self._instantiate_manager(manager_cls)
             self._managers.append(manager)
         self.input_gateway = InputGateway(
-            self.event_bus, self.session_id, _websocket, config=self.service_config
+            self.event_bus, self.session_id, _websocket
         )
         self.output_gateway = OutputGateway(
             self.event_bus,
@@ -192,11 +192,26 @@ class Service:
 
     def unregister_manager(self, manager_cls: Type[Manager]):
         self._manager_classes.remove(manager_cls)
-        # Remove concrete manager if already active
+        # Remove concrete manager if already active and unsubscribe its handlers
         if hasattr(self, "input_gateway"):
+            for m in self._managers:
+                if isinstance(m, manager_cls):
+                    self._unsubscribe_manager_handlers(m)
             self._managers = [
                 m for m in self._managers if not isinstance(m, manager_cls)
             ]
+
+    def _unsubscribe_manager_handlers(self, manager: Manager) -> None:
+        """Unsubscribe all event handlers registered by a manager instance."""
+        for base in reversed(manager.__class__.mro()):
+            handlers_meta = getattr(base, "__event_handlers_meta__", [])
+            for method_name, meta_list in handlers_meta:
+                method = getattr(manager, method_name, None)
+                if method is None:
+                    continue
+                for meta in meta_list:
+                    ev_type = meta["event_type"]
+                    self.event_bus.unsubscribe(ev_type, method)
 
     async def handle_message_loop(self, already_accepted: bool = False) -> None:
         """Process the WebSocket message loop."""

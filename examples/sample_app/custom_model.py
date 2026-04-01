@@ -1,11 +1,10 @@
 import argparse
-import json
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, Form, File, UploadFile, HTTPException
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 import mimetypes
 
 mimetypes.add_type("application/javascript", ".js")

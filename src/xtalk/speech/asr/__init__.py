@@ -63,11 +63,3 @@ try:
     __all__.append("EasyTurnASR")
 except:
     pass
-
-# DashScope FunASR (remote)
-try:
-    from .funasr import FunASR as FunASR
-
-    __all__.append("FunASR")
-except:
-    pass

@@ -1,5 +1,4 @@
 from xtalk.model_types import Agent
-from typing import Union
 
 
 class EchoAgent(Agent):

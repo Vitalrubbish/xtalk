@@ -1,1 +1,3 @@
-export * from "./index.js";
+import { createSession } from "./core";
+
+export { createSession };

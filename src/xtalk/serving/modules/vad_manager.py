@@ -140,8 +140,6 @@ class VADManager(Manager):
         """Publish VADSpeechStart event."""
         evt = VADSpeechStart(
             session_id=self.session_id,
-            confidence=0.8,
-            speech_probability=0.8,
         )
         await self.event_bus.publish(evt)
 
@@ -158,8 +156,6 @@ class VADManager(Manager):
 
         evt = VADSpeechEnd(
             session_id=self.session_id,
-            confidence=0.8,
-            speech_probability=0.0,
         )
         await self.event_bus.publish(evt)
 

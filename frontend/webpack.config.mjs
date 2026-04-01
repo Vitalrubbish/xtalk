@@ -11,11 +11,11 @@ const name = "Xtalk";
 
 const base = {
     entry,
-    resolve: { extensions: [".ts", ".js"] },
+    resolve: { extensions: [".ts"] },
     module: {
         rules: [
             {
-                test: /\.worklet\.(js|ts)$/,
+                test: /\.worklet\.js$/,
                 type: "asset/resource",
                 generator: {
                     filename: "worklets/[name].[contenthash][ext]",

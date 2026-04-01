@@ -12,7 +12,7 @@ Notes:
 Input: PCM 16-bit mono 16 kHz raw bytes.
 """
 
-from typing import Any, Optional, Dict, Callable
+from typing import Any, Optional, Dict
 
 import numpy as np
 

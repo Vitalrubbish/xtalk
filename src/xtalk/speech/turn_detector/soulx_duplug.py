@@ -45,10 +45,11 @@ class SoulxDuplug(TurnDetector):
 
         # Primary audio-state confirmation used to debounce early/unstable "speak"
         # outputs from the remote model. A "speak" result becomes true only after
-        # enough later non-"speak" chunks confirm it.
+        # enough later "idle" chunks confirm it without being interrupted by
+        # "nonidle".
         self._count_before_true_speak = count_before_true_speak
         self._pending_speak = False
-        self._post_speak_non_speak_count = 0
+        self._post_speak_idle_count = 0
 
         # Delayed fallback state used when VAD indicates a speech pause but the
         # remote audio model does not emit an end-of-turn signal.
@@ -63,16 +64,16 @@ class SoulxDuplug(TurnDetector):
     def _arm_pending_speak(self) -> None:
         """Record a candidate speak and start waiting for confirming chunks."""
         self._pending_speak = True
-        self._post_speak_non_speak_count = 0
+        self._post_speak_idle_count = 0
 
     def _clear_pending_speak(self) -> None:
         """Clear any in-flight candidate speak confirmation state."""
         self._pending_speak = False
-        self._post_speak_non_speak_count = 0
+        self._post_speak_idle_count = 0
 
     def _observe_state_after_candidate_speak(self, state_name: str) -> bool:
         """
-        Update the candidate-speak window with a new non-"speak" state.
+        Update the candidate-speak window with a new following state.
 
         Returns True when the candidate speak has become a confirmed speak and
         should now emit START_GENERATION.
@@ -84,8 +85,15 @@ class SoulxDuplug(TurnDetector):
             self._arm_pending_speak()
             return False
 
-        self._post_speak_non_speak_count += 1
-        if self._post_speak_non_speak_count < self._count_before_true_speak:
+        if state_name == "nonidle":
+            self._post_speak_idle_count = 0
+            return False
+
+        if state_name != "idle":
+            return False
+
+        self._post_speak_idle_count += 1
+        if self._post_speak_idle_count < self._count_before_true_speak:
             return False
 
         self._clear_pending_speak()
@@ -169,9 +177,15 @@ class SoulxDuplug(TurnDetector):
         Handle the primary listening-side audio state machine.
 
         The remote model's first "speak" is treated as a candidate only. It is
-        committed later after enough following non-"speak" chunks have arrived.
+        committed later after enough following "idle" chunks have arrived,
+        and any intervening "nonidle" resets the idle confirmation counter.
         """
         if state_name == "speak":
+            if self._count_before_true_speak == 0:
+                return TurnDetectionResult(
+                    action=TurnDetectionAction.START_GENERATION,
+                    semantic=TurnDetectionSemantic.COMPLETE,
+                )
             self._arm_pending_speak()
             return TurnDetectionResult(
                 action=TurnDetectionAction.DO_NOTHING,
@@ -205,7 +219,7 @@ class SoulxDuplug(TurnDetector):
         ).get("state", "blank")
 
         async with self.listening_lock():
-            if state_name not in ["blank", "idle"]:
+            if state_name not in ["blank"]:
                 print(f"{'listening' if self.listening else 'speaking'}:{state_name}")
             if self.listening:
                 result = self._result_for_listening_state(state_name)

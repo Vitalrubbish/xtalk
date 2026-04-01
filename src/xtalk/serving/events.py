@@ -2,6 +2,7 @@
 import time
 from dataclasses import dataclass, field, make_dataclass
 from typing import ClassVar, Dict, Any, Type
+from ..pipelines.context import PipelineContext
 
 
 @dataclass
@@ -288,6 +289,7 @@ class TurnTTSFlushRequested(BaseEvent):
 class TurnLLMAgentStartRequested(BaseEvent):
     TYPE: ClassVar[str] = "turn.llm_agent_start_requested"
     text: str = ""
+    context_snapshot: PipelineContext | None = None
 
 
 @dataclass

@@ -400,8 +400,6 @@ class RecordingManager(Manager):
         if final_chunk:
             if self._recording_enabled:
                 await self._write_stereo_chunk(final_chunk)
-            if self._send_full_audio_enabled:
-                await self._publish_full_audio_chunk(final_chunk)
 
         # Close file handle
         try:

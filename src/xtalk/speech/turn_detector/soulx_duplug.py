@@ -29,10 +29,13 @@ class SoulxDuplug(TurnDetector):
         client_id: Optional[str] = None,
         timeout: float = 1.0,
         fallback_time_before_speak: float = 3.0,
+        count_before_true_speak: int = 2,
     ) -> None:
         super().__init__()
         if fallback_time_before_speak < 0:
             raise ValueError("fallback_time_before_speak must be non-negative")
+        if count_before_true_speak < 0:
+            raise ValueError("count_before_true_speak must be non-negative")
 
         # Primary SoulX connection/runtime state.
         self._server_url = server_url
@@ -40,12 +43,53 @@ class SoulxDuplug(TurnDetector):
         self._timeout = timeout
         self._ws: Optional[websockets.ClientConnection] = None
 
+        # Primary audio-state confirmation used to debounce early/unstable "speak"
+        # outputs from the remote model. A "speak" result becomes true only after
+        # enough later non-"speak" chunks confirm it.
+        self._count_before_true_speak = count_before_true_speak
+        self._pending_speak = False
+        self._post_speak_non_speak_count = 0
+
         # Delayed fallback state used when VAD indicates a speech pause but the
         # remote audio model does not emit an end-of-turn signal.
         self._fallback_time_before_speak = fallback_time_before_speak
         self._fallback_lock = asyncio.Lock()
         self._fallback_seq = 0
         self._pending_fallback_seq: Optional[int] = None
+
+    # ----------------------------
+    # Speak confirmation control
+    # ----------------------------
+    def _arm_pending_speak(self) -> None:
+        """Record a candidate speak and start waiting for confirming chunks."""
+        self._pending_speak = True
+        self._post_speak_non_speak_count = 0
+
+    def _clear_pending_speak(self) -> None:
+        """Clear any in-flight candidate speak confirmation state."""
+        self._pending_speak = False
+        self._post_speak_non_speak_count = 0
+
+    def _observe_state_after_candidate_speak(self, state_name: str) -> bool:
+        """
+        Update the candidate-speak window with a new non-"speak" state.
+
+        Returns True when the candidate speak has become a confirmed speak and
+        should now emit START_GENERATION.
+        """
+        if not self._pending_speak:
+            return False
+
+        if state_name == "speak":
+            self._arm_pending_speak()
+            return False
+
+        self._post_speak_non_speak_count += 1
+        if self._post_speak_non_speak_count < self._count_before_true_speak:
+            return False
+
+        self._clear_pending_speak()
+        return True
 
     # ----------------------------
     # Fallback control
@@ -108,6 +152,46 @@ class SoulxDuplug(TurnDetector):
     # ----------------------------
     # Primary SoulX logic
     # ----------------------------
+    async def _commit_true_speak(
+        self,
+    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+        """Emit the confirmed START_GENERATION result and cancel fallback state."""
+        await self._cancel_fallback()
+        return TurnDetectionResult(
+            action=TurnDetectionAction.START_GENERATION,
+            semantic=TurnDetectionSemantic.COMPLETE,
+        )
+
+    def _result_for_listening_state(
+        self, state_name: Literal["idle", "nonidle", "speak", "blank"]
+    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+        """
+        Handle the primary listening-side audio state machine.
+
+        The remote model's first "speak" is treated as a candidate only. It is
+        committed later after enough following non-"speak" chunks have arrived.
+        """
+        if state_name == "speak":
+            self._arm_pending_speak()
+            return TurnDetectionResult(
+                action=TurnDetectionAction.DO_NOTHING,
+                semantic=TurnDetectionSemantic.INCOMPLETE,
+            )
+
+        if self._observe_state_after_candidate_speak(state_name):
+            return TurnDetectionResult(
+                action=TurnDetectionAction.START_GENERATION,
+                semantic=TurnDetectionSemantic.COMPLETE,
+            )
+
+        if state_name == "nonidle":
+            return TurnDetectionResult(
+                action=TurnDetectionAction.DO_NOTHING,
+                semantic=TurnDetectionSemantic.INCOMPLETE,
+            )
+
+        return _IDLE_RESULT
+
     async def _handle_audio_primary(
         self, audio: bytes
     ) -> TurnDetectionResult | list[TurnDetectionResult]:
@@ -124,26 +208,19 @@ class SoulxDuplug(TurnDetector):
             if state_name not in ["blank", "idle"]:
                 print(f"{'listening' if self.listening else 'speaking'}:{state_name}")
             if self.listening:
-                if state_name == "speak":
-                    # Primary path wins over the delayed fallback once SoulX has
-                    # positively identified end-of-turn.
-                    await self._cancel_fallback()
-                    return TurnDetectionResult(
-                        action=TurnDetectionAction.START_GENERATION,
-                        semantic=TurnDetectionSemantic.COMPLETE,
-                    )
-                if state_name == "nonidle":
-                    return TurnDetectionResult(
-                        action=TurnDetectionAction.DO_NOTHING,
-                        semantic=TurnDetectionSemantic.INCOMPLETE,
-                    )
+                result = self._result_for_listening_state(state_name)
             else:
+                self._clear_pending_speak()
                 if state_name == "nonidle":
                     return TurnDetectionResult(
                         action=TurnDetectionAction.STOP_SPEAKING,
                         semantic=TurnDetectionSemantic.INCOMPLETE,
                     )
-        return _IDLE_RESULT
+                result = _IDLE_RESULT
+
+        if result.action == TurnDetectionAction.START_GENERATION:
+            return await self._commit_true_speak()
+        return result
 
     async def _connect(self) -> None:
         self._ws = await websockets.connect(self._server_url)
@@ -196,4 +273,5 @@ class SoulxDuplug(TurnDetector):
             server_url=self._server_url,
             timeout=self._timeout,
             fallback_time_before_speak=self._fallback_time_before_speak,
+            count_before_true_speak=self._count_before_true_speak,
         )

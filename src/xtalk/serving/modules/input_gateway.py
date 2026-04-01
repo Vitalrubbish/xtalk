@@ -110,17 +110,19 @@ class TextMsgHandler(EventListenerMixin):
 
     async def _handle_vad_speech_start(self, message_data: dict) -> None:
         """Handle VAD speech-start signal."""
-        await self._publish(VADSpeechStart(session_id=self.session_id))
+        await self._publish(
+            VADSpeechStart(session_id=self.session_id, origin="client")
+        )
 
     async def _handle_vad_speech_end(self, message_data: dict) -> None:
-        """Handle VAD speech-end signal; send empty final frame so ASR knows the segment ended."""
+        """Handle VAD speech-end signal after flushing higher-priority listeners."""
         await self.event_bus.publish(
-            AudioFrameReceived(
-                session_id=self.session_id, audio_data=b"", is_final=True
+            VADSpeechEnd(
+                session_id=self.session_id,
+                origin="client",
             ),
             wait_for_completion=True,
         )
-        await self._publish(VADSpeechEnd(session_id=self.session_id))
 
     async def _handle_tts_playback_finished(self, message_data: dict) -> None:
         """Handle frontend TTS playback completion and transition to idle."""

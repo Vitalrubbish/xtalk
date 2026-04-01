@@ -60,11 +60,13 @@ class EnhancedAudioFrameReceived(BaseEvent):
 @dataclass
 class VADSpeechStart(BaseEvent):
     TYPE: ClassVar[str] = "vad.speech_start"
+    origin: str = "client"
 
 
 @dataclass
 class VADSpeechEnd(BaseEvent):
     TYPE: ClassVar[str] = "vad.speech_end"
+    origin: str = "client"
 
 
 @dataclass

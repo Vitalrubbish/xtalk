@@ -165,18 +165,20 @@ class EventBus:
             if not handlers:
                 return True
 
+            if wait_for_completion:
+                # Preserve priority order for event chains that require deterministic
+                # completion before returning.
+                for handler in handlers:
+                    await self._handle_event_safe(handler, event)
+                return True
+
             # spawn handler tasks
-            tasks = []
             for handler in handlers:
                 task = asyncio.create_task(self._handle_event_safe(handler, event))
-                tasks.append(task)
                 self._active_tasks.add(task)
 
                 # cleanup after completion
                 task.add_done_callback(self._active_tasks.discard)
-
-            if wait_for_completion and tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
 
             return True
 

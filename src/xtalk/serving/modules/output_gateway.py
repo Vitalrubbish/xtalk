@@ -9,6 +9,8 @@ from ..interfaces import EventListenerMixin
 from ..events import (
     ASRResultPartial,
     ASRResultFinal,
+    VADSpeechStart,
+    VADSpeechEnd,
     TTSStarted,
     TTSStopped,
     TTSPaused,
@@ -250,6 +252,18 @@ class OutputGateway(EventListenerMixin):
     @EventListenerMixin.event_handler(TTSVoiceChange, priority=5)
     async def _send_voice_changed_signal(self, event: TTSVoiceChange) -> None:
         await self._forward("voice_changed", {"name": event.voice_name})
+
+    @EventListenerMixin.event_handler(VADSpeechStart, priority=5)
+    async def _send_vad_start_signal(self, event: VADSpeechStart) -> None:
+        if event.origin != "server":
+            return
+        await self._forward("vad_speech_start", {"origin": event.origin})
+
+    @EventListenerMixin.event_handler(VADSpeechEnd, priority=5)
+    async def _send_vad_end_signal(self, event: VADSpeechEnd) -> None:
+        if event.origin != "server":
+            return
+        await self._forward("vad_speech_end", {"origin": event.origin})
 
     @EventListenerMixin.event_handler(TTSEmotionChange, priority=5)
     async def _send_emotion_changed_signal(self, event: TTSEmotionChange) -> None:

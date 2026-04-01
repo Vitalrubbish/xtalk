@@ -8,8 +8,8 @@ Backend VAD manager used when the frontend cannot run VAD. It mimics the logic i
 - Process frames at 16 kHz with 512 samples (~32 ms/frame)
 - Speech start triggers when speech frames accumulate beyond `min_speech_ms`
 - Speech end triggers when silence frames exceed `redemption_ms`
-- Emits `VADSpeechStart`/`VADSpeechEnd`; when ending it also emits an empty
-  `AudioFrameReceived(is_final=True)` to flush ASR.
+- Emits `VADSpeechStart`/`VADSpeechEnd`; speech end is published with
+  `wait_for_completion=True` so higher-priority handlers can flush state first.
 
 Notes:
 - Relies on `VAD` interface (`is_speech(frame: bytes) -> bool`) from
@@ -27,7 +27,6 @@ from ...log_utils import logger
 from ..event_bus import EventBus
 from ..interfaces import Manager
 from ..events import (
-    AudioFrameReceived,
     EnhancedAudioFrameReceived,
     VADSpeechStart,
     VADSpeechEnd,
@@ -140,24 +139,17 @@ class VADManager(Manager):
         """Publish VADSpeechStart event."""
         evt = VADSpeechStart(
             session_id=self.session_id,
+            origin="server",
         )
         await self.event_bus.publish(evt)
 
     async def _emit_vad_end(self) -> None:
-        """Publish VADSpeechEnd and emit an empty final frame for ASR flush."""
-        # Mimic frontend behavior: send empty final frame on VAD end
-        final_audio_evt = AudioFrameReceived(
-            session_id=self.session_id,
-            audio_data=b"",
-            is_final=True,
-            sample_rate=self.sample_rate,
-        )
-        await self.event_bus.publish(final_audio_evt, wait_for_completion=True)
-
+        """Publish VADSpeechEnd and wait for ordered completion."""
         evt = VADSpeechEnd(
             session_id=self.session_id,
+            origin="server",
         )
-        await self.event_bus.publish(evt)
+        await self.event_bus.publish(evt, wait_for_completion=True)
 
     # ----------------------------
     # Lifecycle

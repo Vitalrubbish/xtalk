@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import base64
 import json
 from fastapi import WebSocket
 from ...log_utils import logger
@@ -28,6 +29,7 @@ from ..events import (
     ToolCallOccurred,
     RetrievalUpdated,
     SpeakerRecognized,
+    FullAudioFrameReady,
 )
 
 
@@ -248,6 +250,20 @@ class OutputGateway(EventListenerMixin):
                     self.session_id,
                     e,
                 )
+
+    @EventListenerMixin.event_handler(FullAudioFrameReady, priority=5)
+    async def _send_full_audio_frame_signal(self, event: FullAudioFrameReady) -> None:
+        if not event.audio_chunk:
+            return
+        await self._forward(
+            "full_audio_frame",
+            {
+                "audio_base64": base64.b64encode(event.audio_chunk).decode("ascii"),
+                "sample_rate": int(getattr(event, "sample_rate", 48000)),
+                "channels": int(getattr(event, "channels", 2)),
+                "format": getattr(event, "format", "pcm_s16le"),
+            },
+        )
 
     @EventListenerMixin.event_handler(TTSVoiceChange, priority=5)
     async def _send_voice_changed_signal(self, event: TTSVoiceChange) -> None:

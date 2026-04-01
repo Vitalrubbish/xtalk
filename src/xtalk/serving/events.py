@@ -188,6 +188,15 @@ class TTSPlaybackFinished(BaseEvent):
 
 
 @dataclass
+class FullAudioFrameReady(BaseEvent):
+    TYPE: ClassVar[str] = "audio.full_frame_ready"
+    audio_chunk: bytes = b""
+    sample_rate: int = 48000
+    channels: int = 2
+    format: str = "pcm_s16le"
+
+
+@dataclass
 class ErrorOccurred(BaseEvent):
     TYPE: ClassVar[str] = "error.occurred"
     error_type: str = ""

@@ -73,6 +73,7 @@ class ASRResultPartial(BaseEvent):
     text: str = ""
     display_text: str = ""  # Cleaned text for frontend display
     turn_id: int = 0
+    speech_pause: bool = False
 
 
 @dataclass

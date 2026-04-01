@@ -32,6 +32,7 @@
                     <button id="btn-upload-file">Upload Doc</button>
                     <input id="file-input" type="file" accept="text/*,.pdf,application/pdf" style="display:none;" />
                 </div>
+                <button id="btn-toggle-recent-audio" class="recent-audio-toggle">Recent 60s Audio</button>
             </div>
         </div>
     </header>
@@ -44,18 +45,17 @@
             <span class="latency-item">TTS First Chunk: <span id="latency-tts">--</span>ms</span>
             <span class="latency-item latency-e2e">E2E: <span id="latency-e2e">--</span>ms</span>
         </div>
-        <div class="card">
-            <canvas id="waveform"></canvas>
-        </div>
-        <div class="card recent-audio-card">
+        <div id="recent-audio-card" class="card recent-audio-card is-hidden" aria-hidden="true">
             <div class="recent-audio-header">
-                <button id="btn-toggle-recent-audio" class="recent-audio-toggle">Recent 60s Audio</button>
                 <span id="recent-audio-status" class="recent-audio-status">Waiting for server full audio stream</span>
             </div>
-            <div id="recent-audio-panel" class="recent-audio-panel" hidden>
+            <div id="recent-audio-panel" class="recent-audio-panel">
                 <audio id="recent-audio-player" class="recent-audio-player" controls preload="metadata"></audio>
                 <div class="recent-audio-hint">Shows a snapshot of the latest 60 seconds of server full audio.</div>
             </div>
+        </div>
+        <div class="card">
+            <canvas id="waveform"></canvas>
         </div>
         <div class="card">
             <div id="messages"></div>

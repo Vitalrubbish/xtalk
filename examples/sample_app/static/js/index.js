@@ -46,8 +46,8 @@ const $latencyLlmSentence = document.getElementById('latency-llm-sentence');
 const $latencyTts = document.getElementById('latency-tts');
 const $latencyE2e = document.getElementById('latency-e2e');
 const $btnToggleRecentAudio = document.getElementById('btn-toggle-recent-audio');
+const $recentAudioCard = document.getElementById('recent-audio-card');
 const $recentAudioStatus = document.getElementById('recent-audio-status');
-const $recentAudioPanel = document.getElementById('recent-audio-panel');
 const $recentAudioPlayer = document.getElementById('recent-audio-player');
 
 let audioCtx = null;
@@ -171,6 +171,12 @@ function stopVisualization() {
 
 function updateRecentAudioStatus(text) {
     $recentAudioStatus.textContent = text;
+}
+
+function setRecentAudioVisible(visible) {
+    $recentAudioCard.classList.toggle('is-hidden', !visible);
+    $recentAudioCard.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    $btnToggleRecentAudio.textContent = visible ? 'Hide Recent Audio' : 'Recent 60s Audio';
 }
 
 function revokeRecentAudioUrl() {
@@ -395,7 +401,7 @@ session.onFullAudioChunk((pcmChunkInt16, sampleRate) => {
     appendRecentFullAudioChunk(pcmChunkInt16, sampleRate);
     const canRefreshSnapshot = $recentAudioPlayer.ended
         || ($recentAudioPlayer.paused && $recentAudioPlayer.currentTime === 0);
-    if (!$recentAudioPanel.hidden && canRefreshSnapshot) {
+    if (canRefreshSnapshot) {
         refreshRecentAudioSnapshot();
     }
 });
@@ -444,9 +450,8 @@ setupToggle($btnToggleCaption, $panelCaption);
 setupToggle($btnToggleRetrieval, $panelRetrieval);
 
 $btnToggleRecentAudio.addEventListener('click', () => {
-    const willOpen = $recentAudioPanel.hidden;
-    $recentAudioPanel.hidden = !willOpen;
-    $btnToggleRecentAudio.textContent = willOpen ? 'Hide Recent Audio' : 'Recent 60s Audio';
+    const willOpen = $recentAudioCard.classList.contains('is-hidden');
+    setRecentAudioVisible(willOpen);
     if (willOpen) {
         refreshRecentAudioSnapshot(true);
     }
@@ -461,6 +466,7 @@ window.addEventListener('beforeunload', () => {
 });
 
 $btnStop.disabled = true;
+setRecentAudioVisible(false);
 
 let availableAudios = [];
 

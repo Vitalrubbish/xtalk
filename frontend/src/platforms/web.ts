@@ -32,6 +32,8 @@ interface WebInputAudioSessionConfig extends InputAudioSessionConfig {
     enableVAD?: boolean;
     // Whether to enable enhancer on client. Defaults to true if enhancer model is available.
     enableEnhancer?: boolean;
+    // VAD redemption window in milliseconds.
+    vadRedemptionMs?: number;
 }
 declare global {
     interface Window {
@@ -68,6 +70,13 @@ class WebInputAudioSession extends BaseInputAudioSession {
         }
         if (config.enableEnhancer === undefined) {
             config.enableEnhancer = true;
+        }
+        if (
+            typeof config.vadRedemptionMs === 'number'
+            && Number.isFinite(config.vadRedemptionMs)
+            && config.vadRedemptionMs >= 0
+        ) {
+            this.VAD_PARAMS.vadConfig.redemptionMs = config.vadRedemptionMs;
         }
         this.config = config;
     }
@@ -237,7 +246,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
     }> {
         const identityMap = async (frame: Float32Array) => frame;
         if (!this.config.enableEnhancer) {
-            return { enhanceFrame: identityMap, resetEnhancer: () => {} };
+            return { enhanceFrame: identityMap, resetEnhancer: () => { } };
         }
 
         try {
@@ -302,7 +311,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
 
             return { enhanceFrame, resetEnhancer };
         } catch {
-            return { enhanceFrame: identityMap, resetEnhancer: () => {} };
+            return { enhanceFrame: identityMap, resetEnhancer: () => { } };
         }
     }
 

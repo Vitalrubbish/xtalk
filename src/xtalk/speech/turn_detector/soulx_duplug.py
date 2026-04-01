@@ -219,8 +219,6 @@ class SoulxDuplug(TurnDetector):
         ).get("state", "blank")
 
         async with self.listening_lock():
-            if state_name not in ["blank"]:
-                print(f"{'listening' if self.listening else 'speaking'}:{state_name}")
             if self.listening:
                 result = self._result_for_listening_state(state_name)
             else:

@@ -18,7 +18,7 @@ function getWebSocketURL() {
     return wsPath;
 }
 
-const session = createSession(getWebSocketURL());
+const session = createSession(getWebSocketURL(), { inputConfig: { enableVAD: false } });
 
 const $btnStart = document.getElementById('btn-start');
 const $btnStop = document.getElementById('btn-stop');

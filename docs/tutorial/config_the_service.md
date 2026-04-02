@@ -2,32 +2,33 @@
 
 ## Customize models
 
-As mentioned [before](tutorial/start_the_service.md), X-Talk instance can be created from a JSON config, which customizes models used.
-    
-For model config, config should match model Python class name and init args. 
+As mentioned before in [Start the Service](start_the_service.md), an X-Talk instance can be created from a JSON config, which is used to customize the models in use.
 
-> Inspect models supported:
-> ```python
-> from xtalk import Xtalk
-> print(Xtalk.MODEL_REGISTRY)
-> # Something like
-> #{
-> #     "asr": ["xtalk.speech.asr"],
-> #     "llm_agent": ["xtalk.llm_agent"],
-> #     "tts": ["xtalk.speech.tts"],
-> #     "embeddings": ["xtalk.embeddings"],
-> #  "speaker_encoder": ["xtalk.speech.speaker_encoder"],
-> #     "captioner": ["xtalk.speech.captioner"],
-> #     "caption_rewriter": ["xtalk.rewriter"],
-> #     "thought_rewriter": ["xtalk.rewriter"],
-> #     "vad": ["xtalk.speech.vad"],
-> #     "speech_enhancer": ["xtalk.speech.speech_enhancer"],
-> #     "speech_speed_controller": ["xtalk.speech.speech_speed_controller"],
-> #     "turn_detector": ["xtalk.speech.turn_detector"],
-> # }
-> ```
+Inspect the supported model categories:
 
-For example, the definition of `DefaultAgent` lies in `src/xtalk/llm_agent/default.py`:
+```python
+from xtalk import Xtalk
+print(Xtalk.MODEL_REGISTRY)
+# Something like
+# {
+#     "asr": ["xtalk.speech.asr"],
+#     "llm_agent": ["xtalk.llm_agent"],
+#     "tts": ["xtalk.speech.tts"],
+#     "embeddings": ["xtalk.embeddings"],
+#     "speaker_encoder": ["xtalk.speech.speaker_encoder"],
+#     "captioner": ["xtalk.speech.captioner"],
+#     "caption_rewriter": ["xtalk.rewriter"],
+#     "thought_rewriter": ["xtalk.rewriter"],
+#     "vad": ["xtalk.speech.vad"],
+#     "speech_enhancer": ["xtalk.speech.speech_enhancer"],
+#     "speech_speed_controller": ["xtalk.speech.speech_speed_controller"],
+#     "turn_detector": ["xtalk.speech.turn_detector"],
+# }
+```
+
+For model configuration, the config item should match the model Python class name and its initialization arguments.
+
+For example, `DefaultAgent` is defined in `src/xtalk/llm_agent/default.py`:
 ```python
 class DefaultAgent(Agent):
     def __init__(
@@ -40,8 +41,8 @@ class DefaultAgent(Agent):
         ):
     ...
 ```
-    
-In order to match with the init args, the config item should look like:
+
+To match those initialization arguments, the config item should look like:
 ```
 "llm_agent": {
     "type": "DefaultAgent",
@@ -71,15 +72,15 @@ In order to match with the init args, the config item should look like:
   },
 ```
 
-Optional keys like `voice_names`, `emotions` and `tools`(not supported in config yet) can be ignored.
-    
-See [supported models](docs/supported_models.md) for the full list of model types, their optional dependencies, and their adapting location in source code.
+Optional keys such as `voice_names`, `emotions`, and `tools` can be omitted. `tools` is not supported in config yet.
+
+See [Supported Models](../docs/supported_models.md) for the full list of model types, their optional dependencies, and where they are adapted in the source code.
 > **Note**
-> Most model implementations are client-side adaptors. You may need to start the model instance following coresponding instructions.
+> Most model implementations are client-side adapters. You may also need to start the model instance itself according to its corresponding instructions.
 
 ## Customize service behavior
 
-Also, you can customize service behavior (whether save session audio under `logs/`, whether send session audio to client...) through:
+You can also customize service behavior, such as whether to save session audio under `logs/` and whether to send full session audio back to the client:
 ```json
     "service_config": {
         "recording": true,
@@ -87,4 +88,4 @@ Also, you can customize service behavior (whether save session audio under `logs
     }
 ```
 
-See [all service config](docs/service_config.md) for full list of services cofiguration.
+See [all service configuration](docs/service_config.md) for the full list of service configuration options.

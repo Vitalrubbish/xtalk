@@ -4,28 +4,28 @@
 
 如前文在 [启动服务](start_the_service.zh.md) 中所述，X-Talk 实例可以通过 JSON 配置创建，该配置用于自定义所使用的模型。
 
-对于模型配置，配置内容应与模型 Python 类名及其初始化参数一致。
+查看支持的模型：
+```python
+from xtalk import Xtalk
+print(Xtalk.MODEL_REGISTRY)
+# 类似这样
+# {
+#     "asr": ["xtalk.speech.asr"],
+#     "llm_agent": ["xtalk.llm_agent"],
+#     "tts": ["xtalk.speech.tts"],
+#     "embeddings": ["xtalk.embeddings"],
+#  "speaker_encoder": ["xtalk.speech.speaker_encoder"],
+#     "captioner": ["xtalk.speech.captioner"],
+#     "caption_rewriter": ["xtalk.rewriter"],
+#     "thought_rewriter": ["xtalk.rewriter"],
+#     "vad": ["xtalk.speech.vad"],
+#     "speech_enhancer": ["xtalk.speech.speech_enhancer"],
+#     "speech_speed_controller": ["xtalk.speech.speech_speed_controller"],
+#     "turn_detector": ["xtalk.speech.turn_detector"],
+# }
+```
 
-> 查看支持的模型：
-> ```python
-> from xtalk import Xtalk
-> print(Xtalk.MODEL_REGISTRY)
-> # 类似这样
-> #{
-> #     "asr": ["xtalk.speech.asr"],
-> #     "llm_agent": ["xtalk.llm_agent"],
-> #     "tts": ["xtalk.speech.tts"],
-> #     "embeddings": ["xtalk.embeddings"],
-> #  "speaker_encoder": ["xtalk.speech.speaker_encoder"],
-> #     "captioner": ["xtalk.speech.captioner"],
-> #     "caption_rewriter": ["xtalk.rewriter"],
-> #     "thought_rewriter": ["xtalk.rewriter"],
-> #     "vad": ["xtalk.speech.vad"],
-> #     "speech_enhancer": ["xtalk.speech.speech_enhancer"],
-> #     "speech_speed_controller": ["xtalk.speech.speech_speed_controller"],
-> #     "turn_detector": ["xtalk.speech.turn_detector"],
-> # }
-> ```
+对于模型配置，配置内容应与模型 Python 类名及其初始化参数一致。
 
 例如，`DefaultAgent` 的定义位于 `src/xtalk/llm_agent/default.py`：
 ```python
@@ -87,4 +87,4 @@ class DefaultAgent(Agent):
     }
 ```
 
-完整的服务配置项列表，请参阅[所有服务配置](../docs/service_config.zh.md)。
+完整的服务配置项列表，请参阅[所有服务配置项](docs/service_config.zh.md)。

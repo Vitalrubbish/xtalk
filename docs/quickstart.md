@@ -16,7 +16,7 @@ pip install jinja2 python-multipart 'uvicorn[standard]'
 
 Obtain an API key from [AliCloud Bailian Platform](https://bailian.console.aliyun.com/?tab=model#/api-key). We will be using free-tier service from AliCloud.
 
-> Online service may be unstable and of high latency. We recommend using locally deployed models for better user experience. We recommend ASR models from *SherpaOnnx* ([setup tutorial](https://k2-fsa.github.io/sherpa/onnx/sense-voice/python-api.html#websocket-server-and-client-example)) and *IndexTTS* ([setup tutorial](https://github.com/Ksuriuri/index-tts-vllm)).See [server config tutorial](tutorial/config_the_server.md) and [sample config for fully local deployment](tutorial/sample_config_for_fully_local_deployment.md) for details. 
+> Online service may be unstable and of high latency. We recommend using locally deployed models for better user experience. We recommend ASR models from *SherpaOnnx* ([setup tutorial](https://k2-fsa.github.io/sherpa/onnx/sense-voice/python-api.html#websocket-server-and-client-example)) and *IndexTTS* ([setup tutorial](https://github.com/Ksuriuri/index-tts-vllm)).See [server config tutorial](tutorial/config_the_service.md) and [sample config for fully local deployment](tutorial/sample_config_for_fully_local_deployment.md) for details. 
 
 ## Step 3. Create the config file
 

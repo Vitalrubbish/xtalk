@@ -1,8 +1,8 @@
-# Configure the server
+# Configure the service
 
 ## Customize models
 
-As mentioned [before](tutorial/start_the_server.md), X-Talk instance can be created from a JSON config, which customizes models used.
+As mentioned [before](tutorial/start_the_service.md), X-Talk instance can be created from a JSON config, which customizes models used.
     
 For model config, config should match model Python class name and init args. 
 

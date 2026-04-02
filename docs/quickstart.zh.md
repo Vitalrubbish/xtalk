@@ -16,7 +16,7 @@ pip install jinja2 python-multipart 'uvicorn[standard]'
 
 从[阿里云百炼平台](https://bailian.console.aliyun.com/?tab=model#/api-key)获取 API 密钥。我们将使用阿里云的免费服务。
 
-> 在线服务可能不稳定且延迟较高。我们建议使用本地部署的模型以获得更好的用户体验。我们推荐使用 *SherpaOnnx* 的 ASR 模型（[配置教程](https://k2-fsa.github.io/sherpa/onnx/sense-voice/python-api.html#websocket-server-and-client-example)）和 *IndexTTS*（[配置教程](https://github.com/Ksuriuri/index-tts-vllm)）。详情请参阅[服务器配置教程](tutorial/config_the_server.zh.md)和[本地完整部署示例配置](tutorial/sample_config_for_fully_local_deployment.zh.md)。
+> 在线服务可能不稳定且延迟较高。我们建议使用本地部署的模型以获得更好的用户体验。我们推荐使用 *SherpaOnnx* 的 ASR 模型（[配置教程](https://k2-fsa.github.io/sherpa/onnx/sense-voice/python-api.html#websocket-server-and-client-example)）和 *IndexTTS*（[配置教程](https://github.com/Ksuriuri/index-tts-vllm)）。详情请参阅[服务器配置教程](tutorial/config_the_service.zh.md)和[本地完整部署示例配置](tutorial/sample_config_for_fully_local_deployment.zh.md)。
 
 ## 第 3 步：创建配置文件
 

@@ -3,7 +3,7 @@
 
 X-Talk 的大多数模型与执行逻辑都运行在服务端。客户端主要负责访问麦克风、传输音频、收发 WebSocket 消息，以及处理语音活动检测这类轻量逻辑。
 
-客户端 API 已经发布为独立包 [xtalk-client](https://www.npmjs.com/package/xtalk-client)。
+客户端 API 已经发布为独立包 [xtalk-client](https://www.npmjs.com/package/xtalk-client)，其公开接口与 `frontend/src` 中的实现保持一致。
 
 客户端最简接入只需要三步：
 
@@ -16,6 +16,8 @@ X-Talk 的大多数模型与执行逻辑都运行在服务端。客户端主要�
 ```bash
 npm install xtalk-client
 ```
+
+> 对开发者来说，客户端代码位于 `frontend` 目录下。在该目录中，您可以运行 `npm run watch` 进行开发构建。
 
 然后在前端代码中导入并使用：
 

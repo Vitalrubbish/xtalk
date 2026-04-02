@@ -17,6 +17,8 @@ If you use a bundler, install the package first:
 npm install xtalk-client
 ```
 
+> For developers, client code is under `frontend`. Under the directroy, you may run `npm run watch` for dev build.
+
 Then import it in your frontend code:
 
 ```ts

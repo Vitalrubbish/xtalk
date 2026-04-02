@@ -50,6 +50,9 @@ plugins:
             Testing: 测试
             # Tabs under Docs
             'Supported Models': 支持的模型
+            # Tabs under API
+            'Client': 客户端
+            'Server': 服务端
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
@@ -64,3 +67,6 @@ nav:
       - Testing: tutorial/testing.md
   - Docs:
       - 'Supported Models': docs/supported_models.md
+  - API:
+      - 'Client': api/client.md
+      - 'Server': api/server.md

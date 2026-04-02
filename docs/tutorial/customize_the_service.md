@@ -1,4 +1,4 @@
-> [!NOTE]
+> **Note**
 > See `examples/sample_app/custom_service.py` for details. A dummy `LLMOutputRefactorModel` is added to X-Talk to prepend `Assistant response: ` before model response text.
     
 If you want to add new functionality, you can follow the procesures below:

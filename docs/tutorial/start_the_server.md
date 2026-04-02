@@ -1,4 +1,4 @@
-> [!NOTE]
+> **Note**
 > See `examples/sample_app/configurable_server.py`, `frontend/src`, `examples/sample_app/templates` and `examples/sample_app/static` for details.
    
 X-Talk has most models and execution on server side, and the client is responsible for interacting with microphone, transmitting audio and Websocket messages, and handle lightweight operations like Voice-Actitvty-Detection.

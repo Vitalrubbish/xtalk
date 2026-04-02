@@ -1,4 +1,4 @@
-> [!NOTE]
+> **Note**
 > 详情请参阅 `examples/sample_app/configurable_server.py`、`frontend/src`、`examples/sample_app/templates` 和 `examples/sample_app/static`。
 
 X-Talk 的大多数模型与执行逻辑都运行在服务端，客户端负责与麦克风交互、传输音频和 WebSocket 消息，以及处理语音活动检测这类轻量操作。

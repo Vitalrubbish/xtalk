@@ -4,7 +4,7 @@
 
 [SherpaOnnx](https://github.com/k2-fsa/sherpa-onnx) is recommended for its wide support of models and optimized inference performance.
     
-<details>
+<details markdown="1">
 <summary>SherpaOnnx</summary>
     
 **Dependency:** `pip install "xtalk[sherpa-onnx-asr] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -20,7 +20,7 @@ A high-performance speech recognition framework and beyond.
     
 </details>
 
-<details>
+<details markdown="1">
 <summary>Qwen3ASRFlashRealtime</summary>
     
 **Dependency:** `pip install "xtalk[ali] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -30,7 +30,7 @@ A high-performance speech recognition framework and beyond.
     
 </details>
     
-<details>
+<details markdown="1">
 <summary>Zipformer</summary>
     
 **Dependency:** `pip install "xtalk[zipformer-local] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -40,7 +40,7 @@ A high-performance speech recognition framework and beyond.
     
 </details>
     
-<details>
+<details markdown="1">
 <summary>ElevenLabs</summary>
     
 **Dependency:** `pip install "xtalk[elevenlabs] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -54,7 +54,7 @@ A high-performance speech recognition framework and beyond.
     
 **Slot**: `tts`
     
-<details>
+<details markdown="1">
 <summary>IndexTTS</summary>
 
 **Dependency:** `pip install "xtalk[index-tts] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -69,7 +69,7 @@ A high-performance speech recognition framework and beyond.
     
 </details>
     
-<details>
+<details markdown="1">
 <summary>GPT-SoVITS</summary>
 
 > Experimental. Feel free to open an issue for any problem.
@@ -84,7 +84,7 @@ A high-performance speech recognition framework and beyond.
     
 </details>
     
-<details>
+<details markdown="1">
 <summary>CosyVoice</summary>
 
 **Dependency:** `pip install "xtalk[ali] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -94,7 +94,7 @@ A high-performance speech recognition framework and beyond.
     
 </details>
     
-<details>
+<details markdown="1">
 <summary>ElevenLabs</summary>
     
 **Dependency:** `pip install "xtalk[elevenlabs] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -110,7 +110,7 @@ A high-performance speech recognition framework and beyond.
     
 X-Talk has VAD on client side, so you may not need one.
 
-<details>
+<details markdown="1">
 <summary>Silero VAD</summary>
 
 **Dependency:** `pip install "xtalk[silero-vad] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -125,7 +125,7 @@ X-Talk has VAD on client side, so you may not need one.
     
 **Slot**: `speech_enhancer`
 
-<details>
+<details markdown="1">
 <summary>FastEnhancer</summary>
     
 **Dependency:** `pip install onnxruntime`
@@ -139,7 +139,7 @@ X-Talk has VAD on client side, so you may not need one.
     
 **Slot**: `speaker_encoder`    
     
-<details>
+<details markdown="1">
 <summary>Wespeaker-Voxceleb-Resnet34-LM</summary>
   
 **Dependency:** `pip install "xtalk[pyannote] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -156,7 +156,7 @@ X-Talk has VAD on client side, so you may not need one.
     
 Captioners give you description of audio clip.
     
-<details>
+<details markdown="1">
 <summary>Qwen3-Omni-30B-A3B-Captioner</summary>
    
 **Dependency:** None

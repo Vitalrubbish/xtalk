@@ -4,7 +4,7 @@
 
 推荐使用 [SherpaOnnx](https://github.com/k2-fsa/sherpa-onnx)，因为它支持的模型范围广，推理性能也经过优化。
 
-<details>
+<details markdown="1">
 <summary>SherpaOnnx</summary>
 
 **依赖：** `pip install "xtalk[sherpa-onnx-asr] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -20,7 +20,7 @@
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>Qwen3ASRFlashRealtime</summary>
 
 **依赖：** `pip install "xtalk[ali] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -30,7 +30,7 @@
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>Zipformer</summary>
 
 **依赖：** `pip install "xtalk[zipformer-local] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -40,7 +40,7 @@
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>ElevenLabs</summary>
 
 **依赖：** `pip install "xtalk[elevenlabs] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -54,7 +54,7 @@
 
 **Slot**：`tts`
 
-<details>
+<details markdown="1">
 <summary>IndexTTS</summary>
 
 **依赖：** `pip install "xtalk[index-tts] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -69,7 +69,7 @@
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>GPT-SoVITS</summary>
 
 > 实验性支持。如遇问题，欢迎提交 issue。
@@ -84,7 +84,7 @@
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>CosyVoice</summary>
 
 **依赖：** `pip install "xtalk[ali] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -94,7 +94,7 @@
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>ElevenLabs</summary>
 
 **依赖：** `pip install "xtalk[elevenlabs] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -110,7 +110,7 @@
 
 X-Talk 已经在客户端侧提供了 VAD，因此您可能不一定需要额外部署一个。
 
-<details>
+<details markdown="1">
 <summary>Silero VAD</summary>
 
 **依赖：** `pip install "xtalk[silero-vad] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -125,7 +125,7 @@ X-Talk 已经在客户端侧提供了 VAD，因此您可能不一定需要额外
 
 **Slot**：`speech_enhancer`
 
-<details>
+<details markdown="1">
 <summary>FastEnhancer</summary>
 
 **依赖：** `pip install onnxruntime`
@@ -139,7 +139,7 @@ X-Talk 已经在客户端侧提供了 VAD，因此您可能不一定需要额外
 
 **Slot**：`speaker_encoder`
 
-<details>
+<details markdown="1">
 <summary>Wespeaker-Voxceleb-Resnet34-LM</summary>
 
 **依赖：** `pip install "xtalk[pyannote] @ git+https://github.com/xcc-zach/xtalk.git@main"`
@@ -156,7 +156,7 @@ X-Talk 已经在客户端侧提供了 VAD，因此您可能不一定需要额外
 
 Captioner 用于生成音频片段的文字描述。
 
-<details>
+<details markdown="1">
 <summary>Qwen3-Omni-30B-A3B-Captioner</summary>
 
 **依赖：** 无

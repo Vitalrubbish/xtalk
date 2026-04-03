@@ -54,6 +54,8 @@ plugins:
             # Tabs under API
             'Client': 客户端
             'Server': 服务端
+markdown_extensions:
+  - md_in_html
 nav:
   - Home: index.md
   - Quickstart: quickstart.md

@@ -1,9 +1,9 @@
 > **Note**
-> 详情请参阅 `examples/sample_app/custom_service.py`。其中向 X-Talk 添加了一个假的 `LLMOutputRefactorModel`，用于在模型响应文本前附加 `Assistant response: `。
+> 详情请参阅 `examples/sample_app/custom_service.py`。其中向 X-Talk 添加了一个哑的 `LLMOutputRefactorModel`，用于在发送到前端的最终 LLM 响应文本前附加 `Assistant response: `。
 
 如果您想添加新的功能，可以按照下面的流程进行：
 
-首先，您可能需要定义一个新模型。下面这个模型会在输入前添加一段文本：
+首先，您可能需要定义一个新模型。下面这个模型会在 LLM 输出前添加一段文本：
 ```python
 # 定义一个自定义模型
 class LLMOutputRefactorModel:
@@ -31,6 +31,8 @@ class CustomPipeline(DefaultPipeline):
         asr: ASR,
         llm_agent: Agent,
         tts: TTS,
+        default_response: str = "Sorry, I didn't catch that. Could you please say it again?",
+        use_streaming_tts: bool = True,
         captioner: Optional[Captioner] = None,
         punt_restorer_model: Optional[PuntRestorer] = None,
         caption_rewriter: Optional[Rewriter | BaseChatModel] = None,
@@ -40,6 +42,7 @@ class CustomPipeline(DefaultPipeline):
         speaker_encoder: Optional[SpeakerEncoder] = None,
         speech_speed_controller: Optional[SpeechSpeedController] = None,
         embeddings: Optional[Embeddings] = None,
+        turn_detector: Optional[TurnDetector] = None,
         llm_output_refactor_model: Optional["LLMOutputRefactorModel"] = None,
         **kwargs,
     ):
@@ -47,6 +50,8 @@ class CustomPipeline(DefaultPipeline):
             asr=asr,
             llm_agent=llm_agent,
             tts=tts,
+            default_response=default_response,
+            use_streaming_tts=use_streaming_tts,
             captioner=captioner,
             punt_restorer_model=punt_restorer_model,
             caption_rewriter=caption_rewriter,
@@ -56,6 +61,7 @@ class CustomPipeline(DefaultPipeline):
             speaker_encoder=speaker_encoder,
             speech_speed_controller=speech_speed_controller,
             embeddings=embeddings,
+            turn_detector=turn_detector,
             **kwargs,
         )
         self.llm_output_refactor_model = llm_output_refactor_model
@@ -65,7 +71,23 @@ class CustomPipeline(DefaultPipeline):
     ) -> Optional["LLMOutputRefactorModel"]:
         return self.llm_output_refactor_model
 ```
-请注意，`__init__` 中的 `**kwargs` 是必须的，用来接收从 `DefaultPipeline` 继承但被遮蔽的参数。如果您在 `__init__` 中新增了参数，就需要把它注册为一个 `field`，并指定其 `clone` 行为（`True/False`）。
+上面的示例与当前 `DefaultPipeline` 的签名保持一致。如果后续基类增加了新的初始化参数，您的子类也应同步更新，或通过 `**kwargs` 继续透传。
+
+另外，如果您在 `__init__` 中新增了参数，就需要把它注册为一个 `field`，并指定其 `clone` 行为（`True/False`）。
+
+定义完自定义 pipeline 后，还需要在从配置创建 pipeline 时注入新的模型槽位：
+
+```python
+pipeline = Xtalk.create_pipeline_from_config(
+    pipeline_cls=CustomPipeline,
+    config_path_or_dict=args.config,
+    additional_model_registry={
+        "llm_output_refactor_model": LLMOutputRefactorModel(),
+    },
+)
+```
+
+如果没有传入 `additional_model_registry`，通过配置加载 pipeline 时不会填充 `llm_output_refactor_model` 这个自定义槽位。
 
 基于 X-Talk 的事件总线机制，接下来您可以新增一个 `Manager`，订阅已有的 `Event`，并实现所需的自定义功能。必要时，您也可以创建新的 `Event`。
 例如：
@@ -117,7 +139,7 @@ async def output_gateway_llm_output_refactored_final_handler(
 ):
     await self.send_signal(
         {
-            "action": "finish_resp", # 你可以在 frontend/src/js/index.js 中找到 "finish_resp"
+            "action": "finish_resp", # 可在 frontend/src/action-handler-functions/messages.ts 中找到 "finish_resp"
             "data": {"text": event.text, "turn_id": event.turn_id},
         }
     )

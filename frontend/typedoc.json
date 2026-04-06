@@ -4,6 +4,7 @@
   "tsconfig": "./tsconfig.json",
   "plugin": ["typedoc-plugin-markdown"],
   "out": "../docs/api/client",
-  "entryFileName": "index",
+  "readme": "none",
+  "entryFileName": "globals",
   "cleanOutputDir": true
 }

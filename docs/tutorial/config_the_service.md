@@ -74,7 +74,7 @@ To match those initialization arguments, the config item should look like:
 
 Optional keys such as `voice_names`, `emotions`, and `tools` can be omitted. `tools` is not supported in config yet.
 
-See [Supported Models](../docs/supported_models.md) for the full list of model types, their optional dependencies, and where they are adapted in the source code.
+See [Supported Models](docs/supported_models.md) for the full list of model types, their optional dependencies, and where they are adapted in the source code.
 > **Note**
 > Most model implementations are client-side adapters. You may also need to start the model instance itself according to its corresponding instructions.
 

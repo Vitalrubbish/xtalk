@@ -72,5 +72,5 @@ nav:
       - 'Supported Models': docs/supported_models.md
       - 'Service Configuration': docs/service_config.md
   - API:
-      - 'Client': api/client.md
+      - 'Client': api/client/index.md
       - 'Server': api/server.md

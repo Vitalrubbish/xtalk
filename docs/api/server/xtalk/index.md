@@ -33,7 +33,7 @@ def __init__(self, *, service_prototype: Service, max_sessions: int | None = Non
 
 Initialize an ``Xtalk`` application wrapper.
 
-### Parameters
+##### Parameters
 
 - `service_prototype` (`Service`)
   Prototype service used to clone per-session service instances.
@@ -51,7 +51,7 @@ def register_model_search_spec(cls, *, slot: str, spec: ImportSpec, prepend: boo
 
 Register an additional model lookup location for a slot.
 
-### Parameters
+##### Parameters
 
 - `slot` (`str`)
   Registry slot name such as ``"llm_agent"`` or ``"tts"``.
@@ -62,13 +62,13 @@ Register an additional model lookup location for a slot.
 - `prepend` (`bool, default=True`)
   Whether to try the new spec before existing registered specs.
 
-### Notes
+##### Notes
 
 Common ``spec`` forms include ``"my_pkg.custom_tts"``,
 ``"my_pkg.custom_tts:registry"``, ``"/abs/path/custom_tts.py"``, and
 ``Path("./custom_tts.py")``.
 
-### Examples
+##### Examples
 
 ```pycon
 >>> Xtalk.register_model_search_spec(
@@ -87,18 +87,18 @@ def from_config(cls, path_or_dict: str | dict) -> 'Xtalk'
 
 Build an ``Xtalk`` instance from configuration data.
 
-### Parameters
+##### Parameters
 
 - `path_or_dict` (`str | dict`)
   JSON file path or already loaded configuration dictionary.
 
-### Returns
+##### Returns
 
 - `Xtalk`
   Configured application wrapper backed by a ``DefaultPipeline`` and
   ``DefaultService``.
 
-### Examples
+##### Examples
 
 ```pycon
 >>> xtalk = Xtalk.from_config("server_config.json")
@@ -114,7 +114,7 @@ def create_pipeline_from_config(cls, *, pipeline_cls: Type[Pipeline], config_pat
 
 Instantiate a custom pipeline class from configuration.
 
-### Parameters
+##### Parameters
 
 - `pipeline_cls` (`Type[Pipeline]`)
   Concrete pipeline type to instantiate.
@@ -124,12 +124,12 @@ Instantiate a custom pipeline class from configuration.
   Extra slot-to-instance mapping merged on top of the default model
   registry before the pipeline is created.
 
-### Returns
+##### Returns
 
 - `Pipeline`
   Pipeline instance created from the supplied configuration.
 
-### Examples
+##### Examples
 
 ```pycon
 >>> pipeline = Xtalk.create_pipeline_from_config(
@@ -149,7 +149,7 @@ def set_session_limit(self, limit: int)
 
 Set or replace the concurrent session limit.
 
-### Parameters
+##### Parameters
 
 - `limit` (`int`)
   Maximum number of active sessions allowed at the same time.
@@ -164,14 +164,14 @@ async def embed_text(self, session_id: str, text: str)
 
 Queue text for session-scoped embedding storage.
 
-### Parameters
+##### Parameters
 
 - `session_id` (`str`)
   Session identifier returned to the frontend.
 - `text` (`str`)
   Text content that should be embedded and persisted for retrieval.
 
-### Raises
+##### Raises
 
 - `ValueError`
   Raised if the target session does not exist.
@@ -186,13 +186,13 @@ def add_agent_tools(self, tools_or_factories: list[BaseTool | Callable[[], BaseT
 
 Attach tools to the prototype agent before sessions are created.
 
-### Parameters
+##### Parameters
 
 - `tools_or_factories` (`list[BaseTool | Callable[[], BaseTool]]`)
   Tool instances or zero-argument factories that produce tool
   instances.
 
-### Raises
+##### Raises
 
 - `RuntimeError`
   Raised if at least one service session has already been created.
@@ -207,12 +207,12 @@ async def connect(self, websocket: WebSocket)
 
 Accept a WebSocket session and hand it to the service manager.
 
-### Parameters
+##### Parameters
 
 - `websocket` (`WebSocket`)
   FastAPI WebSocket connection from the client.
 
-### Notes
+##### Notes
 
 If a session limit is configured, the socket is first admitted through
 the session limiter queue.
@@ -245,13 +245,13 @@ def context(self) -> 'PipelineContext'
 
 Return the runtime context shared across managers.
 
-### Returns
+##### Returns
 
 - `PipelineContext`
   Mutable context dictionary initialized with the standard Xtalk
   runtime keys on first access.
 
-### Notes
+##### Notes
 
 Callers typically read from the returned dictionary directly. Replacing
 the entire context should be done via the setter.
@@ -266,7 +266,7 @@ def context(self, value: 'PipelineContext') -> None
 
 Replace the shared runtime context.
 
-### Parameters
+##### Parameters
 
 - `value` (`PipelineContext`)
   Context dictionary to store on the pipeline instance.
@@ -281,7 +281,7 @@ def clone(self) -> 'Pipeline'
 
 Clone the pipeline for a new session.
 
-### Returns
+##### Returns
 
 - `Pipeline`
   Session-safe pipeline instance.
@@ -296,7 +296,7 @@ def get_asr_model(self) -> ASR | None
 
 Return the configured ASR model, if available.
 
-### Returns
+##### Returns
 
 - `ASR | None`
   ASR implementation or ``None`` when the pipeline omits speech
@@ -312,7 +312,7 @@ def get_tts_model(self) -> TTS | None
 
 Return the configured TTS model, if available.
 
-### Returns
+##### Returns
 
 - `TTS | None`
   TTS implementation or ``None``.
@@ -327,7 +327,7 @@ def get_agent(self) -> Agent | None
 
 Return the configured agent, if available.
 
-### Returns
+##### Returns
 
 - `Agent | None`
   Agent implementation or ``None``.
@@ -342,7 +342,7 @@ def get_captioner_model(self) -> Captioner | None
 
 Return the configured captioner, if available.
 
-### Returns
+##### Returns
 
 - `Captioner | None`
   Captioner implementation or ``None``.
@@ -357,7 +357,7 @@ def get_punt_restorer_model(self) -> PuntRestorer | None
 
 Return the configured punctuation restorer, if available.
 
-### Returns
+##### Returns
 
 - `PuntRestorer | None`
   Punctuation restoration model or ``None``.
@@ -372,7 +372,7 @@ def get_caption_rewriter_model(self) -> Rewriter | None
 
 Return the caption rewriter used by caption-related managers.
 
-### Returns
+##### Returns
 
 - `Rewriter | None`
   Caption rewriter or ``None``.
@@ -387,7 +387,7 @@ def get_thought_rewriter_model(self) -> Rewriter | None
 
 Return the thought rewriter used by ``ThoughtManager``.
 
-### Returns
+##### Returns
 
 - `Rewriter | None`
   Thought rewriter or ``None``.
@@ -402,7 +402,7 @@ def get_vad_model(self) -> VAD
 
 Return the configured voice activity detector, if available.
 
-### Returns
+##### Returns
 
 - `VAD | None`
   VAD implementation or ``None``.
@@ -417,7 +417,7 @@ def get_enhancer_model(self) -> SpeechEnhancer | None
 
 Return the configured speech enhancer, if available.
 
-### Returns
+##### Returns
 
 - `SpeechEnhancer | None`
   Speech enhancement model or ``None``.
@@ -432,7 +432,7 @@ def get_speaker_encoder(self) -> SpeakerEncoder | None
 
 Return the configured speaker encoder, if available.
 
-### Returns
+##### Returns
 
 - `SpeakerEncoder | None`
   Speaker encoder or ``None``.
@@ -447,7 +447,7 @@ def get_speed_controller(self) -> SpeechSpeedController | None
 
 Return the optional TTS speed controller.
 
-### Returns
+##### Returns
 
 - `SpeechSpeedController | None`
   Speed controller or ``None``.
@@ -462,7 +462,7 @@ def get_embeddings_model(self) -> Embeddings | None
 
 Return the embeddings model used for retrieval features.
 
-### Returns
+##### Returns
 
 - `Embeddings | None`
   Embeddings model or ``None``.
@@ -477,7 +477,7 @@ def get_turn_detector_model(self) -> TurnDetector | None
 
 Return the configured turn detector, if available.
 
-### Returns
+##### Returns
 
 - `TurnDetector | None`
   Turn detector or ``None``.
@@ -561,7 +561,7 @@ def __init__(self, asr: ASR, llm_agent: Agent, tts: TTS, default_response: str =
 
 Initialize the default pipeline.
 
-### Parameters
+##### Parameters
 
 - `asr` (`ASR`)
   Speech recognition model.
@@ -604,12 +604,12 @@ def clone(self)
 
 Clone the pipeline according to field metadata.
 
-### Returns
+##### Returns
 
 - `DefaultPipeline`
   New pipeline instance of the same concrete type.
 
-### Notes
+##### Notes
 
 Fields marked with ``clone=True`` call their own ``clone()`` method when
 available. Remaining fields are shared by reference.
@@ -728,7 +728,7 @@ def set_tts_model(self, model_type: str, config: dict) -> None
 
 Switch the active TTS model at runtime.
 
-### Parameters
+##### Parameters
 
 - `model_type` (`str`)
   Supported model family name, currently ``"IndexTTS"`` or
@@ -736,7 +736,7 @@ Switch the active TTS model at runtime.
 - `config` (`dict`)
   Runtime configuration passed to the new TTS model constructor.
 
-### Raises
+##### Raises
 
 - `ValueError`
   Raised if ``model_type`` is not supported.
@@ -751,7 +751,7 @@ def set_llm_model(self, model: str, base_url: str = '', api_key: str = '', extra
 
 Replace the current agent LLM with a ``ChatOpenAI`` instance.
 
-### Parameters
+##### Parameters
 
 - `model` (`str`)
   Target model name passed to ``ChatOpenAI``.
@@ -807,7 +807,7 @@ def unsubscribe_event(self, *, event_listener_cls: Type[EventListenerMixin], eve
 
 Disable an automatic event subscription for a listener class.
 
-### Parameters
+##### Parameters
 
 - `event_listener_cls` (`Type[EventListenerMixin]`)
   Listener class whose subscription should be disabled.
@@ -827,7 +827,7 @@ def subscribe_event(self, *, event_listener_cls: Type[EventListenerMixin], event
 
 Register an additional event subscription override.
 
-### Parameters
+##### Parameters
 
 - `event_listener_cls` (`Type[EventListenerMixin]`)
   Listener class that should receive the event.
@@ -852,7 +852,7 @@ def register_manager(self, manager_cls: Type[Manager])
 
 Register a manager class on the service.
 
-### Parameters
+##### Parameters
 
 - `manager_cls` (`Type[Manager]`)
   Manager class to add to the service prototype or live session.
@@ -867,7 +867,7 @@ def unregister_manager(self, manager_cls: Type[Manager])
 
 Remove a manager class from the service.
 
-### Parameters
+##### Parameters
 
 - `manager_cls` (`Type[Manager]`)
   Manager class to remove.
@@ -882,13 +882,13 @@ async def handle_message_loop(self, already_accepted: bool = False) -> None
 
 Run the full WebSocket message loop for a live session.
 
-### Parameters
+##### Parameters
 
 - `already_accepted` (`bool, optional`)
   Whether the WebSocket has already been accepted by an upstream
   limiter or caller.
 
-### Raises
+##### Raises
 
 - `RuntimeError`
   Raised if the service instance is still a prototype without runtime
@@ -914,12 +914,12 @@ def clone(self, new_websocket: WebSocket) -> 'Service'
 
 Clone the service prototype for a new WebSocket session.
 
-### Parameters
+##### Parameters
 
 - `new_websocket` (`WebSocket`)
   WebSocket assigned to the new live session.
 
-### Returns
+##### Returns
 
 - `Service`
   Cloned service instance of the same concrete type.
@@ -1055,7 +1055,7 @@ def event_handler(event_type: Type[BaseEvent], *, priority: int = 0, enabled_if:
 
 Declare a manager event handler.
 
-### Parameters
+##### Parameters
 
 - `event_type` (`Type[BaseEvent]`)
   Event class handled by the decorated method.
@@ -1065,7 +1065,7 @@ Declare a manager event handler.
   Predicate evaluated against the manager instance before the handler
   is registered.
 
-### Returns
+##### Returns
 
 - `Callable`
   Decorator that marks the method for automatic subscription.
@@ -1105,7 +1105,7 @@ def __init__(self, enable_history: bool = False, max_history: int = 1000)
 
 Initialize the event bus.
 
-### Parameters
+##### Parameters
 
 - `enable_history` (`bool, optional`)
   Whether to record published events in the in-memory history buffer.
@@ -1122,7 +1122,7 @@ def subscribe(self, event_class: Union[Type[BaseEvent], str], handler: Callable[
 
 Subscribe a handler to an event type.
 
-### Parameters
+##### Parameters
 
 - `event_class` (`Type[BaseEvent] | str`)
   Event class or event type string such as ``"tts.started"``.
@@ -1141,14 +1141,14 @@ def unsubscribe(self, event_class: Union[Type[BaseEvent], str], handler: Callabl
 
 Unsubscribe a handler from an event type.
 
-### Parameters
+##### Parameters
 
 - `event_class` (`Type[BaseEvent] | str`)
   Event class or event type string.
 - `handler` (`Callable`)
   Previously subscribed handler to remove.
 
-### Returns
+##### Returns
 
 - `bool`
   ``True`` if the handler was removed, otherwise ``False``.
@@ -1163,14 +1163,14 @@ async def publish(self, event: BaseEvent, wait_for_completion: bool = False) -> 
 
 Publish an event to all matching handlers.
 
-### Parameters
+##### Parameters
 
 - `event` (`BaseEvent`)
   Event instance to dispatch.
 - `wait_for_completion` (`bool, optional`)
   Whether to await handler completion before returning.
 
-### Returns
+##### Returns
 
 - `bool`
   ``True`` on success, otherwise ``False``.

@@ -43,13 +43,13 @@ def generate(self, input: Union[str, AgentInput]) -> Union[str, tuple[str, List[
 
 Generate a complete response for the input.
 
-### Parameters
+##### Parameters
 
 - `input` (`str | AgentInput`)
   Raw user text or a structured payload containing both text and
   pipeline context.
 
-### Returns
+##### Returns
 
 - `str | tuple[str, List[ToolCall]]`
   Plain response text, or a ``(text, tool_calls)`` tuple when tool
@@ -65,12 +65,12 @@ def generate_stream(self, input: Union[str, AgentInput]) -> Iterable[Union[str, 
 
 Stream response chunks for the input.
 
-### Parameters
+##### Parameters
 
 - `input` (`str | AgentInput`)
   Raw user text or structured agent input.
 
-### Yields
+##### Yields
 
 - `str | ToolCall`
   Tool calls followed by text chunks. The default implementation
@@ -86,12 +86,12 @@ async def async_generate(self, input: Union[str, AgentInput]) -> Union[str, tupl
 
 Asynchronously generate a complete response.
 
-### Parameters
+##### Parameters
 
 - `input` (`str | AgentInput`)
   Raw user text or structured agent input.
 
-### Returns
+##### Returns
 
 - `str | tuple[str, List[ToolCall]]`
   Same result contract as ``generate()``.
@@ -106,12 +106,12 @@ async def async_generate_stream(self, input: Union[str, AgentInput]) -> AsyncIte
 
 Asynchronously stream agent outputs.
 
-### Parameters
+##### Parameters
 
 - `input` (`str | AgentInput`)
   Raw user text or structured agent input.
 
-### Yields
+##### Yields
 
 - `str | ToolCall`
   Streamed outputs from ``generate_stream()``.
@@ -126,7 +126,7 @@ def clone(self) -> 'Agent'
 
 Clone the agent for a new session.
 
-### Returns
+##### Returns
 
 - `Agent`
   Session-safe agent instance.
@@ -141,7 +141,7 @@ def get_llm(self) -> BaseChatModel | None
 
 Return the backing chat model when the agent exposes one.
 
-### Returns
+##### Returns
 
 - `BaseChatModel | None`
   Underlying chat model or ``None``.
@@ -156,7 +156,7 @@ def get_chat_history(self) -> str | None
 
 Return the serialized conversation history when available.
 
-### Returns
+##### Returns
 
 - `str | None`
   Conversation history or ``None``.
@@ -171,7 +171,7 @@ def add_tools(self, tools: list[BaseTool | Callable[[], BaseTool]])
 
 Attach tools to the agent.
 
-### Parameters
+##### Parameters
 
 - `tools` (`list[BaseTool | Callable[[], BaseTool]]`)
   Tool instances or factories that produce tool instances.
@@ -198,12 +198,12 @@ def rewrite(self, input: str) -> str
 
 Rewrite input text.
 
-### Parameters
+##### Parameters
 
 - `input` (`str`)
   Source text to rewrite.
 
-### Returns
+##### Returns
 
 - `str`
   Rewritten text.
@@ -218,12 +218,12 @@ async def async_rewrite(self, input: str) -> str
 
 Asynchronously rewrite input text.
 
-### Parameters
+##### Parameters
 
 - `input` (`str`)
   Source text to rewrite.
 
-### Returns
+##### Returns
 
 - `str`
   Rewritten text.
@@ -250,12 +250,12 @@ def recognize(self, audio: bytes) -> str
 
 Recognize a full audio buffer.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes.
 
-### Returns
+##### Returns
 
 - `str`
   Recognized text.
@@ -270,7 +270,7 @@ def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str
 
 Recognize audio incrementally in streaming mode.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   Incremental PCM 16-bit mono audio bytes.
@@ -278,7 +278,7 @@ Recognize audio incrementally in streaming mode.
   Whether the caller is forcing a final decode because the user paused
   or the turn ended.
 
-### Returns
+##### Returns
 
 - `str`
   Current recognition result.
@@ -293,7 +293,7 @@ def stream_chunk_bytes_hint(self) -> int | None
 
 Return the preferred streaming chunk size.
 
-### Returns
+##### Returns
 
 - `int | None`
   Recommended byte count for streaming accumulation, or ``None`` when
@@ -319,7 +319,7 @@ def clone(self) -> 'ASR'
 
 Clone the ASR instance for a new session.
 
-### Returns
+##### Returns
 
 - `ASR`
   Clone with shared weights and independent runtime state.
@@ -334,12 +334,12 @@ async def async_recognize(self, audio: bytes) -> str
 
 Asynchronously recognize a full audio buffer.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes.
 
-### Returns
+##### Returns
 
 - `str`
   Recognized text.
@@ -354,14 +354,14 @@ async def async_recognize_stream(self, audio: bytes, *, is_final: bool = False) 
 
 Asynchronously recognize incremental audio input.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   Incremental PCM 16-bit mono audio bytes.
 - `is_final` (`bool, optional`)
   Whether the chunk should force a final decode.
 
-### Returns
+##### Returns
 
 - `str`
   Current recognition result.
@@ -388,12 +388,12 @@ def synthesize(self, text: str) -> bytes
 
 Synthesize audio for a full text input.
 
-### Parameters
+##### Parameters
 
 - `text` (`str`)
   Text to synthesize.
 
-### Returns
+##### Returns
 
 - `bytes`
   PCM 16-bit mono audio bytes at 48 kHz.
@@ -408,14 +408,14 @@ def synthesize_stream(self, text: str, **kwargs) -> Iterable[bytes]
 
 Stream synthesized audio chunks for a text input.
 
-### Parameters
+##### Parameters
 
 - `text` (`str`)
   Text to synthesize.
 - `**kwargs`
   Model-specific streaming options.
 
-### Yields
+##### Yields
 
 - `bytes`
   PCM 16-bit mono audio bytes at 48 kHz.
@@ -430,14 +430,14 @@ async def async_synthesize(self, text: str, **kwargs: Any) -> bytes
 
 Asynchronously synthesize audio for text.
 
-### Parameters
+##### Parameters
 
 - `text` (`str`)
   Text to synthesize.
 - `**kwargs`
   Model-specific synthesis options.
 
-### Returns
+##### Returns
 
 - `bytes`
   Synthesized PCM audio bytes.
@@ -452,14 +452,14 @@ async def async_synthesize_stream(self, text: str, **kwargs: Any) -> AsyncIterat
 
 Asynchronously stream synthesized audio chunks.
 
-### Parameters
+##### Parameters
 
 - `text` (`str`)
   Text to synthesize.
 - `**kwargs`
   Model-specific synthesis options.
 
-### Yields
+##### Yields
 
 - `bytes`
   Streamed PCM audio chunks.
@@ -474,7 +474,7 @@ def clone(self) -> 'TTS'
 
 Clone the TTS engine for a new session.
 
-### Returns
+##### Returns
 
 - `TTS`
   Session-safe clone.
@@ -489,7 +489,7 @@ def set_voice(self, voice_names: list[str]) -> None
 
 Update the active voice selection.
 
-### Parameters
+##### Parameters
 
 - `voice_names` (`list[str]`)
   One or more voice names understood by the implementation.
@@ -504,7 +504,7 @@ def set_emotion(self, emotion: str | list[float]) -> None
 
 Update the active synthesis emotion.
 
-### Parameters
+##### Parameters
 
 - `emotion` (`str | list[float]`)
   Emotion label or model-specific emotion vector.
@@ -531,12 +531,12 @@ def caption(self, audio: bytes) -> str
 
 Generate a caption for audio.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes at 16 kHz.
 
-### Returns
+##### Returns
 
 - `str`
   Generated caption text.
@@ -551,12 +551,12 @@ def caption_stream(self, audio: bytes) -> Iterable[str]
 
 Stream caption text for audio input.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes at 16 kHz.
 
-### Yields
+##### Yields
 
 - `str`
   Streamed caption text.
@@ -571,12 +571,12 @@ async def async_caption(self, audio: bytes) -> str
 
 Asynchronously caption audio.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes at 16 kHz.
 
-### Returns
+##### Returns
 
 - `str`
   Generated caption text.
@@ -591,12 +591,12 @@ async def async_caption_stream(self, audio: bytes) -> AsyncIterator[str]
 
 Asynchronously stream caption text.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes at 16 kHz.
 
-### Yields
+##### Yields
 
 - `str`
   Streamed caption text.
@@ -623,12 +623,12 @@ def restore(self, text: str) -> str
 
 Restore punctuation in text.
 
-### Parameters
+##### Parameters
 
 - `text` (`str`)
   Text without reliable punctuation.
 
-### Returns
+##### Returns
 
 - `str`
   Text with restored punctuation.
@@ -643,12 +643,12 @@ async def async_restore(self, text: str) -> str
 
 Asynchronously restore punctuation in text.
 
-### Parameters
+##### Parameters
 
 - `text` (`str`)
   Text without reliable punctuation.
 
-### Returns
+##### Returns
 
 - `str`
   Restored text.
@@ -675,12 +675,12 @@ def is_speech(self, frame: bytes) -> bool
 
 Determine whether an audio frame contains speech.
 
-### Parameters
+##### Parameters
 
 - `frame` (`bytes`)
   PCM 16-bit mono audio bytes at 16 kHz.
 
-### Returns
+##### Returns
 
 - `bool`
   ``True`` if speech is detected, otherwise ``False``.
@@ -695,12 +695,12 @@ async def async_is_speech(self, frame: bytes) -> bool
 
 Asynchronously determine whether an audio frame contains speech.
 
-### Parameters
+##### Parameters
 
 - `frame` (`bytes`)
   PCM 16-bit mono audio bytes at 16 kHz.
 
-### Returns
+##### Returns
 
 - `bool`
   ``True`` if speech is detected, otherwise ``False``.
@@ -731,12 +731,12 @@ def enhance(self, audio: bytes) -> bytes
 
 Enhance an audio frame.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes at 16 kHz.
 
-### Returns
+##### Returns
 
 - `bytes`
   Enhanced PCM audio bytes.
@@ -751,7 +751,7 @@ def flush(self) -> bytes
 
 Flush any internally buffered audio.
 
-### Returns
+##### Returns
 
 - `bytes`
   Remaining enhanced PCM audio bytes.
@@ -766,12 +766,12 @@ async def async_enhance(self, audio: bytes) -> bytes
 
 Asynchronously enhance audio.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes at 16 kHz.
 
-### Returns
+##### Returns
 
 - `bytes`
   Enhanced PCM audio bytes.
@@ -786,7 +786,7 @@ async def async_flush(self) -> bytes
 
 Asynchronously flush buffered audio.
 
-### Returns
+##### Returns
 
 - `bytes`
   Remaining enhanced PCM audio bytes.
@@ -811,7 +811,7 @@ def clone(self) -> 'SpeechEnhancer'
 
 Clone the speech enhancer for a new session.
 
-### Returns
+##### Returns
 
 - `SpeechEnhancer`
   Clone with shared weights and isolated runtime state.
@@ -838,12 +838,12 @@ def extract(self, audio: bytes) -> np.ndarray
 
 Generate a speaker embedding vector.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes.
 
-### Returns
+##### Returns
 
 - `np.ndarray`
   Speaker embedding vector.
@@ -858,12 +858,12 @@ async def async_extract(self, audio: bytes) -> np.ndarray
 
 Asynchronously extract a speaker embedding.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes`)
   PCM 16-bit mono audio bytes.
 
-### Returns
+##### Returns
 
 - `np.ndarray`
   Speaker embedding vector.
@@ -878,14 +878,14 @@ def similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float
 
 Compute similarity between two speaker embeddings.
 
-### Parameters
+##### Parameters
 
 - `embedding1` (`np.ndarray`)
   First speaker embedding.
 - `embedding2` (`np.ndarray`)
   Second speaker embedding.
 
-### Returns
+##### Returns
 
 - `float`
   Cosine similarity score.
@@ -912,14 +912,14 @@ def process(self, audio_bytes: bytes, speed: float = 1.0) -> bytes
 
 Apply a speed adjustment to synthesized audio.
 
-### Parameters
+##### Parameters
 
 - `audio_bytes` (`bytes`)
   Synthesized audio bytes.
 - `speed` (`float, optional`)
   Speed multiplier.
 
-### Returns
+##### Returns
 
 - `bytes`
   Processed audio bytes.
@@ -934,14 +934,14 @@ async def async_process(self, audio_bytes: bytes, speed: float = 1.0) -> bytes
 
 Asynchronously apply a speed adjustment to audio.
 
-### Parameters
+##### Parameters
 
 - `audio_bytes` (`bytes`)
   Synthesized audio bytes.
 - `speed` (`float, optional`)
   Speed multiplier.
 
-### Returns
+##### Returns
 
 - `bytes`
   Processed audio bytes.
@@ -976,7 +976,7 @@ def listening(self) -> bool
 
 Return whether the detector is currently listening for user turns.
 
-### Returns
+##### Returns
 
 - `bool`
   Current listening state.
@@ -991,7 +991,7 @@ def listening(self, value: bool) -> None
 
 Update the listening state.
 
-### Parameters
+##### Parameters
 
 - `value` (`bool`)
   New listening state.
@@ -1006,12 +1006,12 @@ def listening_lock(self, is_async: bool = True)
 
 Return the lock guarding listening state changes.
 
-### Parameters
+##### Parameters
 
 - `is_async` (`bool, optional`)
   Whether to return the async lock instead of the threading lock.
 
-### Returns
+##### Returns
 
 - `asyncio.Lock | threading.Lock`
   Lock object matching the requested concurrency model.
@@ -1026,7 +1026,7 @@ def detect(self, audio: Optional[bytes] = None, text: Optional[str] = None, spee
 
 Detect conversational turn state from audio and/or text.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes | None, optional`)
   Current PCM 16-bit mono audio frame at 16 kHz.
@@ -1036,7 +1036,7 @@ Detect conversational turn state from audio and/or text.
   Whether the user appears to have paused speaking. This is typically
   provided together with ``text``.
 
-### Returns
+##### Returns
 
 - `TurnDetectionResult | list[TurnDetectionResult]`
   One or more turn-detection decisions. When multiple results are
@@ -1053,7 +1053,7 @@ async def async_detect(self, audio: Optional[bytes] = None, text: Optional[str] 
 
 Asynchronously detect conversational turn state.
 
-### Parameters
+##### Parameters
 
 - `audio` (`bytes | None, optional`)
   Current PCM 16-bit mono audio frame at 16 kHz.
@@ -1062,7 +1062,7 @@ Asynchronously detect conversational turn state.
 - `speech_pause` (`bool | None, optional`)
   Whether the user appears to have paused speaking.
 
-### Returns
+##### Returns
 
 - `TurnDetectionResult | list[TurnDetectionResult]`
   One or more turn-detection decisions.
@@ -1077,7 +1077,7 @@ def clone(self) -> 'TurnDetector'
 
 Clone the turn detector for a new session.
 
-### Returns
+##### Returns
 
 - `TurnDetector`
   Session-safe clone.

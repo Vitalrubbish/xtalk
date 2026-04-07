@@ -17,16 +17,44 @@ class OutputGateway(EventListenerMixin)
 - `session_id` (`str`)
   返回给前端的会话标识符。
 - `websocket` (`WebSocket`)
-  用于发送输出消息的实时 WebSocket 连接。
+  用于发送出站消息的实时 WebSocket 连接。
 - `config` (`dict[str, Any] | None, optional`)
   与输出行为相关的服务配置。
 
 ### Methods
 
-- `send_signal`
-  向前端发送一个 JSON 载荷。
-- `send_session_info`
-  向前端发送会话标识符。
+#### __init__
+
+_定义于 `xtalk.serving.modules.output_gateway`。_
+
+```python
+def __init__(self, event_bus: EventBus, session_id: str, websocket: WebSocket, config: dict[str, Any] | None = None)
+```
+
+#### send_signal
+
+_定义于 `xtalk.serving.modules.output_gateway`。_
+
+```python
+async def send_signal(self, message: dict) -> None
+```
+
+向前端发送 JSON 载荷。
+
+##### Parameters
+
+- `message` (`dict`)
+  要通过 WebSocket 发送的可 JSON 序列化载荷。
+
+#### send_session_info
+
+_定义于 `xtalk.serving.modules.output_gateway`。_
+
+```python
+async def send_session_info(self) -> None
+```
+
+向前端发送会话标识符。
 
 ## ASRManager
 
@@ -36,8 +64,6 @@ _定义于 `xtalk.serving.modules.asr_manager`。_
 class ASRManager(Manager)
 ```
 
-ASR 管理器。
-
 ## EmbeddingsManager
 
 _定义于 `xtalk.serving.modules.embeddings_manager`。_
@@ -45,8 +71,6 @@ _定义于 `xtalk.serving.modules.embeddings_manager`。_
 ```python
 class EmbeddingsManager(Manager)
 ```
-
-嵌入管理器。
 
 ## EnhancerManager
 
@@ -76,7 +100,7 @@ _定义于 `xtalk.serving.modules.llm_agent_manager`。_
 class LLMAgentManager(Manager)
 ```
 
-驱动 LLM Agent 生成，并协调 TTS 流式处理。
+驱动 LLM Agent 生成并协调 TTS 流式处理。
 
 ## SpeakerManager
 
@@ -116,8 +140,6 @@ _定义于 `xtalk.serving.modules.turn_taking_manager`。_
 class TurnTakingManager(Manager)
 ```
 
-轮次控制管理器。
-
 ## VADManager
 
 _定义于 `xtalk.serving.modules.vad_manager`。_
@@ -125,5 +147,3 @@ _定义于 `xtalk.serving.modules.vad_manager`。_
 ```python
 class VADManager(Manager)
 ```
-
-语音活动检测管理器。

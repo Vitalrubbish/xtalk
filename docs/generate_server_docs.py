@@ -604,7 +604,10 @@ def _render_numpy_examples(lines: list[str]) -> list[str]:
     return _strip_blank_edges(rendered)
 
 
-def _render_numpy_sections(sections: list[tuple[str | None, list[str]]]) -> list[str]:
+def _render_numpy_sections(
+    sections: list[tuple[str | None, list[str]]],
+    heading_level: int,
+) -> list[str]:
     rendered: list[str] = []
     for title, lines in sections:
         if not lines:
@@ -615,7 +618,7 @@ def _render_numpy_sections(sections: list[tuple[str | None, list[str]]]) -> list
             rendered.append("")
             continue
 
-        rendered.append(f"### {title}")
+        rendered.append(f"{'#' * heading_level} {title}")
         rendered.append("")
         if title in NUMPY_FIELD_SECTIONS:
             rendered.extend(_render_numpy_field_section(lines))
@@ -630,13 +633,13 @@ def _render_numpy_sections(sections: list[tuple[str | None, list[str]]]) -> list
     return _strip_blank_edges(rendered)
 
 
-def _render_docstring(docstring: str) -> list[str]:
+def _render_docstring(docstring: str, heading_level: int = 3) -> list[str]:
     if not docstring:
         return []
 
     numpy_sections = _split_numpy_sections(docstring)
     if numpy_sections is not None:
-        return _render_numpy_sections(numpy_sections)
+        return _render_numpy_sections(numpy_sections, heading_level)
 
     return docstring.strip().splitlines()
 
@@ -656,7 +659,7 @@ def _render_object(object_doc: ObjectDoc, current_module: str, level: int = 2) -
         lines.append("```")
         lines.append("")
 
-    lines.extend(_render_docstring(object_doc.docstring))
+    lines.extend(_render_docstring(object_doc.docstring, heading_level=level + 1))
     if object_doc.docstring:
         lines.append("")
 
@@ -692,7 +695,7 @@ def _render_module_page(module_name: str) -> str:
         "",
     ]
 
-    lines.extend(_render_docstring(module_info.docstring))
+    lines.extend(_render_docstring(module_info.docstring, heading_level=2))
     if module_info.docstring:
         lines.append("")
 

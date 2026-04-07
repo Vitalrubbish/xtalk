@@ -60,11 +60,11 @@ def create_event_class(*, name: str, fields: dict[str, Any] | None = None, type_
 
 ## WebSocketMessageReceived
 
-收到的 WebSocket 消息事件。
+收到的 WebSocket 消息。
 
 ## AudioFrameReceived
 
-收到的音频帧事件。
+收到的音频帧。
 
 ## EnhancedAudioFrameReceived
 
@@ -80,11 +80,11 @@ VAD 检测到语音结束。
 
 ## ASRResultPartial
 
-ASR 的增量识别结果。
+ASR 增量识别结果。
 
 ## ASRResultFinal
 
-ASR 的最终识别结果。
+ASR 最终识别结果。
 
 ## LLMFirstChunk
 
@@ -120,7 +120,7 @@ Agent 响应增量更新事件。
 
 ## LLMAgentResponseFinish
 
-某一轮次中 Agent 发出的最终文本。
+某一轮中的 Agent 最终文本。
 
 ## TTSVoiceChange
 
@@ -164,7 +164,7 @@ Thought 更新事件。
 
 ## ToolCallOccurred
 
-LLM/Agent 工具调用通知事件。
+LLM/Agent 工具调用通知。
 
 ## RetrievalUpdated
 
@@ -172,7 +172,7 @@ LLM/Agent 工具调用通知事件。
 
 ## TextForEmbeddingReady
 
-等待写入嵌入存储的文本事件。
+待写入嵌入存储的文本事件。
 
 ## LatencyMetricsUpdated
 

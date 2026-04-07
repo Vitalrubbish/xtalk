@@ -42,7 +42,7 @@ async def send_signal(self, message: dict) -> None
 
 Send a JSON payload to the frontend.
 
-### Parameters
+##### Parameters
 
 - `message` (`dict`)
   JSON-serializable payload to send over the WebSocket.

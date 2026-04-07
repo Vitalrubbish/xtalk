@@ -1,10 +1,5 @@
 site_name: xtalk
 docs_dir: .
-hooks:
-  - server_index_hook.py
-watch:
-  - ../src/xtalk
-  - ../examples/sample_app
 repo_url: https://github.com/xcc-zach/xtalk
 repo_name: xcc-zach/xtalk
 theme:
@@ -23,16 +18,6 @@ extra:
 plugins:
   - search:
       separator: '[\s\u200b\-]'
-  - mkdocstrings:
-      handlers:
-        python:
-          paths:
-            - ../src
-          options:
-            docstring_style: google
-            show_source: false
-            show_root_heading: true
-            show_root_full_path: false
   - i18n:
       docs_structure: suffix
       fallback_to_default: true

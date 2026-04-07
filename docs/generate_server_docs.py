@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import re
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +39,37 @@ class ModuleInfo:
 
 
 MODULE_CACHE: dict[str, ModuleInfo] = {}
+NUMPY_SECTION_NAMES = {
+    "Attributes",
+    "Examples",
+    "Methods",
+    "Notes",
+    "Other Parameters",
+    "Parameters",
+    "Raises",
+    "Receives",
+    "References",
+    "Returns",
+    "See Also",
+    "Warns",
+    "Warnings",
+    "Yields",
+}
+NUMPY_FIELD_SECTIONS = {
+    "Attributes",
+    "Methods",
+    "Other Parameters",
+    "Parameters",
+    "Raises",
+    "Receives",
+    "Returns",
+    "Warns",
+    "Yields",
+}
+NUMPY_LIST_SECTIONS = {"See Also"}
+NUMPY_EXAMPLE_SECTIONS = {"Examples"}
+NUMPY_SECTION_UNDERLINE_RE = re.compile(r"^-{3,}\s*$")
+NUMPY_FIELD_RE = re.compile(r"^(?P<name>.+?)\s*:\s*(?P<annotation>.+)$")
 
 
 def _doc_path_for_module(module_name: str) -> Path:
@@ -411,9 +444,200 @@ def _sample_app_doc_entries() -> list[tuple[str, Path]]:
     return [(module_name, _doc_path_for_module(module_name)) for module_name in _sample_app_modules()]
 
 
+def _strip_blank_edges(lines: list[str]) -> list[str]:
+    start = 0
+    end = len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return [line.rstrip() for line in lines[start:end]]
+
+
+def _is_numpy_section_heading(lines: list[str], index: int) -> bool:
+    if index + 1 >= len(lines):
+        return False
+    title = lines[index].strip()
+    underline = lines[index + 1].strip()
+    return title in NUMPY_SECTION_NAMES and bool(NUMPY_SECTION_UNDERLINE_RE.fullmatch(underline))
+
+
+def _split_numpy_sections(docstring: str) -> list[tuple[str | None, list[str]]] | None:
+    lines = docstring.strip().splitlines()
+    sections: list[tuple[str | None, list[str]]] = []
+    buffer: list[str] = []
+    found_section = False
+    index = 0
+
+    while index < len(lines):
+        if _is_numpy_section_heading(lines, index):
+            found_section = True
+            if buffer:
+                sections.append((None, _strip_blank_edges(buffer)))
+                buffer = []
+
+            title = lines[index].strip()
+            index += 2
+            section_lines: list[str] = []
+            while index < len(lines) and not _is_numpy_section_heading(lines, index):
+                section_lines.append(lines[index])
+                index += 1
+            sections.append((title, _strip_blank_edges(section_lines)))
+            continue
+
+        buffer.append(lines[index])
+        index += 1
+
+    if buffer:
+        sections.append((None, _strip_blank_edges(buffer)))
+
+    return sections if found_section else None
+
+
+def _normalize_block(lines: list[str]) -> list[str]:
+    if not lines:
+        return []
+    return _strip_blank_edges(textwrap.dedent("\n".join(lines)).splitlines())
+
+
+def _indent_block(lines: list[str], prefix: str = "  ") -> list[str]:
+    return [f"{prefix}{line}" if line else "" for line in lines]
+
+
+def _parse_numpy_field_entries(lines: list[str]) -> list[tuple[str, list[str]]]:
+    entries: list[tuple[str, list[str]]] = []
+    index = 0
+
+    while index < len(lines):
+        while index < len(lines) and not lines[index].strip():
+            index += 1
+        if index >= len(lines):
+            break
+
+        if lines[index].startswith((" ", "\t")):
+            if entries:
+                header, description = entries[-1]
+                description.append(lines[index])
+                entries[-1] = (header, description)
+            index += 1
+            continue
+
+        header = lines[index].strip()
+        index += 1
+        description: list[str] = []
+        while index < len(lines):
+            line = lines[index]
+            if line.startswith((" ", "\t")) or not line.strip():
+                description.append(line)
+                index += 1
+                continue
+            break
+        entries.append((header, description))
+
+    return entries
+
+
+def _split_numpy_field_header(header: str) -> tuple[str, str | None]:
+    match = NUMPY_FIELD_RE.match(header)
+    if match is None:
+        return header, None
+    return match.group("name").strip(), match.group("annotation").strip()
+
+
+def _render_numpy_field_section(lines: list[str]) -> list[str]:
+    rendered: list[str] = []
+    for header, description in _parse_numpy_field_entries(lines):
+        name, annotation = _split_numpy_field_header(header)
+        bullet = f"- `{name}`"
+        if annotation:
+            bullet += f" (`{annotation}`)"
+        rendered.append(bullet)
+
+        normalized_description = _normalize_block(description)
+        if normalized_description:
+            rendered.extend(_indent_block(normalized_description))
+    return rendered
+
+
+def _render_numpy_list_section(lines: list[str]) -> list[str]:
+    rendered: list[str] = []
+    items = _parse_numpy_field_entries(lines)
+    for header, description in items:
+        rendered.append(f"- {header}")
+        normalized_description = _normalize_block(description)
+        if normalized_description:
+            rendered.extend(_indent_block(normalized_description))
+    return rendered
+
+
+def _split_paragraphs(lines: list[str]) -> list[list[str]]:
+    paragraphs: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if line.strip():
+            current.append(line.rstrip())
+            continue
+        if current:
+            paragraphs.append(current)
+            current = []
+    if current:
+        paragraphs.append(current)
+    return paragraphs
+
+
+def _render_numpy_examples(lines: list[str]) -> list[str]:
+    rendered: list[str] = []
+    for paragraph in _split_paragraphs(lines):
+        normalized = _normalize_block(paragraph)
+        if not normalized:
+            continue
+
+        first_line = normalized[0].lstrip()
+        if first_line.startswith((">>>", "...")):
+            rendered.append("```pycon")
+            rendered.extend(normalized)
+            rendered.append("```")
+        else:
+            rendered.extend(normalized)
+        rendered.append("")
+
+    return _strip_blank_edges(rendered)
+
+
+def _render_numpy_sections(sections: list[tuple[str | None, list[str]]]) -> list[str]:
+    rendered: list[str] = []
+    for title, lines in sections:
+        if not lines:
+            continue
+
+        if title is None:
+            rendered.extend(lines)
+            rendered.append("")
+            continue
+
+        rendered.append(f"### {title}")
+        rendered.append("")
+        if title in NUMPY_FIELD_SECTIONS:
+            rendered.extend(_render_numpy_field_section(lines))
+        elif title in NUMPY_LIST_SECTIONS:
+            rendered.extend(_render_numpy_list_section(lines))
+        elif title in NUMPY_EXAMPLE_SECTIONS:
+            rendered.extend(_render_numpy_examples(lines))
+        else:
+            rendered.extend(lines)
+        rendered.append("")
+
+    return _strip_blank_edges(rendered)
+
+
 def _render_docstring(docstring: str) -> list[str]:
     if not docstring:
         return []
+
+    numpy_sections = _split_numpy_sections(docstring)
+    if numpy_sections is not None:
+        return _render_numpy_sections(numpy_sections)
+
     return docstring.strip().splitlines()
 
 

@@ -3,7 +3,7 @@ docs_dir: .
 hooks:
   - server_index_hook.py
 watch:
-  - ../src/xtalk/serving
+  - ../src/xtalk
   - ../examples/sample_app
 repo_url: https://github.com/xcc-zach/xtalk
 repo_name: xcc-zach/xtalk

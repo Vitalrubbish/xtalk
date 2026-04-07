@@ -1,5 +1,10 @@
 site_name: xtalk
 docs_dir: .
+hooks:
+  - server_index_hook.py
+watch:
+  - ../src/xtalk/serving
+  - ../examples/sample_app
 repo_url: https://github.com/xcc-zach/xtalk
 repo_name: xcc-zach/xtalk
 theme:
@@ -22,6 +27,7 @@ plugins:
       autoapi_dir: ../src/xtalk
       autoapi_root: api/server
       autoapi_add_nav_entry: false
+      autoapi_keep_files: true
       autoapi_file_patterns:
         - serving/*.py
         - serving/**/*.py

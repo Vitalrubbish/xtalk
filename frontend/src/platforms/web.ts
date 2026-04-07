@@ -415,6 +415,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
     private audioTimeToPlay = 0;
     private audioChunkStartedTimeouts: ReturnType<typeof createPausableTimeout>[] = [];
     private audioChunksPaused: ArrayBuffer[] = [];
+    private serverTtsFinished = false;
     constructor(private config: OutputAudioSessionConfig) {
         super();
     }
@@ -475,8 +476,20 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         this.audioBufferSources.length = 0;
         this.audioTimeToPlay = 0;
         this.audioChunksPaused.length = 0;
+        this.serverTtsFinished = false;
         // DO NOT suspend to avoid pop sounds after restart
         // await this.audioContext?.suspend();
+    }
+    async notifyTTSFinished(): Promise<void> {
+        this.serverTtsFinished = true;
+        await this.maybeNotifyPlaybackFinished();
+    }
+    private async maybeNotifyPlaybackFinished(): Promise<void> {
+        if (!this.serverTtsFinished || this.audioBufferSources.length !== 0) {
+            return;
+        }
+        this.serverTtsFinished = false;
+        await this.allChunksPlayedCallback();
     }
     async pushAudioChunk(pcm_chunk_int16: ArrayBuffer): Promise<void> {
         if (!this.audioContext) {
@@ -507,10 +520,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
             // Remove this source from the list
             const idx = this.audioBufferSources.indexOf(source);
             if (idx !== -1) this.audioBufferSources.splice(idx, 1);
-            // If this is the last scheduled chunk, trigger onAllChunksPlayed
-            if (this.audioBufferSources.length === 0) {
-                this.allChunksPlayedCallback();
-            }
+            void this.maybeNotifyPlaybackFinished();
         };
 
         // Add to buffer sources list before starting

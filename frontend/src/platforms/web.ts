@@ -30,7 +30,7 @@ class WebWebSocket extends BaseWebSocket {
 interface WebInputAudioSessionConfig extends InputAudioSessionConfig {
     // Whether to enable VAD on client. Defaults to true.
     enableVAD?: boolean;
-    // Whether to enable enhancer on client. Defaults to true if enhancer model is available.
+    // Whether to enable enhancer on client. Defaults to true.
     enableEnhancer?: boolean;
     // VAD redemption window in milliseconds.
     vadRedemptionMs?: number;
@@ -54,6 +54,7 @@ class WebInputAudioSession extends BaseInputAudioSession {
             submitUserSpeechOnPause: false
         }
     }
+    readonly MAX_VAD_QUEUE_FRAMES = 8;
     readonly ENHANCER_PARAMS = {
         hopSize: 256,
         nFFT: 512,
@@ -164,7 +165,6 @@ class WebInputAudioSession extends BaseInputAudioSession {
         const onFrameProcessorEvent = (ev: { msg: any; frame: Float32Array; probs: { notSpeech: number; }; }) => {
             switch (ev.msg) {
                 case window.vad.Message.FrameProcessed:
-                    const frame = ev.frame;
                     if (vadHelpers.negEndCounterEnabled) {
                         const ns = Number(ev?.probs?.notSpeech ?? 0);
                         const nsHigh = ns > (1 - this.VAD_PARAMS.vadConfig.negativeSpeechThreshold);
@@ -174,9 +174,6 @@ class WebInputAudioSession extends BaseInputAudioSession {
                             vadHelpers.negEndCounterEnabled = false;
                             vadHelpers.negEndCounter = 0;
                         }
-                    }
-                    if (!this.muted) {
-                        this.frameCallback(this.float32ToInt16(frame));
                     }
                     break;
 
@@ -198,14 +195,26 @@ class WebInputAudioSession extends BaseInputAudioSession {
         frameProcessNode.port.onmessage = async (event) => {
             if (event.data.type === 'audioFrame') {
                 if (this.muted) return;
-                frameQueue.push(event.data.frame);
+                const frame = event.data.frame as Float32Array;
+                // Keep microphone upload real-time; VAD must not be allowed to stall ASR input.
+                this.frameCallback(this.float32ToInt16(frame));
+                if (frameQueue.length >= this.MAX_VAD_QUEUE_FRAMES) {
+                    frameQueue.splice(0, frameQueue.length - this.MAX_VAD_QUEUE_FRAMES + 1);
+                }
+                frameQueue.push(frame);
                 if (isProcessingFrameQueue) return;
                 isProcessingFrameQueue = true;
-                while (frameQueue.length > 0) {
-                    const frame = frameQueue.shift();
-                    await frameProcessor.process(frame, onFrameProcessorEvent);
+                try {
+                    while (frameQueue.length > 0) {
+                        const queuedFrame = frameQueue.shift();
+                        if (!queuedFrame) {
+                            continue;
+                        }
+                        await frameProcessor.process(queuedFrame, onFrameProcessorEvent);
+                    }
+                } finally {
+                    isProcessingFrameQueue = false;
                 }
-                isProcessingFrameQueue = false;
             }
         };
         frameProcessor.resume();
@@ -415,6 +424,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
     private audioTimeToPlay = 0;
     private audioChunkStartedTimeouts: ReturnType<typeof createPausableTimeout>[] = [];
     private audioChunksPaused: ArrayBuffer[] = [];
+    private serverTtsFinished = false;
     constructor(private config: OutputAudioSessionConfig) {
         super();
     }
@@ -475,8 +485,20 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
         this.audioBufferSources.length = 0;
         this.audioTimeToPlay = 0;
         this.audioChunksPaused.length = 0;
+        this.serverTtsFinished = false;
         // DO NOT suspend to avoid pop sounds after restart
         // await this.audioContext?.suspend();
+    }
+    async notifyTTSFinished(): Promise<void> {
+        this.serverTtsFinished = true;
+        await this.maybeNotifyPlaybackFinished();
+    }
+    private async maybeNotifyPlaybackFinished(): Promise<void> {
+        if (!this.serverTtsFinished || this.audioBufferSources.length !== 0) {
+            return;
+        }
+        this.serverTtsFinished = false;
+        await this.allChunksPlayedCallback();
     }
     async pushAudioChunk(pcm_chunk_int16: ArrayBuffer): Promise<void> {
         if (!this.audioContext) {
@@ -507,10 +529,7 @@ class WebOutputAudioSession extends BaseOutputAudioSession {
             // Remove this source from the list
             const idx = this.audioBufferSources.indexOf(source);
             if (idx !== -1) this.audioBufferSources.splice(idx, 1);
-            // If this is the last scheduled chunk, trigger onAllChunksPlayed
-            if (this.audioBufferSources.length === 0) {
-                this.allChunksPlayedCallback();
-            }
+            void this.maybeNotifyPlaybackFinished();
         };
 
         // Add to buffer sources list before starting

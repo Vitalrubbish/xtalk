@@ -12,6 +12,9 @@ const outputMap: ActionToFunctionMap = {
     "resume_tts": async (data, websocket, conversation, outputAudioSession) => {
         await outputAudioSession.resume();
     },
+    "tts_finished": async (data, websocket, conversation, outputAudioSession) => {
+        await outputAudioSession.notifyTTSFinished();
+    },
 };
 
 export default outputMap;

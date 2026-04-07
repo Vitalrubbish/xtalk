@@ -8,10 +8,12 @@ from langchain_core.tools import BaseTool
 
 
 class AgentInput(TypedDict):
-    """Structured payload for LLM generation input.
+    """Structured payload for agent generation input.
 
-    - content: raw user text
-    - context: pipeline context (PipelineContext)
+    Notes
+    -----
+    ``content`` stores the raw user text and ``context`` carries the current
+    ``PipelineContext``.
     """
 
     content: str
@@ -19,30 +21,43 @@ class AgentInput(TypedDict):
 
 
 class Agent(ABC):
+    """Abstract interface for conversational agents used by Xtalk."""
+
     @abstractmethod
     def generate(
         self, input: Union[str, AgentInput]
     ) -> Union[str, tuple[str, List[ToolCall]]]:
-        """
-        Generate a full reply for the input.
+        """Generate a complete response for the input.
 
-        Input formats:
-        - str: just raw text (no context)
-        - dict: {"content": raw text, "context": PipelineContext}
+        Parameters
+        ----------
+        input : str | AgentInput
+            Raw user text or a structured payload containing both text and
+            pipeline context.
 
-        Return format (backward compatible):
-        - plain `str` reply, or
-        - `(text, tool_calls)` tuple when tool invocations exist, where
-          text is the reply and tool_calls is a List[ToolCall]
+        Returns
+        -------
+        str | tuple[str, List[ToolCall]]
+            Plain response text, or a ``(text, tool_calls)`` tuple when tool
+            calls should be surfaced alongside the final text.
         """
         pass
 
     def generate_stream(
         self, input: Union[str, AgentInput]
     ) -> Iterable[Union[str, ToolCall]]:
-        """Stream responses for the input (same format as `generate`).
+        """Stream response chunks for the input.
 
-        Default implementation runs `generate` first, then yields text/tool_calls.
+        Parameters
+        ----------
+        input : str | AgentInput
+            Raw user text or structured agent input.
+
+        Yields
+        ------
+        str | ToolCall
+            Tool calls followed by text chunks. The default implementation
+            delegates to ``generate()`` and yields its result in streaming form.
         """
         result = self.generate(input)
         if isinstance(result, tuple):
@@ -57,7 +72,18 @@ class Agent(ABC):
     async def async_generate(
         self, input: Union[str, AgentInput]
     ) -> Union[str, tuple[str, List[ToolCall]]]:
-        """Async wrapper around `generate`, running sync logic in an executor."""
+        """Asynchronously generate a complete response.
+
+        Parameters
+        ----------
+        input : str | AgentInput
+            Raw user text or structured agent input.
+
+        Returns
+        -------
+        str | tuple[str, List[ToolCall]]
+            Same result contract as ``generate()``.
+        """
 
         loop = asyncio.get_running_loop()
 
@@ -69,7 +95,18 @@ class Agent(ABC):
     async def async_generate_stream(
         self, input: Union[str, AgentInput]
     ) -> AsyncIterator[Union[str, ToolCall]]:
-        """Async streaming wrapper pulling from the sync generator in executor."""
+        """Asynchronously stream agent outputs.
+
+        Parameters
+        ----------
+        input : str | AgentInput
+            Raw user text or structured agent input.
+
+        Yields
+        ------
+        str | ToolCall
+            Streamed outputs from ``generate_stream()``.
+        """
 
         loop = asyncio.get_running_loop()
         iterator = iter(self.generate_stream(input))
@@ -98,15 +135,41 @@ class Agent(ABC):
 
     @abstractmethod
     def clone(self) -> "Agent":
+        """Clone the agent for a new session.
+
+        Returns
+        -------
+        Agent
+            Session-safe agent instance.
+        """
         pass
 
     def get_llm(self) -> BaseChatModel | None:
-        """Return the underlying LLM instance if available."""
+        """Return the backing chat model when the agent exposes one.
+
+        Returns
+        -------
+        BaseChatModel | None
+            Underlying chat model or ``None``.
+        """
         return None
 
     def get_chat_history(self) -> str | None:
-        """Return textual conversation history if available."""
+        """Return the serialized conversation history when available.
+
+        Returns
+        -------
+        str | None
+            Conversation history or ``None``.
+        """
         return None
 
     def add_tools(self, tools: list[BaseTool | Callable[[], BaseTool]]):
+        """Attach tools to the agent.
+
+        Parameters
+        ----------
+        tools : list[BaseTool | Callable[[], BaseTool]]
+            Tool instances or factories that produce tool instances.
+        """
         pass

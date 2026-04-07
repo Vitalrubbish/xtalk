@@ -7,7 +7,22 @@ from ..pipelines.context import PipelineContext
 
 @dataclass
 class BaseEvent:
-    """Base dataclass for all xtalk events."""
+    """Base dataclass for all Xtalk events.
+
+    Parameters
+    ----------
+    session_id : str
+        Session identifier associated with the event.
+
+    Attributes
+    ----------
+    timestamp : float
+        Unix timestamp recorded when the event instance is created.
+    session_id : str
+        Session identifier associated with the event.
+    TYPE : str
+        Stable event type string used by the event bus.
+    """
 
     timestamp: float = field(init=False)
     session_id: str
@@ -24,7 +39,30 @@ class BaseEvent:
 def create_event_class(
     *, name: str, fields: dict[str, Any] | None = None, type_name: str | None = None
 ) -> Type[BaseEvent]:
-    """Dynamically create a BaseEvent subclass with the given field defaults."""
+    """Create a ``BaseEvent`` subclass dynamically.
+
+    Parameters
+    ----------
+    name : str
+        Dataclass name for the generated event type.
+    fields : dict[str, Any] | None, optional
+        Mapping of field names to default values. Value types are inferred from
+        the defaults.
+    type_name : str | None, optional
+        Event bus type string. Defaults to ``name.lower()`` when omitted.
+
+    Returns
+    -------
+    Type[BaseEvent]
+        Generated dataclass type inheriting from ``BaseEvent``.
+
+    Examples
+    --------
+    >>> CustomEvent = create_event_class(
+    ...     name="CustomEvent",
+    ...     fields={"text": "", "turn_id": 0},
+    ... )
+    """
     fields = fields or {}
     dataclass_fields = []
     for key, default in fields.items():
@@ -136,6 +174,16 @@ class LLMAgentResponseUpdate(BaseEvent):
 
 @dataclass
 class LLMAgentResponseFinish(BaseEvent):
+    """Final text emitted by the agent for a turn.
+
+    Attributes
+    ----------
+    text : str
+        Final response text.
+    turn_id : int
+        Turn identifier associated with the response.
+    """
+
     TYPE: ClassVar[str] = "llm_agent.response_finish"
     text: str = ""
     turn_id: int = 0

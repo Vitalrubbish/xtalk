@@ -1,7 +1,7 @@
-> [!NOTE]
+> **Note**
 > See `examples/sample_app/custom_model.py` and `examples/sample_app/echo_agent.py` for details.
     
-> [!NOTE]
+> **Note**
 > See [Recipe](#recipe) for adding a model of existing types.
     
 You may want to introduce a new model of an existing type (e.g. text-to-speech), or add a model of new type (e.g. a model that handles backchannel). This can be achieved by `register_model_search_spec` before a `xtalk_instance` is created from config:
@@ -58,7 +58,7 @@ Then you can use the custom model in config file:
 
 Recipes for major model customization are listed below. You can read source code for interfaces of other model types. We will update these interfaces from time to time.
     
-> [!NOTE]
+> **Note**
 > See `src/xtalk/model_types.py` for all available model types.
     
 > [!IMPORTANT]
@@ -89,10 +89,10 @@ Methods below are optional:
 > [!IMPORTANT]
 > Input for `recognize` and `recognize_stream` is PCM 16-bit mono 16 kHz raw bytes. You may need to do conversion by yourself.
     
-> [!NOTE]
+> **Note**
 > X-Talk have default implementation for `recognize_stream` with a `MockStreamRecognizer`. Therefore, no worry for your non-streaming ASR models.
 
-> [!NOTE]
+> **Note**
 > You can refer to existing implementations (e.g., `src/xtalk/speech/asr/zipformer_local.py`) when building your own ASR class. We recommend deploying ASR as a separate service and invoking it via API calls within the ASR class, referencing the implementation of `src/xtalk/speech/asr/sherpa_onnx_asr.py`.
     
 ##### New TTS (text-to-speech) Model

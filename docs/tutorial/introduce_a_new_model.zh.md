@@ -1,7 +1,7 @@
-> [!NOTE]
+> **Note**
 > 详情请参阅 `examples/sample_app/custom_model.py` 和 `examples/sample_app/echo_agent.py`。
 
-> [!NOTE]
+> **Note**
 > 若要添加已有类型的新模型，请参阅 [Recipe](#recipe)。
 
 您可能希望为已有类型引入一个新模型（例如文本转语音），或者添加一种全新的模型类型（例如处理 backchannel 的模型）。这可以通过在从配置创建 `xtalk_instance` 之前调用 `register_model_search_spec` 来实现：
@@ -58,7 +58,7 @@ class EchoAgent(Agent):
 
 下面列出了主要模型定制场景的配方。您也可以阅读其他模型类型对应接口的源码。我们会不定期更新这些接口。
 
-> [!NOTE]
+> **Note**
 > 所有可用模型类型请参阅 `src/xtalk/model_types.py`。
 
 > [!IMPORTANT]
@@ -89,10 +89,10 @@ class EchoAgent(Agent):
 > [!IMPORTANT]
 > `recognize` 和 `recognize_stream` 的输入是 PCM 16-bit、单声道、16 kHz 的原始字节流。您可能需要自行完成格式转换。
 
-> [!NOTE]
+> **Note**
 > X-Talk 已为 `recognize_stream` 提供了基于 `MockStreamRecognizer` 的默认实现。因此，即使您的 ASR 模型不支持流式识别也无需担心。
 
-> [!NOTE]
+> **Note**
 > 构建自己的 ASR 类时，您可以参考现有实现（例如 `src/xtalk/speech/asr/zipformer_local.py`）。我们建议将 ASR 部署为独立服务，并在 ASR 类中通过 API 调用它，可参考 `src/xtalk/speech/asr/sherpa_onnx_asr.py` 的实现方式。
 
 ##### 新的 TTS（文本转语音）模型

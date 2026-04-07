@@ -34,7 +34,19 @@ from ..events import (
 
 
 class OutputGateway(EventListenerMixin):
-    """Send conversation events to the frontend over WebSocket."""
+    """Forward backend events to the frontend WebSocket.
+
+    Parameters
+    ----------
+    event_bus : EventBus
+        Event bus used to subscribe to session events.
+    session_id : str
+        Session identifier sent back to the frontend.
+    websocket : WebSocket
+        Live WebSocket connection used for outbound messages.
+    config : dict[str, Any] | None, optional
+        Service configuration relevant to output behavior.
+    """
 
     def __init__(
         self,
@@ -63,7 +75,13 @@ class OutputGateway(EventListenerMixin):
         return state.name if hasattr(state, "name") else str(state.value)
 
     async def send_signal(self, message: dict) -> None:
-        """Send a JSON message to the WebSocket if still connected."""
+        """Send a JSON payload to the frontend.
+
+        Parameters
+        ----------
+        message : dict
+            JSON-serializable payload to send over the WebSocket.
+        """
         if not self._is_connected():
             logger.warning(
                 "WebSocket not connected, skip send - session: %s, state: %s",
@@ -149,7 +167,7 @@ class OutputGateway(EventListenerMixin):
     # ── Session ─────────────────────────────────────────────────────
 
     async def send_session_info(self) -> None:
-        """Send current session metadata to the frontend."""
+        """Send the session identifier to the frontend."""
         await self._forward("session_info", {"session_id": self.session_id})
 
     # ── Event handlers ──────────────────────────────────────────────

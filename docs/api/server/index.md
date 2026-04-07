@@ -4,8 +4,8 @@
 This section hosts the internal Python reference for `xtalk.serving`.
 
 The pages in this directory are refreshed during documentation builds:
-`mkdocs-autoapi` generates the submodule pages and `server_index_hook.py`
-rewrites this index with links to them.
+`server_index_hook.py` generates the submodule pages and rewrites this
+index with links to them.
 
 Update the Python docstrings in `src/xtalk/serving/` to improve this
 documentation.

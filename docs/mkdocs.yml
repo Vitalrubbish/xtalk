@@ -23,14 +23,6 @@ extra:
 plugins:
   - search:
       separator: '[\s\u200b\-]'
-  - mkdocs-autoapi:
-      autoapi_dir: ../src/xtalk
-      autoapi_root: api/server
-      autoapi_add_nav_entry: false
-      autoapi_keep_files: true
-      autoapi_file_patterns:
-        - serving/*.py
-        - serving/**/*.py
   - mkdocstrings:
       handlers:
         python:

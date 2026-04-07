@@ -3,8 +3,8 @@
 
 本节用于展示 `xtalk.serving` 的内部 Python 参考文档。
 
-该目录下的页面在文档构建时自动更新：`mkdocs-autoapi` 负责生成各个
-子模块页面，`server_index_hook.py` 负责刷新本页并补齐导航链接。
+该目录下的页面在文档构建时自动更新：`server_index_hook.py` 会根据
+当前源码树生成子模块页面，并刷新本页中的导航链接。
 
 若需完善这部分文档，应直接更新 `src/xtalk/serving/` 中的 Python
 docstring。
@@ -21,27 +21,27 @@ docstring。
 
 以下链接会在每次文档构建时根据当前源码树自动更新：
 
-- [`xtalk.serving`](xtalk/serving/index.md)
-- [`xtalk.serving.event_bus`](xtalk/serving/event_bus.md)
-- [`xtalk.serving.events`](xtalk/serving/events.md)
-- [`xtalk.serving.interfaces`](xtalk/serving/interfaces.md)
-- [`xtalk.serving.module_types`](xtalk/serving/module_types.md)
-- [`xtalk.serving.modules.asr_manager`](xtalk/serving/modules/asr_manager.md)
-- [`xtalk.serving.modules.captioner_manager`](xtalk/serving/modules/captioner_manager.md)
-- [`xtalk.serving.modules.embeddings_manager`](xtalk/serving/modules/embeddings_manager.md)
-- [`xtalk.serving.modules.enhancer_manager`](xtalk/serving/modules/enhancer_manager.md)
-- [`xtalk.serving.modules.input_gateway`](xtalk/serving/modules/input_gateway.md)
-- [`xtalk.serving.modules.latency_manager`](xtalk/serving/modules/latency_manager.md)
-- [`xtalk.serving.modules.llm_agent_manager`](xtalk/serving/modules/llm_agent_manager.md)
-- [`xtalk.serving.modules.output_gateway`](xtalk/serving/modules/output_gateway.md)
-- [`xtalk.serving.modules.recording_manager`](xtalk/serving/modules/recording_manager.md)
-- [`xtalk.serving.modules.retrieval_manager`](xtalk/serving/modules/retrieval_manager.md)
-- [`xtalk.serving.modules.speaker_manager`](xtalk/serving/modules/speaker_manager.md)
-- [`xtalk.serving.modules.thought_manager`](xtalk/serving/modules/thought_manager.md)
-- [`xtalk.serving.modules.tts_manager`](xtalk/serving/modules/tts_manager.md)
-- [`xtalk.serving.modules.turn_detector_manager`](xtalk/serving/modules/turn_detector_manager.md)
-- [`xtalk.serving.modules.turn_taking_manager`](xtalk/serving/modules/turn_taking_manager.md)
-- [`xtalk.serving.modules.vad_manager`](xtalk/serving/modules/vad_manager.md)
-- [`xtalk.serving.service`](xtalk/serving/service.md)
-- [`xtalk.serving.service_manager`](xtalk/serving/service_manager.md)
-- [`xtalk.serving.session_limiter`](xtalk/serving/session_limiter.md)
+- [`xtalk.serving`](xtalk/serving/index.zh.md)
+- [`xtalk.serving.event_bus`](xtalk/serving/event_bus.zh.md)
+- [`xtalk.serving.events`](xtalk/serving/events.zh.md)
+- [`xtalk.serving.interfaces`](xtalk/serving/interfaces.zh.md)
+- [`xtalk.serving.module_types`](xtalk/serving/module_types.zh.md)
+- [`xtalk.serving.modules.asr_manager`](xtalk/serving/modules/asr_manager.zh.md)
+- [`xtalk.serving.modules.captioner_manager`](xtalk/serving/modules/captioner_manager.zh.md)
+- [`xtalk.serving.modules.embeddings_manager`](xtalk/serving/modules/embeddings_manager.zh.md)
+- [`xtalk.serving.modules.enhancer_manager`](xtalk/serving/modules/enhancer_manager.zh.md)
+- [`xtalk.serving.modules.input_gateway`](xtalk/serving/modules/input_gateway.zh.md)
+- [`xtalk.serving.modules.latency_manager`](xtalk/serving/modules/latency_manager.zh.md)
+- [`xtalk.serving.modules.llm_agent_manager`](xtalk/serving/modules/llm_agent_manager.zh.md)
+- [`xtalk.serving.modules.output_gateway`](xtalk/serving/modules/output_gateway.zh.md)
+- [`xtalk.serving.modules.recording_manager`](xtalk/serving/modules/recording_manager.zh.md)
+- [`xtalk.serving.modules.retrieval_manager`](xtalk/serving/modules/retrieval_manager.zh.md)
+- [`xtalk.serving.modules.speaker_manager`](xtalk/serving/modules/speaker_manager.zh.md)
+- [`xtalk.serving.modules.thought_manager`](xtalk/serving/modules/thought_manager.zh.md)
+- [`xtalk.serving.modules.tts_manager`](xtalk/serving/modules/tts_manager.zh.md)
+- [`xtalk.serving.modules.turn_detector_manager`](xtalk/serving/modules/turn_detector_manager.zh.md)
+- [`xtalk.serving.modules.turn_taking_manager`](xtalk/serving/modules/turn_taking_manager.zh.md)
+- [`xtalk.serving.modules.vad_manager`](xtalk/serving/modules/vad_manager.zh.md)
+- [`xtalk.serving.service`](xtalk/serving/service.zh.md)
+- [`xtalk.serving.service_manager`](xtalk/serving/service_manager.zh.md)
+- [`xtalk.serving.session_limiter`](xtalk/serving/session_limiter.zh.md)

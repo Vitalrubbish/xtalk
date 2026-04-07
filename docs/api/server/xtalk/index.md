@@ -9,7 +9,13 @@ _Defined in `xtalk.api`._
 class Xtalk
 ```
 
-High-level interface for constructing pipelines, services, and WebSocket sessions.
+Create Xtalk pipelines, services, and session entrypoints.
+
+### Notes
+
+``Xtalk`` is the main integration surface used by the sample applications.
+It builds pipelines from configuration, stores a prototype service, and
+accepts WebSocket sessions on demand.
 
 ### Class Fields
 
@@ -25,6 +31,16 @@ _Defined in `xtalk.api`._
 def __init__(self, *, service_prototype: Service, max_sessions: int | None = None)
 ```
 
+Initialize an ``Xtalk`` application wrapper.
+
+### Parameters
+
+- `service_prototype` (`Service`)
+  Prototype service used to clone per-session service instances.
+- `max_sessions` (`int | None, optional`)
+  Maximum number of concurrent sessions. If omitted, no session limit
+  is enforced.
+
 #### register_model_search_spec
 
 _Defined in `xtalk.api`._
@@ -33,17 +49,33 @@ _Defined in `xtalk.api`._
 def register_model_search_spec(cls, *, slot: str, spec: ImportSpec, prepend: bool = True) -> None
 ```
 
-Register an additional import spec for a slot.
+Register an additional model lookup location for a slot.
 
-spec examples:
-  - "my_pkg.custom_tts"                 (fully-qualified module path)
-  - "my_pkg.custom_tts:registry"        (module path + attribute chain)
-  - "/abs/path/to/custom_tts.py"        (python file path)
-  - "./custom_tts.py"                   (relative python file path)
-  - Path("/abs/path/to/custom_tts.py")  (Path object file path)
-  - Path("./custom_tts.py")             (Path object relative path)
+### Parameters
 
-prepend=True means the spec is tried before existing specs.
+- `slot` (`str`)
+  Registry slot name such as ``"llm_agent"`` or ``"tts"``.
+- `spec` (`ImportSpec`)
+  Import target to try when loading that slot. Supported forms include
+  module paths, ``"module:attribute"`` references, and Python file
+  paths.
+- `prepend` (`bool, default=True`)
+  Whether to try the new spec before existing registered specs.
+
+### Notes
+
+Common ``spec`` forms include ``"my_pkg.custom_tts"``,
+``"my_pkg.custom_tts:registry"``, ``"/abs/path/custom_tts.py"``, and
+``Path("./custom_tts.py")``.
+
+### Examples
+
+```pycon
+>>> Xtalk.register_model_search_spec(
+...     slot="llm_agent",
+...     spec="./echo_agent.py",
+... )
+```
 
 #### from_config
 
@@ -51,6 +83,25 @@ _Defined in `xtalk.api`._
 
 ```python
 def from_config(cls, path_or_dict: str | dict) -> 'Xtalk'
+```
+
+Build an ``Xtalk`` instance from configuration data.
+
+### Parameters
+
+- `path_or_dict` (`str | dict`)
+  JSON file path or already loaded configuration dictionary.
+
+### Returns
+
+- `Xtalk`
+  Configured application wrapper backed by a ``DefaultPipeline`` and
+  ``DefaultService``.
+
+### Examples
+
+```pycon
+>>> xtalk = Xtalk.from_config("server_config.json")
 ```
 
 #### create_pipeline_from_config
@@ -61,6 +112,33 @@ _Defined in `xtalk.api`._
 def create_pipeline_from_config(cls, *, pipeline_cls: Type[Pipeline], config_path_or_dict: str | dict, additional_model_registry: dict[str, Any]) -> Pipeline
 ```
 
+Instantiate a custom pipeline class from configuration.
+
+### Parameters
+
+- `pipeline_cls` (`Type[Pipeline]`)
+  Concrete pipeline type to instantiate.
+- `config_path_or_dict` (`str | dict`)
+  JSON file path or already loaded configuration dictionary.
+- `additional_model_registry` (`dict[str, Any]`)
+  Extra slot-to-instance mapping merged on top of the default model
+  registry before the pipeline is created.
+
+### Returns
+
+- `Pipeline`
+  Pipeline instance created from the supplied configuration.
+
+### Examples
+
+```pycon
+>>> pipeline = Xtalk.create_pipeline_from_config(
+...     pipeline_cls=DefaultPipeline,
+...     config_path_or_dict="server_config.json",
+...     additional_model_registry={},
+... )
+```
+
 #### set_session_limit
 
 _Defined in `xtalk.api`._
@@ -68,6 +146,13 @@ _Defined in `xtalk.api`._
 ```python
 def set_session_limit(self, limit: int)
 ```
+
+Set or replace the concurrent session limit.
+
+### Parameters
+
+- `limit` (`int`)
+  Maximum number of active sessions allowed at the same time.
 
 #### embed_text
 
@@ -77,6 +162,20 @@ _Defined in `xtalk.api`._
 async def embed_text(self, session_id: str, text: str)
 ```
 
+Queue text for session-scoped embedding storage.
+
+### Parameters
+
+- `session_id` (`str`)
+  Session identifier returned to the frontend.
+- `text` (`str`)
+  Text content that should be embedded and persisted for retrieval.
+
+### Raises
+
+- `ValueError`
+  Raised if the target session does not exist.
+
 #### add_agent_tools
 
 _Defined in `xtalk.api`._
@@ -84,6 +183,19 @@ _Defined in `xtalk.api`._
 ```python
 def add_agent_tools(self, tools_or_factories: list[BaseTool | Callable[[], BaseTool]])
 ```
+
+Attach tools to the prototype agent before sessions are created.
+
+### Parameters
+
+- `tools_or_factories` (`list[BaseTool | Callable[[], BaseTool]]`)
+  Tool instances or zero-argument factories that produce tool
+  instances.
+
+### Raises
+
+- `RuntimeError`
+  Raised if at least one service session has already been created.
 
 #### connect
 
@@ -93,6 +205,18 @@ _Defined in `xtalk.api`._
 async def connect(self, websocket: WebSocket)
 ```
 
+Accept a WebSocket session and hand it to the service manager.
+
+### Parameters
+
+- `websocket` (`WebSocket`)
+  FastAPI WebSocket connection from the client.
+
+### Notes
+
+If a session limit is configured, the socket is first admitted through
+the session limiter queue.
+
 ## Pipeline
 
 _Defined in `xtalk.pipelines.interfaces`._
@@ -101,7 +225,13 @@ _Defined in `xtalk.pipelines.interfaces`._
 class Pipeline(ABC)
 ```
 
-Abstract base class for the pipeline.
+Define the model accessors expected by Xtalk services.
+
+### Notes
+
+Concrete pipelines expose the models and helpers consumed by service
+managers. Sample applications commonly subclass ``DefaultPipeline`` to add
+extra components while retaining this interface.
 
 ### Methods
 
@@ -113,11 +243,18 @@ _Defined in `xtalk.pipelines.interfaces`._
 def context(self) -> 'PipelineContext'
 ```
 
-Get pipeline context, creating default values when absent.
+Return the runtime context shared across managers.
 
-- Lazily initializes with default keys (thought/caption/etc.)
-- Returns dict reference; callers should treat as read-only unless
-  updating via the setter with merged fields.
+### Returns
+
+- `PipelineContext`
+  Mutable context dictionary initialized with the standard Xtalk
+  runtime keys on first access.
+
+### Notes
+
+Callers typically read from the returned dictionary directly. Replacing
+the entire context should be done via the setter.
 
 #### context
 
@@ -127,7 +264,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def context(self, value: 'PipelineContext') -> None
 ```
 
-Overwrite pipeline context.
+Replace the shared runtime context.
+
+### Parameters
+
+- `value` (`PipelineContext`)
+  Context dictionary to store on the pipeline instance.
 
 #### clone
 
@@ -137,7 +279,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def clone(self) -> 'Pipeline'
 ```
 
-Clone the pipeline.
+Clone the pipeline for a new session.
+
+### Returns
+
+- `Pipeline`
+  Session-safe pipeline instance.
 
 #### get_asr_model
 
@@ -147,7 +294,13 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_asr_model(self) -> ASR | None
 ```
 
-Get the ASR model. If the pipeline does not have an ASR model, return None.
+Return the configured ASR model, if available.
+
+### Returns
+
+- `ASR | None`
+  ASR implementation or ``None`` when the pipeline omits speech
+  recognition.
 
 #### get_tts_model
 
@@ -157,7 +310,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_tts_model(self) -> TTS | None
 ```
 
-Get the TTS model. If the pipeline does not have a TTS model, return None.
+Return the configured TTS model, if available.
+
+### Returns
+
+- `TTS | None`
+  TTS implementation or ``None``.
 
 #### get_agent
 
@@ -167,7 +325,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_agent(self) -> Agent | None
 ```
 
-Get the LLM agent. If the pipeline does not have a LLM agent, return None.
+Return the configured agent, if available.
+
+### Returns
+
+- `Agent | None`
+  Agent implementation or ``None``.
 
 #### get_captioner_model
 
@@ -177,7 +340,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_captioner_model(self) -> Captioner | None
 ```
 
-Get the Captioner model. If the pipeline does not have a Captioner model, return None.
+Return the configured captioner, if available.
+
+### Returns
+
+- `Captioner | None`
+  Captioner implementation or ``None``.
 
 #### get_punt_restorer_model
 
@@ -187,7 +355,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_punt_restorer_model(self) -> PuntRestorer | None
 ```
 
-Get the PuntRestorer model. If the pipeline does not have a PuntRestorer model, return None.
+Return the configured punctuation restorer, if available.
+
+### Returns
+
+- `PuntRestorer | None`
+  Punctuation restoration model or ``None``.
 
 #### get_caption_rewriter_model
 
@@ -197,8 +370,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_caption_rewriter_model(self) -> Rewriter | None
 ```
 
-Get the Caption Rewriter model. If the pipeline does not have a Caption Rewriter model
-, return None.
+Return the caption rewriter used by caption-related managers.
+
+### Returns
+
+- `Rewriter | None`
+  Caption rewriter or ``None``.
 
 #### get_thought_rewriter_model
 
@@ -208,7 +385,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_thought_rewriter_model(self) -> Rewriter | None
 ```
 
-Get the Thought Rewriter model (for ThoughtManager).
+Return the thought rewriter used by ``ThoughtManager``.
+
+### Returns
+
+- `Rewriter | None`
+  Thought rewriter or ``None``.
 
 #### get_vad_model
 
@@ -218,7 +400,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_vad_model(self) -> VAD
 ```
 
-Get the VAD model. If the pipeline does not have a VAD model, return None.
+Return the configured voice activity detector, if available.
+
+### Returns
+
+- `VAD | None`
+  VAD implementation or ``None``.
 
 #### get_enhancer_model
 
@@ -228,7 +415,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_enhancer_model(self) -> SpeechEnhancer | None
 ```
 
-Get the SpeechEnhancer model. If the pipeline does not have a SpeechEnhancer model, return None.
+Return the configured speech enhancer, if available.
+
+### Returns
+
+- `SpeechEnhancer | None`
+  Speech enhancement model or ``None``.
 
 #### get_speaker_encoder
 
@@ -238,7 +430,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_speaker_encoder(self) -> SpeakerEncoder | None
 ```
 
-Get the Speaker Encoder model. If the pipeline does not have a Speaker Encoder model, return None.
+Return the configured speaker encoder, if available.
+
+### Returns
+
+- `SpeakerEncoder | None`
+  Speaker encoder or ``None``.
 
 #### get_speed_controller
 
@@ -248,7 +445,12 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_speed_controller(self) -> SpeechSpeedController | None
 ```
 
-Return the optional TTS speed controller if available.
+Return the optional TTS speed controller.
+
+### Returns
+
+- `SpeechSpeedController | None`
+  Speed controller or ``None``.
 
 #### get_embeddings_model
 
@@ -258,6 +460,13 @@ _Defined in `xtalk.pipelines.interfaces`._
 def get_embeddings_model(self) -> Embeddings | None
 ```
 
+Return the embeddings model used for retrieval features.
+
+### Returns
+
+- `Embeddings | None`
+  Embeddings model or ``None``.
+
 #### get_turn_detector_model
 
 _Defined in `xtalk.pipelines.interfaces`._
@@ -265,6 +474,13 @@ _Defined in `xtalk.pipelines.interfaces`._
 ```python
 def get_turn_detector_model(self) -> TurnDetector | None
 ```
+
+Return the configured turn detector, if available.
+
+### Returns
+
+- `TurnDetector | None`
+  Turn detector or ``None``.
 
 ## DefaultPipeline
 
@@ -275,7 +491,46 @@ _Defined in `xtalk.pipelines.default`._
 class DefaultPipeline(Pipeline)
 ```
 
-Lightweight pipeline: just a container for models/configs via dataclass.
+Store the standard Xtalk model bundle for a session.
+
+### Parameters
+
+- `asr` (`ASR`)
+  Speech recognition model.
+- `llm_agent` (`Agent`)
+  Agent used to generate text responses and tool calls.
+- `tts` (`TTS`)
+  Text-to-speech model.
+- `default_response` (`str, optional`)
+  Fallback text returned when no better response is available.
+- `use_streaming_tts` (`bool, optional`)
+  Whether service managers should prefer streaming TTS when supported.
+- `captioner` (`Captioner | None, optional`)
+  Optional audio captioning model.
+- `punt_restorer_model` (`PuntRestorer | None, optional`)
+  Optional punctuation restoration model.
+- `caption_rewriter` (`Rewriter | BaseChatModel | None, optional`)
+  Optional caption rewriter or chat model to wrap as a rewriter.
+- `thought_rewriter` (`Rewriter | BaseChatModel | None, optional`)
+  Optional thought rewriter or chat model to wrap as a rewriter.
+- `vad` (`VAD | None, optional`)
+  Optional voice activity detector.
+- `speech_enhancer` (`SpeechEnhancer | None, optional`)
+  Optional speech enhancement model.
+- `speaker_encoder` (`SpeakerEncoder | None, optional`)
+  Optional speaker embedding model.
+- `speech_speed_controller` (`SpeechSpeedController | None, optional`)
+  Optional post-processing speed controller for synthesized audio.
+- `embeddings` (`Embeddings | None, optional`)
+  Optional embeddings backend for retrieval features.
+- `turn_detector` (`TurnDetector | None, optional`)
+  Optional turn detector that coordinates interruption and generation.
+
+### Notes
+
+The dataclass field metadata controls how instances are cloned for each
+session. Subclasses can add new fields as long as they expose an
+``init_key`` metadata entry.
 
 ### Class Fields
 
@@ -304,6 +559,41 @@ _Defined in `xtalk.pipelines.default`._
 def __init__(self, asr: ASR, llm_agent: Agent, tts: TTS, default_response: str = "Sorry, I didn't catch that. Could you please say it again?", use_streaming_tts: bool = True, captioner: Optional[Captioner] = None, punt_restorer_model: Optional[PuntRestorer] = None, caption_rewriter: Optional[Rewriter | BaseChatModel] = None, thought_rewriter: Optional[Rewriter | BaseChatModel] = None, vad: Optional[VAD] = None, speech_enhancer: Optional[SpeechEnhancer] = None, speaker_encoder: Optional[SpeakerEncoder] = None, speech_speed_controller: Optional[SpeechSpeedController] = None, embeddings: Optional[Embeddings] = None, turn_detector: Optional[TurnDetector] = None)
 ```
 
+Initialize the default pipeline.
+
+### Parameters
+
+- `asr` (`ASR`)
+  Speech recognition model.
+- `llm_agent` (`Agent`)
+  Agent used for response generation.
+- `tts` (`TTS`)
+  Text-to-speech model.
+- `default_response` (`str, optional`)
+  Fallback response text.
+- `use_streaming_tts` (`bool, optional`)
+  Whether to prefer streaming TTS paths.
+- `captioner` (`Captioner | None, optional`)
+  Optional audio captioning model.
+- `punt_restorer_model` (`PuntRestorer | None, optional`)
+  Optional punctuation restoration model.
+- `caption_rewriter` (`Rewriter | BaseChatModel | None, optional`)
+  Optional caption rewriter or chat model.
+- `thought_rewriter` (`Rewriter | BaseChatModel | None, optional`)
+  Optional thought rewriter or chat model.
+- `vad` (`VAD | None, optional`)
+  Optional voice activity detector.
+- `speech_enhancer` (`SpeechEnhancer | None, optional`)
+  Optional speech enhancer.
+- `speaker_encoder` (`SpeakerEncoder | None, optional`)
+  Optional speaker encoder.
+- `speech_speed_controller` (`SpeechSpeedController | None, optional`)
+  Optional speed controller for TTS output.
+- `embeddings` (`Embeddings | None, optional`)
+  Optional embeddings backend.
+- `turn_detector` (`TurnDetector | None, optional`)
+  Optional turn detector.
+
 #### clone
 
 _Defined in `xtalk.pipelines.default`._
@@ -312,11 +602,17 @@ _Defined in `xtalk.pipelines.default`._
 def clone(self)
 ```
 
-Clone a new pipeline instance.
+Clone the pipeline according to field metadata.
 
-- Call .clone() for fields marked with clone=True
-- Share references for the rest (suitable for stateless/read-only configs)
-- Automatically include subclass dataclass fields with metadata.init_key
+### Returns
+
+- `DefaultPipeline`
+  New pipeline instance of the same concrete type.
+
+### Notes
+
+Fields marked with ``clone=True`` call their own ``clone()`` method when
+available. Remaining fields are shared by reference.
 
 #### get_asr_model
 
@@ -430,7 +726,20 @@ _Defined in `xtalk.pipelines.default`._
 def set_tts_model(self, model_type: str, config: dict) -> None
 ```
 
-Dynamically switch between IndexTTS and IndexTTS2 models.
+Switch the active TTS model at runtime.
+
+### Parameters
+
+- `model_type` (`str`)
+  Supported model family name, currently ``"IndexTTS"`` or
+  ``"IndexTTS2"``.
+- `config` (`dict`)
+  Runtime configuration passed to the new TTS model constructor.
+
+### Raises
+
+- `ValueError`
+  Raised if ``model_type`` is not supported.
 
 #### set_llm_model
 
@@ -440,7 +749,19 @@ _Defined in `xtalk.pipelines.default`._
 def set_llm_model(self, model: str, base_url: str = '', api_key: str = '', extra_body: dict | None = None) -> None
 ```
 
-Dynamically switch ChatOpenAI configuration.
+Replace the current agent LLM with a ``ChatOpenAI`` instance.
+
+### Parameters
+
+- `model` (`str`)
+  Target model name passed to ``ChatOpenAI``.
+- `base_url` (`str, optional`)
+  Override for the OpenAI-compatible API base URL.
+- `api_key` (`str, optional`)
+  API key used for the replacement model. Falls back to
+  ``OPENAI_API_KEY`` when omitted.
+- `extra_body` (`dict | None, optional`)
+  Additional request payload fields forwarded to ``ChatOpenAI``.
 
 ## Service
 
@@ -450,7 +771,21 @@ _Defined in `xtalk.serving.service`._
 class Service
 ```
 
-Session-scoped orchestrator wiring pipeline managers to a WebSocket connection.
+Orchestrate a session-scoped pipeline and manager stack.
+
+### Parameters
+
+- `pipeline` (`Pipeline`)
+  Pipeline prototype that will be cloned for the session.
+- `service_config` (`dict[str, Any] | None, optional`)
+  Session configuration shared with managers and gateways.
+- `manager_classes` (`list[Type[Manager]] | None, optional`)
+  Manager classes to instantiate for live sessions.
+- `_websocket` (`WebSocket | None, optional`)
+  Internal WebSocket handle for live sessions. ``None`` means the instance
+  acts as a prototype only.
+- `_event_overrides` (`dict[Type[EventListenerMixin], EventOverrides] | None, optional`)
+  Internal event subscription overrides copied into cloned sessions.
 
 ### Methods
 
@@ -470,11 +805,17 @@ _Defined in `xtalk.serving.service`._
 def unsubscribe_event(self, *, event_listener_cls: Type[EventListenerMixin], event_type: Type[BaseEvent], method_name: str | None = None) -> None
 ```
 
-Remove automatic event subscription for an EventListener.
+Disable an automatic event subscription for a listener class.
 
-- method_name None: disable every handler for that event (including ones
-  added via @event_handler or overrides)
-- method_name str: disable only that specific handler
+### Parameters
+
+- `event_listener_cls` (`Type[EventListenerMixin]`)
+  Listener class whose subscription should be disabled.
+- `event_type` (`Type[BaseEvent]`)
+  Event type to unsubscribe.
+- `method_name` (`str | None, optional`)
+  Specific method name to disable. If omitted, every handler for the
+  event is disabled for the listener class.
 
 #### subscribe_event
 
@@ -484,12 +825,22 @@ _Defined in `xtalk.serving.service`._
 def subscribe_event(self, *, event_listener_cls: Type[EventListenerMixin], event_type: Type[BaseEvent], method_or_handler: str | Callable[[EventListenerMixin, BaseEvent], Any] | Callable[[BaseEvent], Any] | Callable[[EventListenerMixin, BaseEvent], Coroutine[Any, Any, Any]] | Callable[[BaseEvent], Coroutine[Any, Any, Any]], priority: int = 0, enabled_if: Callable[[EventListenerMixin], bool] | None = None) -> None
 ```
 
-Add extra event subscriptions for an EventListener.
+Register an additional event subscription override.
 
-- method_or_handler str: treat as method name; resolved via getattr on the
-  listener instance.
-- method_or_handler callable: external handler supporting signatures
-  h(event) / async h(event) or h(listener, event) / async variant.
+### Parameters
+
+- `event_listener_cls` (`Type[EventListenerMixin]`)
+  Listener class that should receive the event.
+- `event_type` (`Type[BaseEvent]`)
+  Event type to subscribe to.
+- `method_or_handler` (`str | Callable`)
+  Method name on the listener instance or an external sync/async
+  handler accepting ``event`` or ``(listener, event)``.
+- `priority` (`int, optional`)
+  Subscription priority. Higher values run first.
+- `enabled_if` (`Callable[[EventListenerMixin], bool] | None, optional`)
+  Predicate used to decide whether the subscription should be
+  installed for a concrete listener instance.
 
 #### register_manager
 
@@ -499,6 +850,13 @@ _Defined in `xtalk.serving.service`._
 def register_manager(self, manager_cls: Type[Manager])
 ```
 
+Register a manager class on the service.
+
+### Parameters
+
+- `manager_cls` (`Type[Manager]`)
+  Manager class to add to the service prototype or live session.
+
 #### unregister_manager
 
 _Defined in `xtalk.serving.service`._
@@ -506,6 +864,13 @@ _Defined in `xtalk.serving.service`._
 ```python
 def unregister_manager(self, manager_cls: Type[Manager])
 ```
+
+Remove a manager class from the service.
+
+### Parameters
+
+- `manager_cls` (`Type[Manager]`)
+  Manager class to remove.
 
 #### handle_message_loop
 
@@ -515,7 +880,19 @@ _Defined in `xtalk.serving.service`._
 async def handle_message_loop(self, already_accepted: bool = False) -> None
 ```
 
-Process the WebSocket message loop.
+Run the full WebSocket message loop for a live session.
+
+### Parameters
+
+- `already_accepted` (`bool, optional`)
+  Whether the WebSocket has already been accepted by an upstream
+  limiter or caller.
+
+### Raises
+
+- `RuntimeError`
+  Raised if the service instance is still a prototype without runtime
+  gateways.
 
 #### stop
 
@@ -525,7 +902,7 @@ _Defined in `xtalk.serving.service`._
 async def stop(self) -> None
 ```
 
-Stop the service and shut down managers.
+Stop the service and shut down all managers.
 
 #### clone
 
@@ -535,6 +912,18 @@ _Defined in `xtalk.serving.service`._
 def clone(self, new_websocket: WebSocket) -> 'Service'
 ```
 
+Clone the service prototype for a new WebSocket session.
+
+### Parameters
+
+- `new_websocket` (`WebSocket`)
+  WebSocket assigned to the new live session.
+
+### Returns
+
+- `Service`
+  Cloned service instance of the same concrete type.
+
 ## DefaultService
 
 _Defined in `xtalk.serving.service`._
@@ -543,7 +932,12 @@ _Defined in `xtalk.serving.service`._
 class DefaultService(Service)
 ```
 
-Convenience Service pre-configured with the default manager stack.
+Convenience ``Service`` with the standard Xtalk manager stack.
+
+### Notes
+
+Sample applications usually instantiate ``DefaultService`` directly and then
+register or override managers for custom behavior.
 
 ### Class Fields
 
@@ -568,7 +962,21 @@ _Defined in `xtalk.serving.events`._
 class BaseEvent
 ```
 
-Base dataclass for all xtalk events.
+Base dataclass for all Xtalk events.
+
+### Parameters
+
+- `session_id` (`str`)
+  Session identifier associated with the event.
+
+### Attributes
+
+- `timestamp` (`float`)
+  Unix timestamp recorded when the event instance is created.
+- `session_id` (`str`)
+  Session identifier associated with the event.
+- `TYPE` (`str`)
+  Stable event type string used by the event bus.
 
 ### Class Fields
 
@@ -594,7 +1002,31 @@ _Defined in `xtalk.serving.events`._
 def create_event_class(*, name: str, fields: dict[str, Any] | None = None, type_name: str | None = None) -> Type[BaseEvent]
 ```
 
-Dynamically create a BaseEvent subclass with the given field defaults.
+Create a ``BaseEvent`` subclass dynamically.
+
+### Parameters
+
+- `name` (`str`)
+  Dataclass name for the generated event type.
+- `fields` (`dict[str, Any] | None, optional`)
+  Mapping of field names to default values. Value types are inferred from
+  the defaults.
+- `type_name` (`str | None, optional`)
+  Event bus type string. Defaults to ``name.lower()`` when omitted.
+
+### Returns
+
+- `Type[BaseEvent]`
+  Generated dataclass type inheriting from ``BaseEvent``.
+
+### Examples
+
+```pycon
+>>> CustomEvent = create_event_class(
+...     name="CustomEvent",
+...     fields={"text": "", "turn_id": 0},
+... )
+```
 
 ## Manager
 
@@ -604,7 +1036,39 @@ _Defined in `xtalk.serving.interfaces`._
 class Manager(EventListenerMixin, ShutdownMixin)
 ```
 
-Base class for xtalk managers that subscribe to events and clean up resources.
+Base class for Xtalk managers.
+
+### Notes
+
+Subclasses typically accept ``event_bus``, ``session_id``, ``pipeline``, and
+``config`` arguments, then register handlers with ``@Manager.event_handler``.
+
+### Methods
+
+#### event_handler
+
+_Defined in `xtalk.serving.interfaces`._
+
+```python
+def event_handler(event_type: Type[BaseEvent], *, priority: int = 0, enabled_if: Callable[['EventListenerMixin'], bool] | None = None)
+```
+
+Declare a manager event handler.
+
+### Parameters
+
+- `event_type` (`Type[BaseEvent]`)
+  Event class handled by the decorated method.
+- `priority` (`int, optional`)
+  Execution priority for the handler. Higher values run first.
+- `enabled_if` (`Callable[[EventListenerMixin], bool] | None, optional`)
+  Predicate evaluated against the manager instance before the handler
+  is registered.
+
+### Returns
+
+- `Callable`
+  Decorator that marks the method for automatic subscription.
 
 ## EventBus
 
@@ -614,7 +1078,14 @@ _Defined in `xtalk.serving.event_bus`._
 class EventBus
 ```
 
-Event bus abstraction with recursion protection.
+Publish and subscribe session events with async dispatch support.
+
+### Parameters
+
+- `enable_history` (`bool, optional`)
+  Whether to store published events in memory for later inspection.
+- `max_history` (`int, optional`)
+  Maximum number of events kept when history is enabled.
 
 ### Class Fields
 
@@ -634,9 +1105,12 @@ def __init__(self, enable_history: bool = False, max_history: int = 1000)
 
 Initialize the event bus.
 
-Args:
-    enable_history: whether to track event history
-    max_history: max number of history entries
+### Parameters
+
+- `enable_history` (`bool, optional`)
+  Whether to record published events in the in-memory history buffer.
+- `max_history` (`int, optional`)
+  Maximum number of events retained in history.
 
 #### subscribe
 
@@ -646,12 +1120,16 @@ _Defined in `xtalk.serving.event_bus`._
 def subscribe(self, event_class: Union[Type[BaseEvent], str], handler: Callable[[BaseEvent], Any], priority: int = 0) -> None
 ```
 
-Subscribe to an event.
+Subscribe a handler to an event type.
 
-Args:
-    event_class: event class or type string (e.g., "tts.started")
-    handler: callable invoked for the event
-    priority: higher numbers run earlier
+### Parameters
+
+- `event_class` (`Type[BaseEvent] | str`)
+  Event class or event type string such as ``"tts.started"``.
+- `handler` (`Callable[[BaseEvent], Any]`)
+  Sync or async callable invoked for matching events.
+- `priority` (`int, optional`)
+  Higher values run earlier.
 
 #### unsubscribe
 
@@ -661,14 +1139,19 @@ _Defined in `xtalk.serving.event_bus`._
 def unsubscribe(self, event_class: Union[Type[BaseEvent], str], handler: Callable) -> bool
 ```
 
-Unsubscribe a handler from an event.
+Unsubscribe a handler from an event type.
 
-Args:
-    event_class: event class or type string
-    handler: callable to remove
+### Parameters
 
-Returns:
-    True if removed, False otherwise
+- `event_class` (`Type[BaseEvent] | str`)
+  Event class or event type string.
+- `handler` (`Callable`)
+  Previously subscribed handler to remove.
+
+### Returns
+
+- `bool`
+  ``True`` if the handler was removed, otherwise ``False``.
 
 #### publish
 
@@ -678,14 +1161,19 @@ _Defined in `xtalk.serving.event_bus`._
 async def publish(self, event: BaseEvent, wait_for_completion: bool = False) -> bool
 ```
 
-Publish an event.
+Publish an event to all matching handlers.
 
-Args:
-    event: event object
-    wait_for_completion: whether to await all handlers
+### Parameters
 
-Returns:
-    True on success, False otherwise
+- `event` (`BaseEvent`)
+  Event instance to dispatch.
+- `wait_for_completion` (`bool, optional`)
+  Whether to await handler completion before returning.
+
+### Returns
+
+- `bool`
+  ``True`` on success, otherwise ``False``.
 
 #### get_history
 

@@ -29,6 +29,8 @@ _Defined in `xtalk.llm_agent.interfaces`._
 class Agent(ABC)
 ```
 
+Abstract interface for conversational agents used by Xtalk.
+
 ### Methods
 
 #### generate
@@ -39,16 +41,19 @@ _Defined in `xtalk.llm_agent.interfaces`._
 def generate(self, input: Union[str, AgentInput]) -> Union[str, tuple[str, List[ToolCall]]]
 ```
 
-Generate a full reply for the input.
+Generate a complete response for the input.
 
-Input formats:
-- str: just raw text (no context)
-- dict: {"content": raw text, "context": PipelineContext}
+### Parameters
 
-Return format (backward compatible):
-- plain `str` reply, or
-- `(text, tool_calls)` tuple when tool invocations exist, where
-  text is the reply and tool_calls is a List[ToolCall]
+- `input` (`str | AgentInput`)
+  Raw user text or a structured payload containing both text and
+  pipeline context.
+
+### Returns
+
+- `str | tuple[str, List[ToolCall]]`
+  Plain response text, or a ``(text, tool_calls)`` tuple when tool
+  calls should be surfaced alongside the final text.
 
 #### generate_stream
 
@@ -58,9 +63,18 @@ _Defined in `xtalk.llm_agent.interfaces`._
 def generate_stream(self, input: Union[str, AgentInput]) -> Iterable[Union[str, ToolCall]]
 ```
 
-Stream responses for the input (same format as `generate`).
+Stream response chunks for the input.
 
-Default implementation runs `generate` first, then yields text/tool_calls.
+### Parameters
+
+- `input` (`str | AgentInput`)
+  Raw user text or structured agent input.
+
+### Yields
+
+- `str | ToolCall`
+  Tool calls followed by text chunks. The default implementation
+  delegates to ``generate()`` and yields its result in streaming form.
 
 #### async_generate
 
@@ -70,7 +84,17 @@ _Defined in `xtalk.llm_agent.interfaces`._
 async def async_generate(self, input: Union[str, AgentInput]) -> Union[str, tuple[str, List[ToolCall]]]
 ```
 
-Async wrapper around `generate`, running sync logic in an executor.
+Asynchronously generate a complete response.
+
+### Parameters
+
+- `input` (`str | AgentInput`)
+  Raw user text or structured agent input.
+
+### Returns
+
+- `str | tuple[str, List[ToolCall]]`
+  Same result contract as ``generate()``.
 
 #### async_generate_stream
 
@@ -80,7 +104,17 @@ _Defined in `xtalk.llm_agent.interfaces`._
 async def async_generate_stream(self, input: Union[str, AgentInput]) -> AsyncIterator[Union[str, ToolCall]]
 ```
 
-Async streaming wrapper pulling from the sync generator in executor.
+Asynchronously stream agent outputs.
+
+### Parameters
+
+- `input` (`str | AgentInput`)
+  Raw user text or structured agent input.
+
+### Yields
+
+- `str | ToolCall`
+  Streamed outputs from ``generate_stream()``.
 
 #### clone
 
@@ -90,6 +124,13 @@ _Defined in `xtalk.llm_agent.interfaces`._
 def clone(self) -> 'Agent'
 ```
 
+Clone the agent for a new session.
+
+### Returns
+
+- `Agent`
+  Session-safe agent instance.
+
 #### get_llm
 
 _Defined in `xtalk.llm_agent.interfaces`._
@@ -98,7 +139,12 @@ _Defined in `xtalk.llm_agent.interfaces`._
 def get_llm(self) -> BaseChatModel | None
 ```
 
-Return the underlying LLM instance if available.
+Return the backing chat model when the agent exposes one.
+
+### Returns
+
+- `BaseChatModel | None`
+  Underlying chat model or ``None``.
 
 #### get_chat_history
 
@@ -108,7 +154,12 @@ _Defined in `xtalk.llm_agent.interfaces`._
 def get_chat_history(self) -> str | None
 ```
 
-Return textual conversation history if available.
+Return the serialized conversation history when available.
+
+### Returns
+
+- `str | None`
+  Conversation history or ``None``.
 
 #### add_tools
 
@@ -118,6 +169,13 @@ _Defined in `xtalk.llm_agent.interfaces`._
 def add_tools(self, tools: list[BaseTool | Callable[[], BaseTool]])
 ```
 
+Attach tools to the agent.
+
+### Parameters
+
+- `tools` (`list[BaseTool | Callable[[], BaseTool]]`)
+  Tool instances or factories that produce tool instances.
+
 ## Rewriter
 
 _Defined in `xtalk.rewriter.interfaces`._
@@ -125,6 +183,8 @@ _Defined in `xtalk.rewriter.interfaces`._
 ```python
 class Rewriter(ABC)
 ```
+
+Abstract interface for text rewriting helpers.
 
 ### Methods
 
@@ -138,6 +198,16 @@ def rewrite(self, input: str) -> str
 
 Rewrite input text.
 
+### Parameters
+
+- `input` (`str`)
+  Source text to rewrite.
+
+### Returns
+
+- `str`
+  Rewritten text.
+
 #### async_rewrite
 
 _Defined in `xtalk.rewriter.interfaces`._
@@ -146,7 +216,17 @@ _Defined in `xtalk.rewriter.interfaces`._
 async def async_rewrite(self, input: str) -> str
 ```
 
-Async wrapper running the sync rewrite in a thread pool.
+Asynchronously rewrite input text.
+
+### Parameters
+
+- `input` (`str`)
+  Source text to rewrite.
+
+### Returns
+
+- `str`
+  Rewritten text.
 
 ## ASR
 
@@ -168,7 +248,17 @@ _Defined in `xtalk.speech.interfaces`._
 def recognize(self, audio: bytes) -> str
 ```
 
-Recognize audio in a single pass.
+Recognize a full audio buffer.
+
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes.
+
+### Returns
+
+- `str`
+  Recognized text.
 
 #### recognize_stream
 
@@ -178,8 +268,20 @@ _Defined in `xtalk.speech.interfaces`._
 def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str
 ```
 
-Incremental streaming interface.
-is_final indicates user pause or user turn end, meaning that ASR should forcefully do a recognition
+Recognize audio incrementally in streaming mode.
+
+### Parameters
+
+- `audio` (`bytes`)
+  Incremental PCM 16-bit mono audio bytes.
+- `is_final` (`bool, optional`)
+  Whether the caller is forcing a final decode because the user paused
+  or the turn ended.
+
+### Returns
+
+- `str`
+  Current recognition result.
 
 #### stream_chunk_bytes_hint
 
@@ -189,7 +291,13 @@ _Defined in `xtalk.speech.interfaces`._
 def stream_chunk_bytes_hint(self) -> int | None
 ```
 
-Optional hint for how many bytes to accumulate before decoding.
+Return the preferred streaming chunk size.
+
+### Returns
+
+- `int | None`
+  Recommended byte count for streaming accumulation, or ``None`` when
+  no preference is provided.
 
 #### reset
 
@@ -209,7 +317,12 @@ _Defined in `xtalk.speech.interfaces`._
 def clone(self) -> 'ASR'
 ```
 
-Clone the ASR instance with shared weights and separate state.
+Clone the ASR instance for a new session.
+
+### Returns
+
+- `ASR`
+  Clone with shared weights and independent runtime state.
 
 #### async_recognize
 
@@ -219,7 +332,17 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_recognize(self, audio: bytes) -> str
 ```
 
-Async wrapper for one-shot recognition.
+Asynchronously recognize a full audio buffer.
+
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes.
+
+### Returns
+
+- `str`
+  Recognized text.
 
 #### async_recognize_stream
 
@@ -229,7 +352,19 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str
 ```
 
-Async wrapper for streaming recognition.
+Asynchronously recognize incremental audio input.
+
+### Parameters
+
+- `audio` (`bytes`)
+  Incremental PCM 16-bit mono audio bytes.
+- `is_final` (`bool, optional`)
+  Whether the chunk should force a final decode.
+
+### Returns
+
+- `str`
+  Current recognition result.
 
 ## TTS
 
@@ -239,7 +374,7 @@ _Defined in `xtalk.speech.interfaces`._
 class TTS(ABC)
 ```
 
-Abstract base class for Text-to-Speech (TTS) engines.
+Abstract base class for text-to-speech engines.
 
 ### Methods
 
@@ -251,13 +386,17 @@ _Defined in `xtalk.speech.interfaces`._
 def synthesize(self, text: str) -> bytes
 ```
 
-Convert text to speech.
+Synthesize audio for a full text input.
 
-Args:
-    text (str): The text to convert to speech.
+### Parameters
 
-Returns:
-    bytes: The synthesized speech as audio data. PCM 16bit mono, 48000Hz bytes.
+- `text` (`str`)
+  Text to synthesize.
+
+### Returns
+
+- `bytes`
+  PCM 16-bit mono audio bytes at 48 kHz.
 
 #### synthesize_stream
 
@@ -267,13 +406,19 @@ _Defined in `xtalk.speech.interfaces`._
 def synthesize_stream(self, text: str, **kwargs) -> Iterable[bytes]
 ```
 
-Convert text to speech. Streaming mode.
+Stream synthesized audio chunks for a text input.
 
-Args:
-    text (str): The text to convert to speech.
+### Parameters
 
-Returns:
-    Iterable[bytes]: The synthesized speech as audio data. PCM 16bit mono, 48000Hz bytes.
+- `text` (`str`)
+  Text to synthesize.
+- `**kwargs`
+  Model-specific streaming options.
+
+### Yields
+
+- `bytes`
+  PCM 16-bit mono audio bytes at 48 kHz.
 
 #### async_synthesize
 
@@ -283,7 +428,19 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_synthesize(self, text: str, **kwargs: Any) -> bytes
 ```
 
-Async wrapper around the synchronous synthesize call.
+Asynchronously synthesize audio for text.
+
+### Parameters
+
+- `text` (`str`)
+  Text to synthesize.
+- `**kwargs`
+  Model-specific synthesis options.
+
+### Returns
+
+- `bytes`
+  Synthesized PCM audio bytes.
 
 #### async_synthesize_stream
 
@@ -293,7 +450,19 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_synthesize_stream(self, text: str, **kwargs: Any) -> AsyncIterator[bytes]
 ```
 
-Async wrapper consuming the sync streaming generator.
+Asynchronously stream synthesized audio chunks.
+
+### Parameters
+
+- `text` (`str`)
+  Text to synthesize.
+- `**kwargs`
+  Model-specific synthesis options.
+
+### Yields
+
+- `bytes`
+  Streamed PCM audio chunks.
 
 #### clone
 
@@ -303,10 +472,12 @@ _Defined in `xtalk.speech.interfaces`._
 def clone(self) -> 'TTS'
 ```
 
-Create an original clone of the TTS engine.
+Clone the TTS engine for a new session.
 
-Returns:
-    TTS: A clone of the TTS engine.
+### Returns
+
+- `TTS`
+  Session-safe clone.
 
 #### set_voice
 
@@ -316,10 +487,12 @@ _Defined in `xtalk.speech.interfaces`._
 def set_voice(self, voice_names: list[str]) -> None
 ```
 
-Set the voice or merge several voices for speech synthesis.
+Update the active voice selection.
 
-Args:
-    voice_names (list[str]): A list of voice names to set.
+### Parameters
+
+- `voice_names` (`list[str]`)
+  One or more voice names understood by the implementation.
 
 #### set_emotion
 
@@ -329,10 +502,12 @@ _Defined in `xtalk.speech.interfaces`._
 def set_emotion(self, emotion: str | list[float]) -> None
 ```
 
-Set the emotion for speech synthesis.
+Update the active synthesis emotion.
 
-Args:
-    emotion (str | list[float]): The emotion to set, either as a string label or a list of float values.
+### Parameters
+
+- `emotion` (`str | list[float]`)
+  Emotion label or model-specific emotion vector.
 
 ## Captioner
 
@@ -342,7 +517,7 @@ _Defined in `xtalk.speech.interfaces`._
 class Captioner(ABC)
 ```
 
-Abstract base class for Audio Captioning models.
+Abstract base class for audio captioning models.
 
 ### Methods
 
@@ -354,12 +529,17 @@ _Defined in `xtalk.speech.interfaces`._
 def caption(self, audio: bytes) -> str
 ```
 
-Generate a caption for the given audio.
+Generate a caption for audio.
 
-Args:
-    audio (bytes): The audio data to caption. PCM 16bit mono, 16000Hz bytes.
-Returns:
-    str: The generated caption.
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes at 16 kHz.
+
+### Returns
+
+- `str`
+  Generated caption text.
 
 #### caption_stream
 
@@ -369,12 +549,17 @@ _Defined in `xtalk.speech.interfaces`._
 def caption_stream(self, audio: bytes) -> Iterable[str]
 ```
 
-Generate a caption for the given audio. Streaming mode.
+Stream caption text for audio input.
 
-Args:
-    audio (bytes): The audio data to caption. PCM 16bit mono, 16000Hz bytes.
-Returns:
-    Iterable[str]: Streamed generated caption.
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes at 16 kHz.
+
+### Yields
+
+- `str`
+  Streamed caption text.
 
 #### async_caption
 
@@ -384,7 +569,17 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_caption(self, audio: bytes) -> str
 ```
 
-Async wrapper for caption().
+Asynchronously caption audio.
+
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes at 16 kHz.
+
+### Returns
+
+- `str`
+  Generated caption text.
 
 #### async_caption_stream
 
@@ -394,7 +589,17 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_caption_stream(self, audio: bytes) -> AsyncIterator[str]
 ```
 
-Async wrapper streaming caption text.
+Asynchronously stream caption text.
+
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes at 16 kHz.
+
+### Yields
+
+- `str`
+  Streamed caption text.
 
 ## PuntRestorer
 
@@ -404,7 +609,7 @@ _Defined in `xtalk.speech.interfaces`._
 class PuntRestorer(ABC)
 ```
 
-Abstract base class for text punt restoration models.
+Abstract base class for punctuation restoration models.
 
 ### Methods
 
@@ -416,7 +621,17 @@ _Defined in `xtalk.speech.interfaces`._
 def restore(self, text: str) -> str
 ```
 
-Restore punt in the given text.
+Restore punctuation in text.
+
+### Parameters
+
+- `text` (`str`)
+  Text without reliable punctuation.
+
+### Returns
+
+- `str`
+  Text with restored punctuation.
 
 #### async_restore
 
@@ -426,7 +641,17 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_restore(self, text: str) -> str
 ```
 
-Async wrapper for restore().
+Asynchronously restore punctuation in text.
+
+### Parameters
+
+- `text` (`str`)
+  Text without reliable punctuation.
+
+### Returns
+
+- `str`
+  Restored text.
 
 ## VAD
 
@@ -436,7 +661,7 @@ _Defined in `xtalk.speech.interfaces`._
 class VAD(ABC)
 ```
 
-Abstract base class for Voice Activity Detection (VAD) engines.
+Abstract base class for voice activity detection engines.
 
 ### Methods
 
@@ -448,13 +673,17 @@ _Defined in `xtalk.speech.interfaces`._
 def is_speech(self, frame: bytes) -> bool
 ```
 
-Determine if the given audio frame contains speech.
+Determine whether an audio frame contains speech.
 
-Args:
-    frame (bytes): The audio frame to analyze. PCM 16bit mono, 16000Hz bytes.
+### Parameters
 
-Returns:
-    bool: True if the frame contains speech, False otherwise.
+- `frame` (`bytes`)
+  PCM 16-bit mono audio bytes at 16 kHz.
+
+### Returns
+
+- `bool`
+  ``True`` if speech is detected, otherwise ``False``.
 
 #### async_is_speech
 
@@ -464,7 +693,17 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_is_speech(self, frame: bytes) -> bool
 ```
 
-Async wrapper for is_speech().
+Asynchronously determine whether an audio frame contains speech.
+
+### Parameters
+
+- `frame` (`bytes`)
+  PCM 16-bit mono audio bytes at 16 kHz.
+
+### Returns
+
+- `bool`
+  ``True`` if speech is detected, otherwise ``False``.
 
 ## SpeechEnhancer
 
@@ -474,9 +713,11 @@ _Defined in `xtalk.speech.interfaces`._
 class SpeechEnhancer(ABC)
 ```
 
-Abstract base class for Speech Enhancement engines.
+Abstract base class for speech enhancement engines.
 
-Inputs/outputs are PCM 16bit mono 16000Hz raw bytes.
+### Notes
+
+Inputs and outputs use PCM 16-bit mono audio bytes at 16 kHz.
 
 ### Methods
 
@@ -488,13 +729,17 @@ _Defined in `xtalk.speech.interfaces`._
 def enhance(self, audio: bytes) -> bytes
 ```
 
-Enhance the given audio frame.
+Enhance an audio frame.
 
-Args:
-    audio (bytes): The audio data to enhance. PCM 16bit mono, 16000Hz bytes.
+### Parameters
 
-Returns:
-    bytes: The enhanced audio data. PCM 16bit mono, 16000Hz bytes.
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes at 16 kHz.
+
+### Returns
+
+- `bytes`
+  Enhanced PCM audio bytes.
 
 #### flush
 
@@ -504,14 +749,12 @@ _Defined in `xtalk.speech.interfaces`._
 def flush(self) -> bytes
 ```
 
-Flush remaining buffered audio (call at end of audio stream).
+Flush any internally buffered audio.
 
-Some enhancers buffer audio internally for processing. This method
-should be called when the audio stream ends to retrieve any remaining
-enhanced audio.
+### Returns
 
-Returns:
-    bytes: Remaining enhanced audio data. PCM 16bit mono, 16000Hz bytes.
+- `bytes`
+  Remaining enhanced PCM audio bytes.
 
 #### async_enhance
 
@@ -521,7 +764,17 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_enhance(self, audio: bytes) -> bytes
 ```
 
-Async wrapper for enhance().
+Asynchronously enhance audio.
+
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes at 16 kHz.
+
+### Returns
+
+- `bytes`
+  Enhanced PCM audio bytes.
 
 #### async_flush
 
@@ -531,7 +784,12 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_flush(self) -> bytes
 ```
 
-Async wrapper for flush().
+Asynchronously flush buffered audio.
+
+### Returns
+
+- `bytes`
+  Remaining enhanced PCM audio bytes.
 
 #### reset
 
@@ -541,7 +799,7 @@ _Defined in `xtalk.speech.interfaces`._
 def reset(self) -> None
 ```
 
-Reset internal state (buffers, caches, etc.).
+Reset internal buffers and caches.
 
 #### clone
 
@@ -551,7 +809,12 @@ _Defined in `xtalk.speech.interfaces`._
 def clone(self) -> 'SpeechEnhancer'
 ```
 
-Clone the speech enhancer with shared weights and isolated state.
+Clone the speech enhancer for a new session.
+
+### Returns
+
+- `SpeechEnhancer`
+  Clone with shared weights and isolated runtime state.
 
 ## SpeakerEncoder
 
@@ -560,6 +823,8 @@ _Defined in `xtalk.speech.interfaces`._
 ```python
 class SpeakerEncoder(ABC)
 ```
+
+Abstract base class for speaker embedding models.
 
 ### Methods
 
@@ -573,6 +838,16 @@ def extract(self, audio: bytes) -> np.ndarray
 
 Generate a speaker embedding vector.
 
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes.
+
+### Returns
+
+- `np.ndarray`
+  Speaker embedding vector.
+
 #### async_extract
 
 _Defined in `xtalk.speech.interfaces`._
@@ -581,7 +856,17 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_extract(self, audio: bytes) -> np.ndarray
 ```
 
-Async wrapper for extract().
+Asynchronously extract a speaker embedding.
+
+### Parameters
+
+- `audio` (`bytes`)
+  PCM 16-bit mono audio bytes.
+
+### Returns
+
+- `np.ndarray`
+  Speaker embedding vector.
 
 #### similarity
 
@@ -591,7 +876,19 @@ _Defined in `xtalk.speech.interfaces`._
 def similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float
 ```
 
-Compute similarity between embeddings (default cosine).
+Compute similarity between two speaker embeddings.
+
+### Parameters
+
+- `embedding1` (`np.ndarray`)
+  First speaker embedding.
+- `embedding2` (`np.ndarray`)
+  Second speaker embedding.
+
+### Returns
+
+- `float`
+  Cosine similarity score.
 
 ## SpeechSpeedController
 
@@ -613,7 +910,19 @@ _Defined in `xtalk.speech.interfaces`._
 def process(self, audio_bytes: bytes, speed: float = 1.0) -> bytes
 ```
 
-Process audio and apply speed adjustments.
+Apply a speed adjustment to synthesized audio.
+
+### Parameters
+
+- `audio_bytes` (`bytes`)
+  Synthesized audio bytes.
+- `speed` (`float, optional`)
+  Speed multiplier.
+
+### Returns
+
+- `bytes`
+  Processed audio bytes.
 
 #### async_process
 
@@ -623,7 +932,19 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_process(self, audio_bytes: bytes, speed: float = 1.0) -> bytes
 ```
 
-Async wrapper around process().
+Asynchronously apply a speed adjustment to audio.
+
+### Parameters
+
+- `audio_bytes` (`bytes`)
+  Synthesized audio bytes.
+- `speed` (`float, optional`)
+  Speed multiplier.
+
+### Returns
+
+- `bytes`
+  Processed audio bytes.
 
 ## TurnDetector
 
@@ -632,6 +953,8 @@ _Defined in `xtalk.speech.interfaces`._
 ```python
 class TurnDetector(ABC)
 ```
+
+Abstract interface for turn-taking detectors.
 
 ### Methods
 
@@ -651,6 +974,13 @@ _Defined in `xtalk.speech.interfaces`._
 def listening(self) -> bool
 ```
 
+Return whether the detector is currently listening for user turns.
+
+### Returns
+
+- `bool`
+  Current listening state.
+
 #### listening
 
 _Defined in `xtalk.speech.interfaces`._
@@ -658,6 +988,13 @@ _Defined in `xtalk.speech.interfaces`._
 ```python
 def listening(self, value: bool) -> None
 ```
+
+Update the listening state.
+
+### Parameters
+
+- `value` (`bool`)
+  New listening state.
 
 #### listening_lock
 
@@ -667,6 +1004,18 @@ _Defined in `xtalk.speech.interfaces`._
 def listening_lock(self, is_async: bool = True)
 ```
 
+Return the lock guarding listening state changes.
+
+### Parameters
+
+- `is_async` (`bool, optional`)
+  Whether to return the async lock instead of the threading lock.
+
+### Returns
+
+- `asyncio.Lock | threading.Lock`
+  Lock object matching the requested concurrency model.
+
 #### detect
 
 _Defined in `xtalk.speech.interfaces`._
@@ -675,17 +1024,24 @@ _Defined in `xtalk.speech.interfaces`._
 def detect(self, audio: Optional[bytes] = None, text: Optional[str] = None, speech_pause: Optional[bool] = None) -> TurnDetectionResult | list[TurnDetectionResult]
 ```
 
-Detect turn with audio and/or text.
+Detect conversational turn state from audio and/or text.
 
-Args:
-    audio (bytes): Audio data frame at this instant. PCM 16bit mono, 16000Hz bytes.
-    text: Text of the turn, from ASR result.
-    speech_pause: indicates whether user has a pause on his speech (often triggered by VAD end); only sent alongside text
+### Parameters
 
-    Either audio or (text, speech_pause) will be present.
+- `audio` (`bytes | None, optional`)
+  Current PCM 16-bit mono audio frame at 16 kHz.
+- `text` (`str | None, optional`)
+  ASR text for the current turn.
+- `speech_pause` (`bool | None, optional`)
+  Whether the user appears to have paused speaking. This is typically
+  provided together with ``text``.
 
-Returns:
-    TurnDetectionResult | list[TurnDetectionResult]; STOP_SPEAKING action will be processed before START_GENERATION
+### Returns
+
+- `TurnDetectionResult | list[TurnDetectionResult]`
+  One or more turn-detection decisions. When multiple results are
+  returned, ``STOP_SPEAKING`` should be processed before
+  ``START_GENERATION``.
 
 #### async_detect
 
@@ -695,7 +1051,21 @@ _Defined in `xtalk.speech.interfaces`._
 async def async_detect(self, audio: Optional[bytes] = None, text: Optional[str] = None, speech_pause: Optional[bool] = None) -> TurnDetectionResult | list[TurnDetectionResult]
 ```
 
-Async wrapper for detect().
+Asynchronously detect conversational turn state.
+
+### Parameters
+
+- `audio` (`bytes | None, optional`)
+  Current PCM 16-bit mono audio frame at 16 kHz.
+- `text` (`str | None, optional`)
+  ASR text for the current turn.
+- `speech_pause` (`bool | None, optional`)
+  Whether the user appears to have paused speaking.
+
+### Returns
+
+- `TurnDetectionResult | list[TurnDetectionResult]`
+  One or more turn-detection decisions.
 
 #### clone
 
@@ -704,3 +1074,10 @@ _Defined in `xtalk.speech.interfaces`._
 ```python
 def clone(self) -> 'TurnDetector'
 ```
+
+Clone the turn detector for a new session.
+
+### Returns
+
+- `TurnDetector`
+  Session-safe clone.

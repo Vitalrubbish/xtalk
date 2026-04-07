@@ -23,7 +23,14 @@ ImportSpec = Union[str, Path]
 
 
 class Xtalk:
-    """High-level interface for constructing pipelines, services, and WebSocket sessions."""
+    """Create Xtalk pipelines, services, and session entrypoints.
+
+    Notes
+    -----
+    ``Xtalk`` is the main integration surface used by the sample applications.
+    It builds pipelines from configuration, stores a prototype service, and
+    accepts WebSocket sessions on demand.
+    """
 
     # Slot -> ordered import specs
     MODEL_REGISTRY: dict[str, list[ImportSpec]] = {
@@ -45,6 +52,16 @@ class Xtalk:
     _FILE_MODULE_CACHE: dict[str, Any] = {}
 
     def __init__(self, *, service_prototype: Service, max_sessions: int | None = None):
+        """Initialize an ``Xtalk`` application wrapper.
+
+        Parameters
+        ----------
+        service_prototype : Service
+            Prototype service used to clone per-session service instances.
+        max_sessions : int | None, optional
+            Maximum number of concurrent sessions. If omitted, no session limit
+            is enforced.
+        """
         self._service_manager = ServiceManager(service_prototype=service_prototype)
         self._pipeline = service_prototype.pipeline
         self._session_limiter = (
@@ -62,18 +79,31 @@ class Xtalk:
         spec: ImportSpec,
         prepend: bool = True,
     ) -> None:
-        """
-        Register an additional import spec for a slot.
+        """Register an additional model lookup location for a slot.
 
-        spec examples:
-          - "my_pkg.custom_tts"                 (fully-qualified module path)
-          - "my_pkg.custom_tts:registry"        (module path + attribute chain)
-          - "/abs/path/to/custom_tts.py"        (python file path)
-          - "./custom_tts.py"                   (relative python file path)
-          - Path("/abs/path/to/custom_tts.py")  (Path object file path)
-          - Path("./custom_tts.py")             (Path object relative path)
+        Parameters
+        ----------
+        slot : str
+            Registry slot name such as ``"llm_agent"`` or ``"tts"``.
+        spec : ImportSpec
+            Import target to try when loading that slot. Supported forms include
+            module paths, ``"module:attribute"`` references, and Python file
+            paths.
+        prepend : bool, default=True
+            Whether to try the new spec before existing registered specs.
 
-        prepend=True means the spec is tried before existing specs.
+        Notes
+        -----
+        Common ``spec`` forms include ``"my_pkg.custom_tts"``,
+        ``"my_pkg.custom_tts:registry"``, ``"/abs/path/custom_tts.py"``, and
+        ``Path("./custom_tts.py")``.
+
+        Examples
+        --------
+        >>> Xtalk.register_model_search_spec(
+        ...     slot="llm_agent",
+        ...     spec="./echo_agent.py",
+        ... )
         """
         if not slot:
             raise ValueError("slot must be non-empty")
@@ -107,6 +137,23 @@ class Xtalk:
 
     @classmethod
     def from_config(cls, path_or_dict: str | dict) -> "Xtalk":
+        """Build an ``Xtalk`` instance from configuration data.
+
+        Parameters
+        ----------
+        path_or_dict : str | dict
+            JSON file path or already loaded configuration dictionary.
+
+        Returns
+        -------
+        Xtalk
+            Configured application wrapper backed by a ``DefaultPipeline`` and
+            ``DefaultService``.
+
+        Examples
+        --------
+        >>> xtalk = Xtalk.from_config("server_config.json")
+        """
         config = cls._get_config_dict(path_or_dict)
         pipeline = cls._load_pipeline(DefaultPipeline, config)
         service_prototype = DefaultService(
@@ -123,14 +170,60 @@ class Xtalk:
         config_path_or_dict: str | dict,
         additional_model_registry: dict[str, Any],
     ) -> Pipeline:
+        """Instantiate a custom pipeline class from configuration.
+
+        Parameters
+        ----------
+        pipeline_cls : Type[Pipeline]
+            Concrete pipeline type to instantiate.
+        config_path_or_dict : str | dict
+            JSON file path or already loaded configuration dictionary.
+        additional_model_registry : dict[str, Any]
+            Extra slot-to-instance mapping merged on top of the default model
+            registry before the pipeline is created.
+
+        Returns
+        -------
+        Pipeline
+            Pipeline instance created from the supplied configuration.
+
+        Examples
+        --------
+        >>> pipeline = Xtalk.create_pipeline_from_config(
+        ...     pipeline_cls=DefaultPipeline,
+        ...     config_path_or_dict="server_config.json",
+        ...     additional_model_registry={},
+        ... )
+        """
         config = cls._get_config_dict(config_path_or_dict)
         pipeline = cls._load_pipeline(pipeline_cls, config, additional_model_registry)
         return pipeline
 
     def set_session_limit(self, limit: int):
+        """Set or replace the concurrent session limit.
+
+        Parameters
+        ----------
+        limit : int
+            Maximum number of active sessions allowed at the same time.
+        """
         self._session_limiter = SessionLimiter(limit)
 
     async def embed_text(self, session_id: str, text: str):
+        """Queue text for session-scoped embedding storage.
+
+        Parameters
+        ----------
+        session_id : str
+            Session identifier returned to the frontend.
+        text : str
+            Text content that should be embedded and persisted for retrieval.
+
+        Raises
+        ------
+        ValueError
+            Raised if the target session does not exist.
+        """
         service = self._service_manager.get_service(session_id)
         if service is None:
             raise ValueError(f"Session {session_id} not found.")
@@ -141,11 +234,36 @@ class Xtalk:
     def add_agent_tools(
         self, tools_or_factories: list[BaseTool | Callable[[], BaseTool]]
     ):
+        """Attach tools to the prototype agent before sessions are created.
+
+        Parameters
+        ----------
+        tools_or_factories : list[BaseTool | Callable[[], BaseTool]]
+            Tool instances or zero-argument factories that produce tool
+            instances.
+
+        Raises
+        ------
+        RuntimeError
+            Raised if at least one service session has already been created.
+        """
         if self._service_manager.get_service_count() > 0:
             raise RuntimeError("Cannot add tools after services have been created.")
         self._pipeline.get_agent().add_tools(tools_or_factories)
 
     async def connect(self, websocket: WebSocket):
+        """Accept a WebSocket session and hand it to the service manager.
+
+        Parameters
+        ----------
+        websocket : WebSocket
+            FastAPI WebSocket connection from the client.
+
+        Notes
+        -----
+        If a session limit is configured, the socket is first admitted through
+        the session limiter queue.
+        """
         if self._session_limiter:
             await websocket.accept()
             waiter = await self._session_limiter.acquire(websocket)

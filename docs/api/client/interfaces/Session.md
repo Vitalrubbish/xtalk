@@ -6,7 +6,7 @@
 
 # Interface: Session
 
-Defined in: [core.ts:42](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L42)
+Defined in: [core.ts:42](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L42)
 
 Public API returned by [createSession](../functions/createSession.md).
 
@@ -16,7 +16,7 @@ Public API returned by [createSession](../functions/createSession.md).
 
 > **muted**: `boolean`
 
-Defined in: [core.ts:152](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L152)
+Defined in: [core.ts:152](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L152)
 
 Whether the microphone capture path is muted.
 
@@ -26,7 +26,7 @@ Whether the microphone capture path is muted.
 
 > `readonly` **state**: `object`
 
-Defined in: [core.ts:94](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L94)
+Defined in: [core.ts:94](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L94)
 
 The latest conversation state snapshot.
 
@@ -82,9 +82,9 @@ The latest conversation state snapshot.
 
 ### changeVoice()
 
-> **changeVoice**(`voiceName`): `Promise`\<`void`\>
+> **changeVoice**(`voiceName`): `Promise`&lt;`void`&gt;
 
-Defined in: [core.ts:167](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L167)
+Defined in: [core.ts:167](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L167)
 
 Requests that the server switch to another voice.
 
@@ -98,7 +98,7 @@ The server-side voice identifier to activate.
 
 #### Returns
 
-`Promise`\<`void`\>
+`Promise`&lt;`void`&gt;
 
 A promise that resolves after the request has been dispatched.
 
@@ -116,15 +116,15 @@ await session.changeVoice("alloy");
 
 ### close()
 
-> **close**(): `Promise`\<`void`\>
+> **close**(): `Promise`&lt;`void`&gt;
 
-Defined in: [core.ts:72](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L72)
+Defined in: [core.ts:72](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L72)
 
 Closes the audio sessions and websocket connection.
 
 #### Returns
 
-`Promise`\<`void`\>
+`Promise`&lt;`void`&gt;
 
 A promise that resolves after the session is fully shut down.
 
@@ -144,7 +144,7 @@ await session.close();
 
 > **onFullAudioChunk**(`callback`): `void`
 
-Defined in: [core.ts:148](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L148)
+Defined in: [core.ts:148](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L148)
 
 Subscribes to merged assistant audio chunks after playback assembly.
 
@@ -180,7 +180,7 @@ session.onFullAudioChunk((chunk, sampleRate) => {
 
 > **onInputAudioChunk**(`callback`): `void`
 
-Defined in: [core.ts:112](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L112)
+Defined in: [core.ts:112](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L112)
 
 Subscribes to microphone PCM frames before they are sent to the server.
 
@@ -216,7 +216,7 @@ session.onInputAudioChunk((chunk, sampleRate) => {
 
 > **onOutputAudioChunk**(`callback`): `void`
 
-Defined in: [core.ts:130](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L130)
+Defined in: [core.ts:130](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L130)
 
 Subscribes to synthesized PCM frames before playback.
 
@@ -252,7 +252,7 @@ session.onOutputAudioChunk((chunk, sampleRate) => {
 
 > **onStateChange**(`callback`): `void`
 
-Defined in: [core.ts:90](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L90)
+Defined in: [core.ts:90](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L90)
 
 Subscribes to conversation state updates.
 
@@ -286,15 +286,15 @@ session.onStateChange((state) => {
 
 ### open()
 
-> **open**(): `Promise`\<`void`\>
+> **open**(): `Promise`&lt;`void`&gt;
 
-Defined in: [core.ts:58](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L58)
+Defined in: [core.ts:58](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L58)
 
 Opens the websocket connection and prepares audio input/output resources.
 
 #### Returns
 
-`Promise`\<`void`\>
+`Promise`&lt;`void`&gt;
 
 A promise that resolves once the local audio sessions are ready.
 
@@ -314,9 +314,9 @@ await session.open();
 
 ### uploadFile()
 
-> **uploadFile**(`file`, `endpoint?`): `Promise`\<`void`\>
+> **uploadFile**(`file`, `endpoint?`): `Promise`&lt;`void`&gt;
 
-Defined in: [core.ts:184](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L184)
+Defined in: [core.ts:184](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L184)
 
 Uploads a file for use by the session.
 
@@ -336,7 +336,7 @@ The upload endpoint. Defaults to `./api/upload`.
 
 #### Returns
 
-`Promise`\<`void`\>
+`Promise`&lt;`void`&gt;
 
 A promise that resolves after the upload action has been dispatched.
 

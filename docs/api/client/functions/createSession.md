@@ -8,7 +8,7 @@
 
 > **createSession**(`websocketURL`, `config?`): [`Session`](../interfaces/Session.md)
 
-Defined in: [core.ts:221](https://github.com/xcc-zach/xtalk/blob/b1e0a878b5a746db0f30624d4b54208177abedd7/frontend/src/core.ts#L221)
+Defined in: [core.ts:221](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L221)
 
 Creates a browser session that streams audio to an X-Talk server and exposes
 session lifecycle, state, and audio event hooks.

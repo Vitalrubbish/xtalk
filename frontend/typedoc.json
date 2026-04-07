@@ -6,5 +6,6 @@
   "out": "../docs/api/client",
   "readme": "none",
   "entryFileName": "globals",
-  "cleanOutputDir": true
+  "cleanOutputDir": true,
+  "useHTMLEncodedBrackets": true
 }

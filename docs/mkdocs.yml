@@ -18,6 +18,23 @@ extra:
 plugins:
   - search:
       separator: '[\s\u200b\-]'
+  - mkdocs-autoapi:
+      autoapi_dir: ../src/xtalk
+      autoapi_root: api/server
+      autoapi_add_nav_entry: false
+      autoapi_file_patterns:
+        - serving/*.py
+        - serving/**/*.py
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - ../src
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
   - i18n:
       docs_structure: suffix
       fallback_to_default: true
@@ -73,4 +90,4 @@ nav:
       - 'Service Configuration': docs/service_config.md
   - API:
       - 'Client': api/client/globals.md
-      - 'Server': api/server.md
+      - 'Server': api/server/index.md

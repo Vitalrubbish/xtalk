@@ -1,3 +1,5 @@
 mkdocs-material
 mkdocs-static-i18n[material]
 jieba
+mkdocs-autoapi
+mkdocstrings[python]

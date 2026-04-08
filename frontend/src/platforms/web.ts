@@ -1,10 +1,21 @@
 import { BaseWebSocket } from "../bases/websocket";
 import { BaseInputAudioSession, BaseOutputAudioSession } from "../bases/audio-session";
 import type { InputAudioSessionConfig, OutputAudioSessionConfig } from "../bases/audio-session";
+import { BaseHTTPClient, HTTPRequestError } from "../bases/http";
+import type { ResolvableURL, SessionServiceURLConfig, SessionServiceURLs } from "../bases/http";
+import { BaseEncoding } from "../bases/encoding";
 
 import vadProcessorUrl from "../../worklets/vad-processor.worklet.js";
 import fastEnhancerOnnxUrl from "../../models/fastenhancer_s.onnx";
-export { WebWebSocket, WebInputAudioSession, WebOutputAudioSession };
+export {
+    WebWebSocket,
+    WebInputAudioSession,
+    WebOutputAudioSession,
+    WebHTTPClient,
+    WebEncoding,
+    resolveWebServiceURLs,
+    buildWebSocketURLWithAccessToken,
+};
 
 class WebWebSocket extends BaseWebSocket {
     private instance: WebSocket;
@@ -25,6 +36,106 @@ class WebWebSocket extends BaseWebSocket {
     addEventListener(type: "open" | "message" | "close" | "error", listener: (evt?: any) => any): void {
         this.instance.addEventListener(type, listener);
     }
+}
+
+function resolveBaseURL(rawURL: ResolvableURL): URL {
+    return new URL(rawURL.toString(), window.location.href);
+}
+
+function createAuthorizedHeaders(accessToken: string | null): Headers {
+    const headers = new Headers();
+    if (accessToken) {
+        headers.set("Authorization", `Bearer ${accessToken}`);
+    }
+    return headers;
+}
+
+class WebHTTPClient extends BaseHTTPClient {
+    async postJSON<T>(url: ResolvableURL, accessToken: string | null): Promise<T> {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: createAuthorizedHeaders(accessToken),
+        });
+        if (!response.ok) {
+            throw new HTTPRequestError(response.status);
+        }
+        return await response.json() as T;
+    }
+
+    async getJSON<T>(url: ResolvableURL, accessToken: string): Promise<T> {
+        const response = await fetch(url, {
+            method: "GET",
+            headers: createAuthorizedHeaders(accessToken),
+        });
+        if (!response.ok) {
+            throw new HTTPRequestError(response.status);
+        }
+        return await response.json() as T;
+    }
+
+    async postFile(
+        url: ResolvableURL,
+        accessToken: string,
+        sessionId: string,
+        file: Blob,
+    ): Promise<void> {
+        const formData = new FormData();
+        formData.append("session_id", sessionId);
+        formData.append("file", file);
+        const response = await fetch(url, {
+            method: "POST",
+            headers: createAuthorizedHeaders(accessToken),
+            body: formData,
+        });
+        if (!response.ok) {
+            throw new HTTPRequestError(response.status);
+        }
+    }
+}
+
+class WebEncoding extends BaseEncoding {
+    decodeBase64(base64: string): ArrayBuffer {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+}
+
+function resolveWebServiceURLs(
+    websocketURL: ResolvableURL,
+    config?: SessionServiceURLConfig,
+): SessionServiceURLs {
+    const httpURL = resolveBaseURL(websocketURL);
+    if (httpURL.protocol === "ws:") {
+        httpURL.protocol = "http:";
+    } else if (httpURL.protocol === "wss:") {
+        httpURL.protocol = "https:";
+    }
+
+    const defaultSessionDetail = (sessionId: string) =>
+        new URL(`./api/sessions/${encodeURIComponent(sessionId)}`, httpURL);
+    const configuredSessionDetail = config?.sessionDetail;
+
+    return {
+        login: config?.login ?? new URL("./api/auth/login", httpURL),
+        sessions: config?.sessions ?? new URL("./api/sessions", httpURL),
+        sessionDetail: typeof configuredSessionDetail === "function"
+            ? configuredSessionDetail
+            : (sessionId: string) => configuredSessionDetail ?? defaultSessionDetail(sessionId),
+        upload: config?.upload ?? new URL("./api/upload", httpURL),
+    };
+}
+
+function buildWebSocketURLWithAccessToken(
+    websocketURL: ResolvableURL,
+    accessToken: string,
+): URL {
+    const url = resolveBaseURL(websocketURL);
+    url.searchParams.set("access_token", accessToken);
+    return url;
 }
 
 interface WebInputAudioSessionConfig extends InputAudioSessionConfig {

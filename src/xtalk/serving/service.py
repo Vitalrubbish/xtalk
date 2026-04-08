@@ -54,9 +54,10 @@ class Service:
         service_config: dict[str, Any] | None = None,
         manager_classes: list[Type[Manager]] | None = None,
         _websocket: WebSocket | None = None,
+        _session_id: str | None = None,
         _event_overrides: dict[Type[EventListenerMixin], EventOverrides] | None = None,
     ):
-        self.session_id = str(uuid.uuid4())
+        self.session_id = _session_id or str(uuid.uuid4())
         pipeline = pipeline.clone()
         self.pipeline = pipeline  # Keep pipeline reference for later model switches
         # Per-session config (shared with managers/gateways)
@@ -276,8 +277,6 @@ class Service:
                 "This Service instance is a prototype and cannot handle messages."
             )
         await self.input_gateway.handle_connection(already_accepted=already_accepted)
-        # Send session_id to frontend immediately for tracking uploads, etc.
-        await self.output_gateway.send_session_info()
         await self.input_gateway.handle_message_loop()
 
     async def stop(self) -> None:
@@ -294,7 +293,9 @@ class Service:
                 e,
             )
 
-    def clone(self, new_websocket: WebSocket) -> "Service":
+    def clone(
+        self, new_websocket: WebSocket, *, session_id: str | None = None
+    ) -> "Service":
         """Clone the service prototype for a new WebSocket session.
 
         Parameters
@@ -312,6 +313,7 @@ class Service:
             service_config=self.service_config,
             manager_classes=self._manager_classes,
             _websocket=new_websocket,
+            _session_id=session_id,
             _event_overrides=self._event_overrides,
         )
         return new_service
@@ -367,6 +369,7 @@ class DefaultService(Service):
         service_config: dict[str, Any] | None = None,
         manager_classes: list[Type[Manager]] | None = None,
         _websocket: WebSocket | None = None,
+        _session_id: str | None = None,
         _event_overrides: dict[Type[EventListenerMixin], EventOverrides] | None = None,
     ):
         super().__init__(
@@ -376,5 +379,6 @@ class DefaultService(Service):
                 self.MANAGER_CLASSES if manager_classes is None else manager_classes
             ),
             _websocket=_websocket,
+            _session_id=_session_id,
             _event_overrides=_event_overrides,
         )

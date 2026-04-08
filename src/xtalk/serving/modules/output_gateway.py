@@ -166,9 +166,9 @@ class OutputGateway(EventListenerMixin):
 
     # ── Session ─────────────────────────────────────────────────────
 
-    async def send_session_info(self) -> None:
-        """Send the session identifier to the frontend."""
-        await self._forward("session_info", {"session_id": self.session_id})
+    async def send_session_attached(self) -> None:
+        """Send the attached session identifier to the frontend."""
+        await self._forward("session_attached", {"session_id": self.session_id})
 
     # ── Event handlers ──────────────────────────────────────────────
 

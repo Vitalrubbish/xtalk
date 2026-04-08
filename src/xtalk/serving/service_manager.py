@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
+import json
 from typing import Dict, List, Optional, Any
 
 from fastapi import WebSocket
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from ..log_utils import logger
+from ..persistence import PersistenceStore
 
+from .events import ASRResultFinal, LLMAgentResponseFinish
 from .service import Service, DefaultService
 from ..pipelines import Pipeline
 
@@ -17,18 +21,21 @@ class ServiceManager:
         pipeline: Pipeline | None = None,
         service_config: dict[str, Any] | None = None,
         service_prototype: Service | None = None,
+        persistence_store: PersistenceStore | None = None,
     ):
-        """Initialize the service manager."""
         self.active_services: Dict[str, Service] = {}
         if pipeline is None and service_prototype is None:
             raise ValueError("Must provide either a pipeline or a service prototype.")
         self._service_prototype = service_prototype
         self._pipeline = pipeline
         self._service_config = service_config
+        self._persistence = persistence_store
 
     async def create_service(
         self,
         websocket: WebSocket,
+        *,
+        session_id: str | None = None,
     ) -> Service:
         """Create a new Service instance bound to the given WebSocket."""
         service = (
@@ -36,83 +43,194 @@ class ServiceManager:
                 pipeline=self._pipeline,
                 service_config=self._service_config,
                 _websocket=websocket,
+                _session_id=session_id,
             )
             if self._service_prototype is None
-            else self._service_prototype.clone(new_websocket=websocket)
+            else self._service_prototype.clone(
+                new_websocket=websocket,
+                session_id=session_id,
+            )
         )
         self.active_services[service.session_id] = service
-
         return service
 
     async def remove_service(self, session_id: str) -> bool:
         """Remove and shut down the Service with the given session id."""
         if session_id in self.active_services:
             service = self.active_services[session_id]
-
             await service.stop()
-
             del self.active_services[session_id]
-
             return True
 
         logger.warning(
-            f"Attempted to remove non-existent service - session_id: {session_id}"
+            "Attempted to remove non-existent service - session_id: %s", session_id
         )
         return False
 
     def get_service(self, session_id: str) -> Optional[Service]:
-        """Return the active Service for the session id, if any."""
         return self.active_services.get(session_id)
 
-    def get_all_services(self) -> List[Service]:
-        """Return all active Service instances."""
-        return list(self.active_services.values())
-
     def get_service_count(self) -> int:
-        """Return the number of active sessions."""
         return len(self.active_services)
-
-    def get_session_ids(self) -> List[str]:
-        """Return a list of active session ids."""
-        return list(self.active_services.keys())
-
-    async def shutdown_all_services(self) -> int:
-        """Shut down every active Service and return the number closed."""
-        success_count = 0
-        failed_count = 0
-
-        for session_id in list(self.active_services.keys()):
-            try:
-                if await self.remove_service(session_id):
-                    success_count += 1
-                else:
-                    failed_count += 1
-            except Exception as e:
-                logger.error(
-                    f"Failed to stop service - session_id: {session_id}, error: {e}"
-                )
-                failed_count += 1
-
-        return success_count
 
     async def connect(
         self,
         websocket: WebSocket,
         already_accepted: bool = False,
-    ):
-        """Start a new service and connect to it for the given WebSocket connection.
+        user_id: str | None = None,
+    ) -> None:
+        """Start a new service and connect to it for the given WebSocket."""
+        if user_id is None:
+            await self._connect_legacy(websocket, already_accepted=already_accepted)
+            return
 
-        Args:
-            websocket: FastAPI WebSocket
-            already_accepted: skip websocket.accept() if caller already accepted.
-        """
-        service = None
+        if self._persistence is None:
+            await websocket.close(code=1011, reason="Persistence not configured")
+            return
+
+        service: Service | None = None
+        try:
+            if not already_accepted:
+                await websocket.accept()
+            attach_data = await self._receive_attach_request(websocket)
+            session = self._resolve_session(user_id, attach_data)
+            session_id = str(session["session_id"])
+            if session_id in self.active_services:
+                await websocket.close(code=1013, reason="Session already connected")
+                return
+
+            service = await self.create_service(websocket, session_id=session_id)
+            self._restore_service_state(
+                service,
+                messages=self._persistence.list_messages(user_id, session_id),
+                max_turn_id=self._persistence.get_max_turn_id(user_id, session_id),
+            )
+            self._register_persistence_hooks(
+                service, user_id=user_id, session_id=session_id
+            )
+            await service.output_gateway.send_session_attached()
+            await service.handle_message_loop(already_accepted=True)
+        except Exception as e:
+            logger.error("Error handling authenticated WebSocket connection: %s", e)
+            try:
+                await websocket.close(code=1011, reason="Internal server error")
+            except Exception:
+                pass
+        finally:
+            if service:
+                await self.remove_service(service.session_id)
+
+    async def _connect_legacy(
+        self, websocket: WebSocket, *, already_accepted: bool = False
+    ) -> None:
+        service: Service | None = None
         try:
             service = await self.create_service(websocket)
             await service.handle_message_loop(already_accepted=already_accepted)
         except Exception as e:
-            logger.error(f"Error handling WebSocket connection: {e}")
+            logger.error("Error handling WebSocket connection: %s", e)
             await websocket.close(code=1011, reason="Internal server error")
         finally:
             if service:
                 await self.remove_service(service.session_id)
+
+    async def _receive_attach_request(self, websocket: WebSocket) -> dict[str, Any]:
+        message = await websocket.receive()
+        if message.get("type") == "websocket.disconnect":
+            raise RuntimeError("WebSocket disconnected before attach_session")
+
+        payload = message.get("text")
+        if not isinstance(payload, str):
+            raise ValueError("First WebSocket message must be attach_session JSON")
+
+        data = json.loads(payload)
+        if data.get("action") != "attach_session":
+            raise ValueError("First WebSocket message must be attach_session")
+        return data
+
+    def _resolve_session(
+        self, user_id: str, attach_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        requested_session_id = attach_data.get("session_id")
+        if isinstance(requested_session_id, str):
+            requested_session_id = requested_session_id.strip() or None
+        else:
+            requested_session_id = None
+
+        if requested_session_id is None:
+            return self._persistence.create_session(user_id)
+
+        return self._persistence.get_or_create_session(user_id, requested_session_id)
+
+    def _restore_service_state(
+        self,
+        service: Service,
+        *,
+        messages: list[dict[str, Any]],
+        max_turn_id: int,
+    ) -> None:
+        agent = service.pipeline.get_agent()
+        if agent is not None and hasattr(agent, "session_history"):
+            current_history = list(getattr(agent, "session_history", []))
+            restored_history = []
+            if current_history and isinstance(current_history[0], SystemMessage):
+                restored_history.append(current_history[0])
+            for message in messages:
+                role = message.get("role")
+                content = str(message.get("content", ""))
+                if role == "user":
+                    restored_history.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    restored_history.append(AIMessage(content=content))
+            setattr(agent, "session_history", restored_history or current_history)
+
+        for manager in getattr(service, "_managers", []):
+            audio_consumer = getattr(manager, "_audio_consumer", None)
+            if audio_consumer is not None and hasattr(audio_consumer, "_turn_id"):
+                audio_consumer._turn_id = max(max_turn_id + 1, 1)
+            if hasattr(manager, "_turn_id"):
+                manager._turn_id = max_turn_id
+
+    def _register_persistence_hooks(
+        self, service: Service, *, user_id: str, session_id: str
+    ) -> None:
+        async def _persist_user_message(event: ASRResultFinal) -> None:
+            try:
+                self._persistence.append_message(
+                    user_id=user_id,
+                    session_id=session_id,
+                    role="user",
+                    content=event.text,
+                    turn_id=event.turn_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist user message - session: %s, error: %s",
+                    session_id,
+                    exc,
+                )
+
+        async def _persist_assistant_message(event: LLMAgentResponseFinish) -> None:
+            try:
+                self._persistence.append_message(
+                    user_id=user_id,
+                    session_id=session_id,
+                    role="assistant",
+                    content=event.text,
+                    turn_id=event.turn_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist assistant message - session: %s, error: %s",
+                    session_id,
+                    exc,
+                )
+
+        service.event_bus.subscribe(
+            ASRResultFinal, _persist_user_message, priority=-100
+        )
+        service.event_bus.subscribe(
+            LLMAgentResponseFinish,
+            _persist_assistant_message,
+            priority=-100,
+        )

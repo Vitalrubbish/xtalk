@@ -3,7 +3,7 @@ import json
 from typing import Optional, Any
 from pathlib import Path
 from langchain.tools import tool
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
@@ -258,12 +258,7 @@ def build_mental_questionnaire_tool():
 
 
 xtalk_instance.add_agent_tools([build_mental_questionnaire_tool])
-
-
-# Mount WebSocket endpoint
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await xtalk_instance.connect(websocket)
+xtalk_instance.mount_routes(app)
 
 
 # Serve static files

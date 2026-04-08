@@ -1,228 +1,187 @@
 import { createWebSocket } from "./websocket";
 import type { InputAudioSessionConfig, OutputAudioSessionConfig } from "./bases/audio-session";
+import { HTTPRequestError } from "./bases/http";
+import type { ResolvableURL, SessionServiceURLConfig, SessionServiceURLs } from "./bases/http";
 import { createInputAudioSession, createOutputAudioSession } from "./audio-session";
+import { buildAuthenticatedWebSocketURL, createHTTPClient, resolvePlatformServiceURLs } from "./http";
 import { Conversation } from "./conversation";
+import type { ConversationMessage, ConversationUser } from "./conversation";
 import { ActionHandler } from "./action-handler";
 
 export { createSession };
+export type {
+    Session,
+    SessionConfig,
+    SessionServiceURLs,
+    SessionServiceURLConfig,
+    SessionSummary,
+    SessionDetail,
+};
 
-/**
- * Runtime state exposed by an active X-Talk client session.
- */
 type SessionState = Conversation["state"];
-
-/**
- * Receives a PCM audio chunk and the sample rate used for that chunk.
- */
 type AudioChunkCallback = (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void;
 
-/**
- * Configures how a session captures microphone input and plays synthesized output.
- */
-export interface SessionConfig {
-    /**
-     * Overrides for the input audio session.
-     *
-     * @remarks
-     * The default input sample rate is `16000`.
-     */
-    inputConfig?: Partial<InputAudioSessionConfig>,
-    /**
-     * Overrides for the output audio session.
-     *
-     * @remarks
-     * The default output sample rate is `48000`.
-     */
-    outputConfig?: Partial<OutputAudioSessionConfig>
+type SessionSummary = {
+    session_id: string;
+    title: string | null;
+};
+
+type SessionDetail = {
+    session_id: string;
+    title: string | null;
+    messages: Array<{
+        role: "user" | "assistant" | "info";
+        content: string;
+        turn_id?: number | null;
+    }>;
+};
+
+type PersistedConversationSnapshot = {
+    accessToken: string | null;
+    user: ConversationUser | null;
+    sessionId: string | null;
+    messages: ConversationMessage[];
+};
+
+interface SessionConfig {
+    inputConfig?: Partial<InputAudioSessionConfig>;
+    outputConfig?: Partial<OutputAudioSessionConfig>;
+    serviceURLs?: SessionServiceURLConfig;
 }
 
-/**
- * Public API returned by {@link createSession}.
- */
-export interface Session {
-    /**
-     * Opens the websocket connection and prepares audio input/output resources.
-     *
-     * @remarks
-     * Call this before reading live state updates, toggling mute, switching voices,
-     * or uploading files through the session.
-     *
-     * @returns A promise that resolves once the local audio sessions are ready.
-     *
-     * @example
-     * ```ts
-     * const session = createSession("ws://localhost:8000/ws");
-     * await session.open();
-     * ```
-     */
+interface Session {
     open(): Promise<void>;
-    /**
-     * Closes the audio sessions and websocket connection.
-     *
-     * @remarks
-     * After closing, the current session instance should be treated as inactive.
-     *
-     * @returns A promise that resolves after the session is fully shut down.
-     *
-     * @example
-     * ```ts
-     * await session.close();
-     * ```
-     */
     close(): Promise<void>;
-    /**
-     * Subscribes to conversation state updates.
-     *
-     * @remarks
-     * The callback is invoked whenever the internal conversation state changes.
-     *
-     * @param callback - Receives the full session state whenever it changes.
-     *
-     * @returns Nothing.
-     *
-     * @example
-     * ```ts
-     * session.onStateChange((state) => {
-     *   console.log(state.streamState, state.messages);
-     * });
-     * ```
-     */
     onStateChange(callback: (state: Conversation["state"]) => void): void;
-    /**
-     * The latest conversation state snapshot.
-     */
     readonly state: Conversation["state"];
-    /**
-     * Subscribes to microphone PCM frames before they are sent to the server.
-     *
-     * @remarks
-     * Use this to inspect or duplicate outgoing audio captured from the local input device.
-     *
-     * @param callback - Receives each outbound audio chunk and its sample rate.
-     *
-     * @returns Nothing.
-     *
-     * @example
-     * ```ts
-     * session.onInputAudioChunk((chunk, sampleRate) => {
-     *   console.log(chunk.byteLength, sampleRate);
-     * });
-     * ```
-     */
     onInputAudioChunk(callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void): void;
-    /**
-     * Subscribes to synthesized PCM frames before playback.
-     *
-     * @remarks
-     * Use this to inspect audio returned by the server before it is played locally.
-     *
-     * @param callback - Receives each inbound audio chunk and its sample rate.
-     *
-     * @returns Nothing.
-     *
-     * @example
-     * ```ts
-     * session.onOutputAudioChunk((chunk, sampleRate) => {
-     *   console.log(chunk.byteLength, sampleRate);
-     * });
-     * ```
-     */
     onOutputAudioChunk(callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void): void;
-    /**
-     * Subscribes to merged assistant audio chunks after playback assembly.
-     *
-     * @remarks
-     * This callback receives the reconstructed full audio chunk emitted by the conversation layer.
-     *
-     * @param callback - Receives each completed audio chunk and its sample rate.
-     *
-     * @returns Nothing.
-     *
-     * @example
-     * ```ts
-     * session.onFullAudioChunk((chunk, sampleRate) => {
-     *   console.log(chunk.byteLength, sampleRate);
-     * });
-     * ```
-     */
     onFullAudioChunk(callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void): void;
-    /**
-     * Whether the microphone capture path is muted.
-     */
     muted: boolean;
-    /**
-     * Requests that the server switch to another voice.
-     *
-     * @remarks
-     * The provided voice name must match a voice supported by the connected server.
-     *
-     * @param voiceName - The server-side voice identifier to activate.
-     * @returns A promise that resolves after the request has been dispatched.
-     *
-     * @example
-     * ```ts
-     * await session.changeVoice("alloy");
-     * ```
-     */
     changeVoice(voiceName: string): Promise<void>;
-    /**
-     * Uploads a file for use by the session.
-     *
-     * @remarks
-     * This forwards the file and endpoint to the server-side upload action.
-     *
-     * @param file - The file blob to upload.
-     * @param endpoint - The upload endpoint. Defaults to `./api/upload`.
-     * @returns A promise that resolves after the upload action has been dispatched.
-     *
-     * @example
-     * ```ts
-     * const file = new Blob(["hello"], { type: "text/plain" });
-     * await session.uploadFile(file);
-     * ```
-     */
     uploadFile(file: Blob, endpoint?: string | URL): Promise<void>;
+    getSessions(): Promise<SessionSummary[]>;
+    switchSession(sessionId: string | null): Promise<void>;
 }
 
-/**
- * Creates a browser session that streams audio to an X-Talk server and exposes
- * session lifecycle, state, and audio event hooks.
- *
- * @remarks
- * `createSession` prepares the client-side wiring between websocket transport,
- * microphone capture, audio playback, and conversation state management.
- * Input audio defaults to `16000` Hz and output audio defaults to `48000` Hz
- * unless overridden through {@link SessionConfig}.
- *
- * Call {@link Session.open} before interacting with the session. Once opened,
- * you can observe state changes, inspect the latest state snapshot, toggle
- * microphone muting, switch voices, or upload files.
- *
- * @param websocketURL - The websocket endpoint used to connect to the X-Talk server.
- * @param config - Optional audio session overrides for input and output handling.
- * @returns A session controller for managing the connection and subscribing to client events.
- *
- * @example
- * ```ts
- * import { createSession } from "xtalk-client";
- *
- * const session = createSession("ws://localhost:8000/ws", {
- *   inputConfig: { sampleRate: 16000 },
- *   outputConfig: { sampleRate: 48000 },
- * });
- *
- * session.onStateChange((state) => {
- *   console.log(state.streamState, state.messages);
- * });
- *
- * await session.open();
- * ```
- */
+function mapSessionMessages(messages: SessionDetail["messages"]): ConversationMessage[] {
+    return messages.map((message) => {
+        const mapped: ConversationMessage = {
+            role: message.role,
+            content: message.content,
+        };
+        if (typeof message.turn_id === "number") {
+            mapped.turnId = message.turn_id;
+        }
+        return mapped;
+    });
+}
+
+function resolvePersistenceKey(websocketURL: ResolvableURL): string | null {
+    if (typeof window === "undefined" || typeof window.localStorage === "undefined") {
+        return null;
+    }
+    const resolvedURL = new URL(websocketURL.toString(), window.location.href);
+    return `xtalk:session:${resolvedURL.toString()}`;
+}
+
+function normalizePersistedMessageRole(
+    value: unknown,
+): ConversationMessage["role"] | null {
+    return value === "user" || value === "assistant" || value === "info"
+        ? value
+        : null;
+}
+
+function normalizePersistedMessages(value: unknown): ConversationMessage[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const messages: ConversationMessage[] = [];
+    for (const item of value) {
+        if (!item || typeof item !== "object") {
+            continue;
+        }
+        const role = normalizePersistedMessageRole((item as { role?: unknown }).role);
+        const content = (item as { content?: unknown }).content;
+        const turnId = (item as { turnId?: unknown }).turnId;
+        if (!role || typeof content !== "string") {
+            continue;
+        }
+        const message: ConversationMessage = { role, content };
+        if (typeof turnId === "number" && Number.isFinite(turnId)) {
+            message.turnId = turnId;
+        }
+        messages.push(message);
+    }
+    return messages;
+}
+
+function loadPersistedConversationSnapshot(
+    persistenceKey: string | null,
+): PersistedConversationSnapshot | null {
+    if (!persistenceKey) {
+        return null;
+    }
+    try {
+        const raw = window.localStorage.getItem(persistenceKey);
+        if (!raw) {
+            return null;
+        }
+        const parsed = JSON.parse(raw) as {
+            accessToken?: unknown;
+            user?: unknown;
+            sessionId?: unknown;
+            messages?: unknown;
+        };
+        const userValue = parsed.user;
+        const user = userValue
+            && typeof userValue === "object"
+            && typeof (userValue as { id?: unknown }).id === "string"
+            ? { id: (userValue as { id: string }).id }
+            : null;
+        return {
+            accessToken: typeof parsed.accessToken === "string" ? parsed.accessToken : null,
+            user,
+            sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
+            messages: normalizePersistedMessages(parsed.messages),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function savePersistedConversationSnapshot(
+    persistenceKey: string | null,
+    snapshot: PersistedConversationSnapshot,
+): void {
+    if (!persistenceKey) {
+        return;
+    }
+    try {
+        window.localStorage.setItem(persistenceKey, JSON.stringify(snapshot));
+    } catch {
+        // Ignore storage failures so realtime usage continues normally.
+    }
+}
+
+function clearPersistedConversationSnapshot(persistenceKey: string | null): void {
+    if (!persistenceKey) {
+        return;
+    }
+    try {
+        window.localStorage.removeItem(persistenceKey);
+    } catch {
+        // Ignore storage failures so realtime usage continues normally.
+    }
+}
+
 function createSession(
     websocketURL: string | URL,
     {
         inputConfig = {},
         outputConfig = {},
+        serviceURLs: configuredServiceURLs,
     }: SessionConfig = {},
 ): Session {
     const resolvedInputConfig: InputAudioSessionConfig = {
@@ -233,71 +192,302 @@ function createSession(
         sampleRate: 48000,
         ...outputConfig,
     };
+    const httpClient = createHTTPClient();
+    const serviceURLs = resolvePlatformServiceURLs(websocketURL, configuredServiceURLs);
+    const persistenceKey = resolvePersistenceKey(websocketURL);
     const conversation = new Conversation();
     const actionHandler = new ActionHandler();
-    let websocket: ReturnType<typeof createWebSocket>;
-    let inputAudioSession: ReturnType<typeof createInputAudioSession>;
-    let outputAudioSession: ReturnType<typeof createOutputAudioSession>;
+    const restoredSnapshot = loadPersistedConversationSnapshot(persistenceKey);
 
+    let websocket: ReturnType<typeof createWebSocket> | null = null;
+    let inputAudioSession: ReturnType<typeof createInputAudioSession> | null = null;
+    let outputAudioSession: ReturnType<typeof createOutputAudioSession> | null = null;
+    let accessToken: string | null = restoredSnapshot?.accessToken ?? null;
     let inputAudioChunkCallback: AudioChunkCallback = (_chunk, _sr) => { };
     let outputAudioChunkCallback: AudioChunkCallback = (_chunk, _sr) => { };
+    let pendingOpen: Promise<void> | null = null;
+    let preferredMuted = false;
+    let canRetryRuntimeAfterRestoredAuth = restoredSnapshot?.accessToken != null;
 
-    function initialize() {
-        websocket = createWebSocket(websocketURL);
-        inputAudioSession = createInputAudioSession(resolvedInputConfig);
-        outputAudioSession = createOutputAudioSession(resolvedOutputConfig);
+    if (restoredSnapshot) {
+        conversation.setUser(restoredSnapshot.user);
+        conversation.switch(restoredSnapshot.sessionId, restoredSnapshot.messages);
+    }
 
-        // Subscribe actions and audio chunks
-        websocket.addEventListener("message", async (event: { data: string | ArrayBuffer }) => {
-            if (typeof event.data === "string") {
-                const message: { action: string, data: any } = JSON.parse(event.data);
-                try {
-                    await actionHandler.handleAction(message.action, message.data, websocket, conversation, outputAudioSession);
-                } catch (error) {
-                    //TODO: Handle unknown action error
-                }
-            } else if (event.data instanceof ArrayBuffer) {
-                await outputAudioSession.pushAudioChunk(event.data);
-            }
-        });
-
-        // Bind audio input handling
-        inputAudioSession.onFrame(async (audioChunk) => {
-            inputAudioChunkCallback(audioChunk, resolvedInputConfig.sampleRate);
-            websocket.sendAudioChunk(audioChunk);
-        });
-        inputAudioSession.onSpeechStart(async () => {
-            await actionHandler.handleAction("client_speech_start", null, websocket, conversation, outputAudioSession);
-        });
-        inputAudioSession.onSpeechEnd(async () => {
-            await actionHandler.handleAction("client_speech_end", null, websocket, conversation, outputAudioSession);
-        });
-
-        // Bind audio output handling
-        outputAudioSession.onChunkStarted(async (audioChunk) => {
-            outputAudioChunkCallback(audioChunk, resolvedOutputConfig.sampleRate);
-            await actionHandler.handleAction("client_audio_chunk_started", null, websocket, conversation, outputAudioSession);
-        });
-        outputAudioSession.onChunkPlayed(async (_audioChunk) => {
-            await actionHandler.handleAction("client_audio_chunk_played", null, websocket, conversation, outputAudioSession);
-        });
-        outputAudioSession.onAllChunksPlayed(async () => {
-            await actionHandler.handleAction("client_audio_playback_finished", null, websocket, conversation, outputAudioSession);
+    function persistSnapshot(): void {
+        const state = conversation.state;
+        savePersistedConversationSnapshot(persistenceKey, {
+            accessToken,
+            user: state.user,
+            sessionId: state.sessionId,
+            messages: state.messages.map((message) => ({
+                role: message.role,
+                content: message.content,
+                ...(typeof message.turnId === "number" ? { turnId: message.turnId } : {}),
+            })),
         });
     }
 
+    function clearPersistedSnapshot(): void {
+        clearPersistedConversationSnapshot(persistenceKey);
+    }
 
-    // Create API for external use
+    function resetAuthState(resetConversation: boolean): void {
+        accessToken = null;
+        conversation.setUser(null);
+        if (resetConversation) {
+            conversation.switch(null, []);
+        }
+        clearPersistedSnapshot();
+    }
+
+    conversation.onStateChange(() => {
+        persistSnapshot();
+    });
+
+    async function performLogin(): Promise<void> {
+        const payload = await httpClient.postJSON<{
+            access_token?: string;
+            user?: ConversationUser | null;
+        }>(serviceURLs.login, null);
+        if (!payload.access_token) {
+            throw new Error("Login response did not include access_token");
+        }
+
+        accessToken = payload.access_token;
+        conversation.setUser(payload.user ?? null);
+    }
+
+    async function ensureLoggedIn(): Promise<void> {
+        if (accessToken) {
+            return;
+        }
+        await performLogin();
+    }
+
+    async function withAuthorizedToken<T>(
+        operation: (token: string) => Promise<T>,
+    ): Promise<T> {
+        await ensureLoggedIn();
+        if (!accessToken) {
+            throw new Error("Access token missing");
+        }
+        try {
+            return await operation(accessToken);
+        } catch (error) {
+            if (!(error instanceof HTTPRequestError) || error.status !== 401) {
+                throw error;
+            }
+            resetAuthState(true);
+            await ensureLoggedIn();
+            if (!accessToken) {
+                throw new Error("Access token missing");
+            }
+            return await operation(accessToken);
+        }
+    }
+
+    async function authorizedGetJSON<T>(input: ResolvableURL): Promise<T> {
+        return await withAuthorizedToken((token) => httpClient.getJSON<T>(input, token));
+    }
+
+    function requireRuntime(): {
+        websocket: ReturnType<typeof createWebSocket>;
+        outputAudioSession: ReturnType<typeof createOutputAudioSession>;
+    } {
+        if (!websocket || !outputAudioSession) {
+            throw new Error("Session is not open");
+        }
+        return { websocket, outputAudioSession };
+    }
+
+    function initializeRuntime(): Promise<void> {
+        if (!accessToken) {
+            throw new Error("Access token missing");
+        }
+
+        const wsURL = buildAuthenticatedWebSocketURL(websocketURL, accessToken);
+        websocket = createWebSocket(wsURL);
+        inputAudioSession = createInputAudioSession(resolvedInputConfig);
+        outputAudioSession = createOutputAudioSession(resolvedOutputConfig);
+        const currentWebSocket = websocket;
+        const currentInputAudioSession = inputAudioSession;
+        const currentOutputAudioSession = outputAudioSession;
+        currentInputAudioSession.muted = preferredMuted;
+
+        let resolveAttached: (() => void) | null = null;
+        let rejectAttached: ((reason?: unknown) => void) | null = null;
+        const attachedPromise = new Promise<void>((resolve, reject) => {
+            resolveAttached = resolve;
+            rejectAttached = reject;
+        });
+        const openPromise = new Promise<void>((resolve, reject) => {
+            currentWebSocket.addEventListener("open", () => {
+                resolve();
+            });
+            currentWebSocket.addEventListener("error", () => {
+                reject(new Error("WebSocket connection failed"));
+            });
+        });
+
+        currentWebSocket.addEventListener("close", () => {
+            conversation.state.streamState = "idle";
+            rejectAttached?.(new Error("WebSocket closed before session attachment"));
+        });
+        currentWebSocket.addEventListener("message", async (event: { data: string | ArrayBuffer }) => {
+            if (typeof event.data === "string") {
+                const message: { action: string; data: unknown } = JSON.parse(event.data);
+                await actionHandler.handleAction(
+                    message.action,
+                    message.data,
+                    currentWebSocket,
+                    conversation,
+                    currentOutputAudioSession,
+                );
+                if (message.action === "session_attached") {
+                    resolveAttached?.();
+                }
+            } else if (event.data instanceof ArrayBuffer) {
+                await currentOutputAudioSession.pushAudioChunk(event.data);
+            }
+        });
+
+        currentInputAudioSession.onFrame(async (audioChunk) => {
+            inputAudioChunkCallback(audioChunk, resolvedInputConfig.sampleRate);
+            if (websocket?.ready()) {
+                websocket.sendAudioChunk(audioChunk);
+            }
+        });
+        currentInputAudioSession.onSpeechStart(async () => {
+            if (websocket?.ready()) {
+                await actionHandler.handleAction(
+                    "client_speech_start",
+                    null,
+                    websocket,
+                    conversation,
+                    currentOutputAudioSession,
+                );
+            }
+        });
+        currentInputAudioSession.onSpeechEnd(async () => {
+            if (websocket?.ready()) {
+                await actionHandler.handleAction(
+                    "client_speech_end",
+                    null,
+                    websocket,
+                    conversation,
+                    currentOutputAudioSession,
+                );
+            }
+        });
+
+        currentOutputAudioSession.onChunkStarted(async (audioChunk) => {
+            outputAudioChunkCallback(audioChunk, resolvedOutputConfig.sampleRate);
+            if (websocket?.ready()) {
+                await actionHandler.handleAction(
+                    "client_audio_chunk_started",
+                    null,
+                    websocket,
+                    conversation,
+                    currentOutputAudioSession,
+                );
+            }
+        });
+        currentOutputAudioSession.onChunkPlayed(async () => {
+            if (websocket?.ready()) {
+                await actionHandler.handleAction(
+                    "client_audio_chunk_played",
+                    null,
+                    websocket,
+                    conversation,
+                    currentOutputAudioSession,
+                );
+            }
+        });
+        currentOutputAudioSession.onAllChunksPlayed(async () => {
+            if (websocket?.ready()) {
+                await actionHandler.handleAction(
+                    "client_audio_playback_finished",
+                    null,
+                    websocket,
+                    conversation,
+                    currentOutputAudioSession,
+                );
+            }
+        });
+
+        return (async () => {
+            await openPromise;
+            currentWebSocket.sendJson({
+                action: "attach_session",
+                session_id: conversation.state.sessionId,
+            });
+            await attachedPromise;
+            await currentOutputAudioSession.open();
+            await currentInputAudioSession.open();
+        })();
+    }
+
+    async function closeRuntime(): Promise<void> {
+        const currentInput = inputAudioSession;
+        const currentOutput = outputAudioSession;
+        const currentWebSocket = websocket;
+
+        inputAudioSession = null;
+        outputAudioSession = null;
+        websocket = null;
+
+        if (currentInput) {
+            try {
+                preferredMuted = currentInput.muted;
+                await currentInput.close();
+            } catch {
+                // Ignore shutdown errors from already-closed audio sessions.
+            }
+        }
+        if (currentOutput) {
+            try {
+                await currentOutput.close();
+            } catch {
+                // Ignore shutdown errors from already-closed audio sessions.
+            }
+        }
+        currentWebSocket?.close();
+        conversation.state.streamState = "idle";
+    }
+
     const session: Session = {
         open: async () => {
-            initialize();
-            await inputAudioSession.open();
-            await outputAudioSession.open();
+            if (pendingOpen) {
+                return pendingOpen;
+            }
+            pendingOpen = (async () => {
+                await ensureLoggedIn();
+                await closeRuntime();
+                try {
+                    await initializeRuntime();
+                    canRetryRuntimeAfterRestoredAuth = false;
+                } catch (error) {
+                    await closeRuntime();
+                    if (canRetryRuntimeAfterRestoredAuth) {
+                        canRetryRuntimeAfterRestoredAuth = false;
+                        resetAuthState(true);
+                        await ensureLoggedIn();
+                        await initializeRuntime();
+                        canRetryRuntimeAfterRestoredAuth = false;
+                        return;
+                    }
+                    throw error;
+                }
+            })();
+            try {
+                await pendingOpen;
+            } finally {
+                pendingOpen = null;
+            }
         },
         close: async () => {
-            await inputAudioSession.close();
-            await outputAudioSession.close();
-            websocket.close();
+            await closeRuntime();
         },
         onStateChange: (callback: (state: SessionState) => void) => {
             conversation.onStateChange(callback);
@@ -315,18 +505,55 @@ function createSession(
             conversation.onFullAudioChunk(callback);
         },
         get muted() {
-            return inputAudioSession.muted;
-        },
-        set muted(value: boolean) {
-            inputAudioSession.muted = value;
+            return inputAudioSession ? inputAudioSession.muted : preferredMuted;
         },
         async changeVoice(voiceName: string) {
-            await actionHandler.handleAction("client_change_voice", { voiceName }, websocket, conversation, outputAudioSession)
+            const runtime = requireRuntime();
+            await actionHandler.handleAction(
+                "client_change_voice",
+                { voiceName },
+                runtime.websocket,
+                conversation,
+                runtime.outputAudioSession,
+            );
         },
-        async uploadFile(file: Blob, endpoint: string | URL = "./api/upload") {
-            await actionHandler.handleAction("client_upload_file", { file, endpoint }, websocket, conversation, outputAudioSession);
-        }
-    }
+        async uploadFile(file: Blob, endpoint?: string | URL) {
+            const sessionId = conversation.state.sessionId;
+            if (!sessionId) {
+                throw new Error("No session selected");
+            }
+
+            conversation.state.streamState = "processing";
+            try {
+                await withAuthorizedToken((token) =>
+                    httpClient.postFile(endpoint ?? serviceURLs.upload, token, sessionId, file),
+                );
+            } finally {
+                conversation.state.streamState = "idle";
+            }
+        },
+        async getSessions() {
+            const payload = await authorizedGetJSON<{ sessions?: SessionSummary[] }>(serviceURLs.sessions);
+            return payload.sessions ?? [];
+        },
+        async switchSession(sessionId: string | null) {
+            await ensureLoggedIn();
+            await closeRuntime();
+            if (!sessionId) {
+                conversation.switch(null, []);
+                return;
+            }
+
+            const payload = await authorizedGetJSON<SessionDetail>(serviceURLs.sessionDetail(sessionId));
+            conversation.switch(payload.session_id, mapSessionMessages(payload.messages));
+        },
+        set muted(value: boolean) {
+            preferredMuted = value;
+            if (inputAudioSession) {
+                inputAudioSession.muted = value;
+            }
+        },
+    };
 
     return session;
 }

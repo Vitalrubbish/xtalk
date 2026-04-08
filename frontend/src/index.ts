@@ -7,4 +7,8 @@
 import { createSession } from "./core";
 
 export { createSession };
-export type { Session, SessionConfig } from "./core";
+export type {
+    Session,
+    SessionConfig,
+    SessionServiceURLConfig,
+} from "./core";

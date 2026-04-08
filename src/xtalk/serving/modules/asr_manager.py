@@ -1,6 +1,6 @@
 from typing import Optional, Any
 import asyncio
-from ..interfaces import Manager
+from ..interfaces import Manager, TurnStateRestorable
 from ..event_bus import EventBus
 from ...pipelines import Pipeline
 from ..events import (
@@ -167,6 +167,9 @@ class AudioConsumer:
         except asyncio.CancelledError:
             pass
 
+    def restore_turn_state(self, *, last_turn_id: int) -> None:
+        self._turn_id = max(last_turn_id + 1, 1)
+
     # Helpers
     def _consumer_running(self):
         return self._consumer_running_event.is_set()
@@ -229,7 +232,7 @@ class AudioConsumer:
         self._asr_model.reset()
 
 
-class ASRManager(Manager):
+class ASRManager(Manager, TurnStateRestorable):
     def __init__(
         self,
         event_bus: EventBus,
@@ -260,3 +263,6 @@ class ASRManager(Manager):
     async def shutdown(self):
         # Task cancellation
         await self._audio_consumer.shutdown()
+
+    def restore_turn_state(self, *, last_turn_id: int) -> None:
+        self._audio_consumer.restore_turn_state(last_turn_id=last_turn_id)

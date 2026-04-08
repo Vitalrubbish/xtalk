@@ -208,13 +208,13 @@ class PersistenceStore:
                         (_build_title(normalized), session_id),
                     )
 
-    def get_max_turn_id(self, user_id: str, session_id: str) -> int:
+    def get_last_turn_id(self, user_id: str, session_id: str) -> int:
         if not self.user_owns_session(user_id, session_id):
             raise KeyError(session_id)
         with self._lock, self._connect() as conn:
             row = conn.execute(
-                "SELECT MAX(turn_id) AS max_turn_id FROM chat_messages WHERE session_id = ?",
+                "SELECT MAX(turn_id) AS last_turn_id FROM chat_messages WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
-        value = row["max_turn_id"] if row is not None else None
+        value = row["last_turn_id"] if row is not None else None
         return int(value or 0)

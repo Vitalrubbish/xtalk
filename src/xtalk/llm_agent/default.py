@@ -331,10 +331,24 @@ Your response should be catered to the given Chat history, e.g. respond in the s
     def get_llm(self):
         return self.model
 
+    def restore_history(self, messages: list[dict[str, Any]]) -> None:
+        current_history = list(self.session_history)
+        restored_history: List[BaseMessage] = []
+        if current_history and isinstance(current_history[0], SystemMessage):
+            restored_history.append(current_history[0])
+        for message in messages:
+            role = message.get("role")
+            content = str(message.get("content", ""))
+            if role == "user":
+                restored_history.append(HumanMessage(content=content))
+            elif role == "assistant":
+                restored_history.append(AIMessage(content=content))
+        self.session_history = restored_history or current_history
+
     def get_chat_history(self, with_system: bool = False):
         """Return plain-text conversation history."""
         try:
-            history = getattr(self, "session_history", None)
+            history = self.session_history
             if not history:
                 return None
             lines: List[str] = []
@@ -346,7 +360,7 @@ Your response should be catered to the given Chat history, e.g. respond in the s
                     role = "Assistant"
                 elif isinstance(msg, SystemMessage):
                     role = "System"
-                content = getattr(msg, "content", "")
+                content = msg.content
                 if not isinstance(content, str):
                     content = str(content)
                 if role == "System" and not with_system:
@@ -780,7 +794,5 @@ Your response should be catered to the given Chat history, e.g. respond in the s
             return
 
         new_factories = self._normalize_tool_specs(tools_or_factories)
-        base_factories: List[Callable[[], BaseTool]] = getattr(
-            self, "_tool_factories", []
-        )
+        base_factories: List[Callable[[], BaseTool]] = self._tool_factories
         self._apply_tool_factories(base_factories + new_factories)

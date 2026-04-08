@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 import json
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 from fastapi import WebSocket
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from ..log_utils import logger
 from ..persistence import PersistenceStore
 
-from .events import ASRResultFinal, LLMAgentResponseFinish
 from .service import Service, DefaultService
 from ..pipelines import Pipeline
 
@@ -36,12 +34,18 @@ class ServiceManager:
         websocket: WebSocket,
         *,
         session_id: str | None = None,
+        user_id: str | None = None,
     ) -> Service:
         """Create a new Service instance bound to the given WebSocket."""
+        service_config_overrides: dict[str, Any] = {}
+        if self._persistence is not None and user_id is not None:
+            service_config_overrides["persistence_store"] = self._persistence
+            service_config_overrides["user_id"] = user_id
+
         service = (
             DefaultService(
                 pipeline=self._pipeline,
-                service_config=self._service_config,
+                service_config=self._build_service_config(service_config_overrides),
                 _websocket=websocket,
                 _session_id=session_id,
             )
@@ -49,6 +53,7 @@ class ServiceManager:
             else self._service_prototype.clone(
                 new_websocket=websocket,
                 session_id=session_id,
+                service_config_overrides=service_config_overrides,
             )
         )
         self.active_services[service.session_id] = service
@@ -99,16 +104,18 @@ class ServiceManager:
                 await websocket.close(code=1013, reason="Session already connected")
                 return
 
-            service = await self.create_service(websocket, session_id=session_id)
-            self._restore_service_state(
-                service,
+            service = await self.create_service(
+                websocket,
+                session_id=session_id,
+                user_id=user_id,
+            )
+            service.restore_conversation(
                 messages=self._persistence.list_messages(user_id, session_id),
-                max_turn_id=self._persistence.get_max_turn_id(user_id, session_id),
             )
-            self._register_persistence_hooks(
-                service, user_id=user_id, session_id=session_id
+            service.restore_turn_state(
+                last_turn_id=self._persistence.get_last_turn_id(user_id, session_id),
             )
-            await service.output_gateway.send_session_attached()
+            await service.send_session_attached()
             await service.handle_message_loop(already_accepted=True)
         except Exception as e:
             logger.error("Error handling authenticated WebSocket connection: %s", e)
@@ -162,75 +169,11 @@ class ServiceManager:
 
         return self._persistence.get_or_create_session(user_id, requested_session_id)
 
-    def _restore_service_state(
-        self,
-        service: Service,
-        *,
-        messages: list[dict[str, Any]],
-        max_turn_id: int,
-    ) -> None:
-        agent = service.pipeline.get_agent()
-        if agent is not None and hasattr(agent, "session_history"):
-            current_history = list(getattr(agent, "session_history", []))
-            restored_history = []
-            if current_history and isinstance(current_history[0], SystemMessage):
-                restored_history.append(current_history[0])
-            for message in messages:
-                role = message.get("role")
-                content = str(message.get("content", ""))
-                if role == "user":
-                    restored_history.append(HumanMessage(content=content))
-                elif role == "assistant":
-                    restored_history.append(AIMessage(content=content))
-            setattr(agent, "session_history", restored_history or current_history)
-
-        for manager in getattr(service, "_managers", []):
-            audio_consumer = getattr(manager, "_audio_consumer", None)
-            if audio_consumer is not None and hasattr(audio_consumer, "_turn_id"):
-                audio_consumer._turn_id = max(max_turn_id + 1, 1)
-            if hasattr(manager, "_turn_id"):
-                manager._turn_id = max_turn_id
-
-    def _register_persistence_hooks(
-        self, service: Service, *, user_id: str, session_id: str
-    ) -> None:
-        async def _persist_user_message(event: ASRResultFinal) -> None:
-            try:
-                self._persistence.append_message(
-                    user_id=user_id,
-                    session_id=session_id,
-                    role="user",
-                    content=event.text,
-                    turn_id=event.turn_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to persist user message - session: %s, error: %s",
-                    session_id,
-                    exc,
-                )
-
-        async def _persist_assistant_message(event: LLMAgentResponseFinish) -> None:
-            try:
-                self._persistence.append_message(
-                    user_id=user_id,
-                    session_id=session_id,
-                    role="assistant",
-                    content=event.text,
-                    turn_id=event.turn_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to persist assistant message - session: %s, error: %s",
-                    session_id,
-                    exc,
-                )
-
-        service.event_bus.subscribe(
-            ASRResultFinal, _persist_user_message, priority=-100
-        )
-        service.event_bus.subscribe(
-            LLMAgentResponseFinish,
-            _persist_assistant_message,
-            priority=-100,
-        )
+    def _build_service_config(
+        self, service_config_overrides: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        if self._service_config is None and not service_config_overrides:
+            return None
+        service_config = dict(self._service_config or {})
+        service_config.update(service_config_overrides)
+        return service_config

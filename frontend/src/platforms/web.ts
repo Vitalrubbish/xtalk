@@ -4,6 +4,7 @@ import type { InputAudioSessionConfig, OutputAudioSessionConfig } from "../bases
 import { BaseHTTPClient, HTTPRequestError } from "../bases/http";
 import type { ResolvableURL, SessionServiceURLConfig, SessionServiceURLs } from "../bases/http";
 import { BaseEncoding } from "../bases/encoding";
+import { BasePersistenceStore } from "../bases/persistence";
 
 import vadProcessorUrl from "../../worklets/vad-processor.worklet.js";
 import fastEnhancerOnnxUrl from "../../models/fastenhancer_s.onnx";
@@ -13,6 +14,7 @@ export {
     WebOutputAudioSession,
     WebHTTPClient,
     WebEncoding,
+    WebPersistenceStore,
     resolveWebServiceURLs,
     buildWebSocketURLWithAccessToken,
 };
@@ -101,6 +103,53 @@ class WebEncoding extends BaseEncoding {
             bytes[i] = binary.charCodeAt(i);
         }
         return bytes.buffer;
+    }
+}
+
+class WebPersistenceStore extends BasePersistenceStore {
+    private supportsStorage(): boolean {
+        return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+    }
+
+    resolveKey(websocketURL: ResolvableURL): string | null {
+        if (!this.supportsStorage()) {
+            return null;
+        }
+        const resolvedURL = new URL(websocketURL.toString(), window.location.href);
+        return `xtalk:session:${resolvedURL.toString()}`;
+    }
+
+    load(key: string | null): string | null {
+        if (!key || !this.supportsStorage()) {
+            return null;
+        }
+        try {
+            return window.localStorage.getItem(key);
+        } catch {
+            return null;
+        }
+    }
+
+    save(key: string | null, value: string): void {
+        if (!key || !this.supportsStorage()) {
+            return;
+        }
+        try {
+            window.localStorage.setItem(key, value);
+        } catch {
+            // Ignore storage failures so realtime usage continues normally.
+        }
+    }
+
+    clear(key: string | null): void {
+        if (!key || !this.supportsStorage()) {
+            return;
+        }
+        try {
+            window.localStorage.removeItem(key);
+        } catch {
+            // Ignore storage failures so realtime usage continues normally.
+        }
     }
 }
 

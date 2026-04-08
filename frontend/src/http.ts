@@ -1,39 +1,26 @@
-import { getPlatform, Platform } from "./utils";
 import { BaseHTTPClient } from "./bases/http";
 import type { ResolvableURL, SessionServiceURLConfig, SessionServiceURLs } from "./bases/http";
-import { WebHTTPClient, buildWebSocketURLWithAccessToken, resolveWebServiceURLs } from "./platforms/web";
+import { getPlatformRuntime } from "./platforms/index";
 
 export { createHTTPClient, buildAuthenticatedWebSocketURL, resolvePlatformServiceURLs };
 
 function createHTTPClient(): BaseHTTPClient {
-    switch (getPlatform()) {
-        case Platform.Web:
-            return new WebHTTPClient();
-        default:
-            throw new Error("Unknown platform");
-    }
+    return getPlatformRuntime().createHTTPClient();
 }
 
 function resolvePlatformServiceURLs(
     websocketURL: ResolvableURL,
     config?: SessionServiceURLConfig,
 ): SessionServiceURLs {
-    switch (getPlatform()) {
-        case Platform.Web:
-            return resolveWebServiceURLs(websocketURL, config);
-        default:
-            throw new Error("Unknown platform");
-    }
+    return getPlatformRuntime().resolveServiceURLs(websocketURL, config);
 }
 
 function buildAuthenticatedWebSocketURL(
     websocketURL: ResolvableURL,
     accessToken: string,
 ): ResolvableURL {
-    switch (getPlatform()) {
-        case Platform.Web:
-            return buildWebSocketURLWithAccessToken(websocketURL, accessToken);
-        default:
-            throw new Error("Unknown platform");
-    }
+    return getPlatformRuntime().buildAuthenticatedWebSocketURL(
+        websocketURL,
+        accessToken,
+    );
 }

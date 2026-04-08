@@ -284,8 +284,8 @@ class InputGateway(EventListenerMixin):
             logger.info(
                 "WebSocket disconnected - session: %s, code: %s, reason: %s",
                 self.session_id,
-                getattr(e, "code", "N/A"),
-                getattr(e, "reason", "N/A"),
+                e.code,
+                e.reason,
             )
         except Exception as e:
             error_msg = str(e).lower()

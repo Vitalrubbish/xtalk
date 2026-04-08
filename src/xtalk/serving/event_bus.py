@@ -91,7 +91,7 @@ class EventBus:
             return event_identifier
         # Prefer TYPE attribute on event class
         try:
-            evt_type = getattr(event_identifier, "TYPE", None)
+            evt_type = event_identifier.TYPE
             if isinstance(evt_type, str) and evt_type:
                 return evt_type
         except Exception:

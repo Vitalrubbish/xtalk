@@ -1,6 +1,6 @@
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Iterable, Union, TypedDict, List, AsyncIterator, Callable
+from typing import Iterable, Union, TypedDict, List, AsyncIterator, Callable, Any
 from langchain.chat_models.base import BaseChatModel
 from ..pipelines.context import PipelineContext
 from langchain_core.messages import ToolCall
@@ -141,6 +141,17 @@ class Agent(ABC):
         -------
         Agent
             Session-safe agent instance.
+        """
+        pass
+
+    @abstractmethod
+    def restore_history(self, messages: list[dict[str, Any]]) -> None:
+        """Restore persisted conversation messages into the agent state.
+
+        Parameters
+        ----------
+        messages : list[dict[str, Any]]
+            Persisted chat messages ordered by session history.
         """
         pass
 

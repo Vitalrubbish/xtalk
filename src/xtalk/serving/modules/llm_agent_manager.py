@@ -22,13 +22,13 @@ from ..events import (
     LLMModelSwitchRequested,
     LLMFirstChunk,
 )
-from ..interfaces import Manager
+from ..interfaces import Manager, TurnStateRestorable
 from ...pipelines import Pipeline
 from ...pipelines.context import PipelineContext
 from ...llm_agent import Agent
 
 
-class LLMAgentManager(Manager):
+class LLMAgentManager(Manager, TurnStateRestorable):
     """Drive LLM agent generation and coordinate TTS streaming."""
 
     def __init__(
@@ -318,3 +318,6 @@ class LLMAgentManager(Manager):
 
     async def shutdown(self) -> None:
         await self._cancel_running_task()
+
+    def restore_turn_state(self, *, last_turn_id: int) -> None:
+        self._turn_id = last_turn_id

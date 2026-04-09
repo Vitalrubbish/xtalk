@@ -158,8 +158,6 @@ class OutputGateway(EventListenerMixin):
             action,
             {
                 "text": display_text,
-                "confidence": event.confidence,
-                "is_final": event.is_final,
                 "turn_id": event.turn_id,
             },
         )
@@ -319,7 +317,6 @@ class OutputGateway(EventListenerMixin):
                 "llm_first_token_ms": int(event.llm_first_token_ms),
                 "llm_sentence_ms": int(event.llm_sentence_ms),
                 "tts_first_chunk_ms": int(event.tts_first_chunk_ms),
-                "e2e_latency_ms": int(event.e2e_latency_ms),
             },
         )
 

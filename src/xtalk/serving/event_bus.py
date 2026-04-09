@@ -252,7 +252,10 @@ class EventBus:
                 )
 
     async def _publish_error_event_safe(
-        self, session_id: str, error_type: str, error_message: str, component: str
+        self,
+        session_id: str,
+        error_type: str,
+        error_message: str,
     ) -> None:
         """
         Safely publish an error event with recursion protection.
@@ -267,7 +270,6 @@ class EventBus:
             session_id: session identifier
             error_type: type of error
             error_message: error message
-            component: component that raised the error
         """
         # Check recursion depth
         if self._error_event_depth >= self.MAX_ERROR_EVENT_DEPTH:
@@ -311,7 +313,6 @@ class EventBus:
                     session_id=session_id,
                     error_type=error_type,
                     error_message=error_message,
-                    component=component,
                 )
 
                 # Publish error event (fire-and-forget to avoid blocking)

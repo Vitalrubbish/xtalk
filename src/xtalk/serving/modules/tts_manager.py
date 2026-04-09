@@ -36,6 +36,7 @@ class TTSQueueItem(NamedTuple):
     """Data model for queued TTS audio chunks."""
 
     audio_chunk: bytes
+    sample_rate: int
 
 
 class TTSManager(Manager):
@@ -276,6 +277,7 @@ class TTSManager(Manager):
                         event = TTSChunkGenerated(
                             session_id=self.session_id,
                             audio_chunk=processed_audio,
+                            sample_rate=item.sample_rate,
                         )
                         # Ensure ordering by waiting for completion
                         await self.event_bus.publish(event, wait_for_completion=True)
@@ -386,8 +388,9 @@ class TTSManager(Manager):
             return
 
         try:
+            sample_rate = int(getattr(tts_model, "sample_rate", 48000) or 48000)
             async for ch in self._synthesize_stream_with_fallback(tts_model, sentence):
-                await self.tts_queue.put(TTSQueueItem(ch))
+                await self.tts_queue.put(TTSQueueItem(ch, sample_rate))
 
         except asyncio.CancelledError:
             raise

@@ -324,7 +324,6 @@ class InputGateway(EventListenerMixin):
             AudioFrameReceived(
                 session_id=self.session_id,
                 audio_data=audio_data,
-                is_final=False,
                 sample_rate=16000,
             )
         )

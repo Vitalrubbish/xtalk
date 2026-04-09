@@ -230,7 +230,6 @@ class LLMAgentManager(Manager, TurnStateRestorable):
                     TurnTTSTextAppendRequested(
                         session_id=self.session_id,
                         text=chunk_text,
-                        reason="llm_stream",
                     ),
                 )
         except asyncio.CancelledError:

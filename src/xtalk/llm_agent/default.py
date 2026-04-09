@@ -1,37 +1,30 @@
 from __future__ import annotations
 
-import asyncio
 from collections import Counter
-from contextlib import contextmanager
 from datetime import datetime
 import re
-from typing import Any, AsyncIterator, Callable, Coroutine, Iterable, Optional, TypeVar, Union
+from typing import Any, AsyncIterator, Callable, Optional
 
 from langchain.chat_models.base import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolCall
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
-from langchain_openai import ChatOpenAI
 
 from ..log_utils import logger
 from ..pipelines.context import PipelineContext
-from .interfaces import Agent, AgentInput
 from .runtime import (
     _REGISTER_TOOL_KEY,
     _SKIP_MODEL_KEY,
     AgentRequest,
-    AgentRuntime,
     AgentSession,
     ContextAdapter,
     OutputPolicy,
     PromptBuilder,
     ScenarioSpec,
     TextChunkEvent,
-    ToolCallEvent,
-    ToolProvider,
-    ToolResultEvent,
     TurnContext,
     TurnHook,
 )
+from .template import MutableToolProvider, TemplateAgent, _format_chat_history
 from .tools import (
     build_set_emotion_tool,
     build_set_speed_tool,
@@ -41,45 +34,6 @@ from .tools import (
     build_web_search_tool,
 )
 from .tools.retrievers import LOCAL_SEARCH_TOOL, build_local_search_tool
-from .tools.utils import build_tool_call_result_payload
-
-T = TypeVar("T")
-
-
-def _format_chat_history(
-    messages: list[BaseMessage],
-    *,
-    with_system: bool = False,
-) -> str | None:
-    """Render plain-text chat history from LangChain messages.
-
-    Parameters
-    ----------
-    messages : list[BaseMessage]
-        Session message history.
-    with_system : bool, optional
-        Whether to include system messages in the rendered output.
-
-    Returns
-    -------
-    str | None
-        Serialized conversation history, or ``None`` when unavailable.
-    """
-
-    if not messages:
-        return None
-    lines: list[str] = []
-    for message in messages:
-        role = "System"
-        if isinstance(message, HumanMessage):
-            role = "User"
-        elif isinstance(message, AIMessage):
-            role = "Assistant"
-        if role == "System" and not with_system:
-            continue
-        content = message.content
-        lines.append(f"{role}: {content if isinstance(content, str) else str(content)}")
-    return "\n".join(lines)
 
 
 class DefaultContextAdapter(ContextAdapter):
@@ -200,7 +154,8 @@ The system should distinguish users based on their speaker IDs, with one user ma
 8. 搜索用语规则：构造 web_search 的 query 时，必须将"今天"、"昨天"、"明天"、"上个月"、"去年"等相对时间词替换为 <current_date> 中的具体日期。例如今天是2026-02-28，用户问"今天NBA有哪些比赛"，你的 query 应为"2026年2月28日 NBA比赛赛程"，而不是"今天NBA有哪些比赛"。
 """
 
-    CONTEXT_AWARE_PROMPT: str = """
+    CONTEXT_AWARE_PROMPT: str = (
+        """
 You are a multimodal conversational assistant with access to:
 1) Non-verbal environmental context extracted from recent audio, wrapped in <caption>...</caption>.
 2) Your internal reasoning summary for the latest turn, wrapped in <thought>...</thought>.
@@ -227,6 +182,7 @@ When generating your final response:
 
 Caption and thought:
 """.strip()
+    )
 
     def __init__(self, system_prompt: str = BASE_PROMPT) -> None:
         """Initialize the default prompt builder.
@@ -238,9 +194,7 @@ Caption and thought:
         """
 
         self.system_prompt = system_prompt
-        self.session_system_prompt = (
-            f"{system_prompt}\n\n{self.CONTEXT_AWARE_PROMPT}"
-        )
+        self.session_system_prompt = f"{system_prompt}\n\n{self.CONTEXT_AWARE_PROMPT}"
 
     def build_system_prompt(
         self,
@@ -315,15 +269,12 @@ class TTSOutputPolicy(OutputPolicy):
         """
 
         filtered = (
-            text.replace("#", "")
-            .replace("**", "")
-            .replace("`", "")
-            .replace("-", "")
+            text.replace("#", "").replace("**", "").replace("`", "").replace("-", "")
         )
         return re.sub(r"(\d+)\.", r"\1", filtered)
 
 
-class DefaultToolProvider(ToolProvider):
+class DefaultToolProvider(MutableToolProvider):
     """Build the default tool set for each turn."""
 
     def __init__(
@@ -348,32 +299,9 @@ class DefaultToolProvider(ToolProvider):
 
         self.voice_names = list(voice_names or [])
         self.emotions = list(emotions or [])
-        if tools is None:
-            self._tool_factories = self._build_default_tool_factories()
-        else:
-            self._tool_factories = self._normalize_tool_specs(tools)
-
-    def add_tools(self, tools: list[BaseTool | Callable[[], BaseTool]]) -> None:
-        """Append tools to the default tool provider.
-
-        Parameters
-        ----------
-        tools : list[BaseTool | Callable[[], BaseTool]]
-            Tool instances or factories to append.
-        """
-
-        self._tool_factories.extend(self._normalize_tool_specs(tools))
-
-    def get_tool_specs(self) -> list[Callable[[], BaseTool]]:
-        """Return clone-safe tool factories.
-
-        Returns
-        -------
-        list[Callable[[], BaseTool]]
-            Normalized tool factories used by this provider.
-        """
-
-        return list(self._tool_factories)
+        super().__init__(
+            self._build_default_tool_factories() if tools is None else tools
+        )
 
     def get_tools(
         self,
@@ -446,33 +374,6 @@ class DefaultToolProvider(ToolProvider):
             factories.append(build_set_speed_tool)
         except Exception as exc:
             logger.warning("Failed to build tools: %s", exc)
-        return factories
-
-    @staticmethod
-    def _normalize_tool_specs(
-        tools: list[BaseTool | Callable[[], BaseTool]],
-    ) -> list[Callable[[], BaseTool]]:
-        """Normalize tool specs into factories.
-
-        Parameters
-        ----------
-        tools : list[BaseTool | Callable[[], BaseTool]]
-            Tool instances or factories.
-
-        Returns
-        -------
-        list[Callable[[], BaseTool]]
-            Factory list.
-        """
-
-        factories: list[Callable[[], BaseTool]] = []
-        for tool in tools:
-            if isinstance(tool, BaseTool):
-                factories.append(lambda tool=tool: tool)
-            elif callable(tool):
-                factories.append(tool)
-            else:
-                logger.warning("Unsupported tool spec: %r", tool)
         return factories
 
 
@@ -726,12 +627,12 @@ def build_default_scenario(
     return scenario, prompt_builder, tool_provider
 
 
-class DefaultAgent(Agent):
-    """Compatibility wrapper around ``AgentRuntime`` for the default scenario."""
+class DefaultAgent(TemplateAgent):
+    """Default scenario agent built on top of ``TemplateAgent``."""
 
     def __init__(
         self,
-        model: BaseChatModel | dict,
+        model: BaseChatModel | dict[str, Any],
         system_prompt: str = DefaultPromptBuilder.BASE_PROMPT,
         voice_names: Optional[list[str]] = None,
         emotions: Optional[list[str]] = None,
@@ -741,7 +642,7 @@ class DefaultAgent(Agent):
 
         Parameters
         ----------
-        model : BaseChatModel | dict
+        model : BaseChatModel | dict[str, Any]
             Chat model or ``ChatOpenAI`` configuration dict.
         system_prompt : str, optional
             Base system prompt.
@@ -753,299 +654,25 @@ class DefaultAgent(Agent):
             Explicit tool set or factories.
         """
 
-        if isinstance(model, dict):
-            model = ChatOpenAI(**model)
-        self.model = model
-        self.voice_names = list(voice_names or [])
-        self.emotions = list(emotions or [])
-        self._system_prompt = system_prompt
-        scenario, prompt_builder, tool_provider = build_default_scenario(
-            model=self.model,
+        resolved_model = TemplateAgent.coerce_model(model)
+        normalized_voice_names = list(voice_names or [])
+        normalized_emotions = list(emotions or [])
+        scenario, _, tool_provider = build_default_scenario(
+            model=resolved_model,
             system_prompt=system_prompt,
-            voice_names=self.voice_names,
-            emotions=self.emotions,
+            voice_names=normalized_voice_names,
+            emotions=normalized_emotions,
             tools=tools,
         )
-        self._prompt_builder = prompt_builder
-        self._tool_provider = tool_provider
-        self.runtime = AgentRuntime(model=self.model, scenario=scenario)
-
-    @property
-    def session_history(self) -> list[BaseMessage]:
-        """Expose runtime session history for compatibility."""
-
-        return self.runtime.session.messages
-
-    @session_history.setter
-    def session_history(self, messages: list[BaseMessage]) -> None:
-        """Replace runtime session history for compatibility."""
-
-        self.runtime.session.messages = messages
-
-    @contextmanager
-    def _temporary_event_loop(self):
-        """Create a temporary event loop and clean it up on exit."""
-        loop = asyncio.new_event_loop()
-        try:
-            yield loop
-        finally:
-            try:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-            except Exception:
-                pass
-            try:
-                loop.run_until_complete(loop.shutdown_default_executor())
-            except Exception:
-                pass
-            loop.close()
-
-    def _run_async_task(self, coro: Coroutine[Any, Any, T]) -> T:
-        """Execute a coroutine in a temporary event loop.
-
-        Parameters
-        ----------
-        coro : Coroutine[Any, Any, T]
-            Coroutine to execute.
-
-        Returns
-        -------
-        T
-            Coroutine result.
-        """
-
-        with self._temporary_event_loop() as loop:
-            return loop.run_until_complete(coro)
-
-    def _sync_iter_from_async(self, async_iter: AsyncIterator[T]) -> Iterable[T]:
-        """Convert an async iterator into a synchronous generator.
-
-        Parameters
-        ----------
-        async_iter : AsyncIterator[T]
-            Async iterator to bridge.
-
-        Yields
-        ------
-        T
-            Streamed items.
-        """
-
-        with self._temporary_event_loop() as loop:
-            try:
-                while True:
-                    try:
-                        item = loop.run_until_complete(async_iter.__anext__())
-                    except StopAsyncIteration:
-                        break
-                    yield item
-            finally:
-                aclose = getattr(async_iter, "aclose", None)
-                if callable(aclose):
-                    try:
-                        loop.run_until_complete(aclose())
-                    except Exception:
-                        pass
-
-    @staticmethod
-    def _build_request(input: Union[str, AgentInput]) -> AgentRequest:
-        """Normalize legacy agent input into ``AgentRequest``.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Legacy agent input.
-
-        Returns
-        -------
-        AgentRequest
-            Structured runtime request.
-        """
-
-        if isinstance(input, dict):
-            context = input.get("context")
-            return AgentRequest(
-                content=str(input.get("content", "")),
-                context=context if isinstance(context, dict) else None,
-            )
-        return AgentRequest(content=str(input))
-
-    @staticmethod
-    def _to_tool_call(event: ToolCallEvent) -> ToolCall:
-        """Convert a typed tool-call event into the legacy payload."""
-
-        return ToolCall(name=event.name, args=dict(event.args), id=event.call_id)
-
-    def generate(
-        self,
-        input: Union[str, AgentInput],
-    ) -> Union[str, tuple[str, list[ToolCall]]]:
-        """Generate a complete response.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Legacy agent input.
-
-        Returns
-        -------
-        str | tuple[str, list[ToolCall]]
-            Response text, plus tool calls when any occurred.
-        """
-
-        return self._run_async_task(self.async_generate(input))
-
-    async def async_generate(
-        self,
-        input: Union[str, AgentInput],
-    ) -> Union[str, tuple[str, list[ToolCall]]]:
-        """Asynchronously generate a complete response.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Legacy agent input.
-
-        Returns
-        -------
-        str | tuple[str, list[ToolCall]]
-            Response text, plus tool calls when any occurred.
-        """
-
-        text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        async for event in self.runtime.generate_stream(self._build_request(input)):
-            if isinstance(event, TextChunkEvent):
-                text_parts.append(event.text)
-            elif isinstance(event, ToolCallEvent):
-                tool_calls.append(self._to_tool_call(event))
-        text = "".join(text_parts)
-        if tool_calls:
-            return text, tool_calls
-        return text
-
-    def generate_stream(
-        self,
-        input: Union[str, AgentInput],
-    ) -> Iterable[Union[str, ToolCall, dict[str, Any]]]:
-        """Synchronously stream legacy response chunks.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Legacy agent input.
-
-        Yields
-        ------
-        str | ToolCall | dict[str, Any]
-            Text chunks, legacy tool-call payloads, and tool-result payloads.
-        """
-
-        yield from self._sync_iter_from_async(self.async_generate_stream(input))
-
-    async def async_generate_stream(
-        self,
-        input: Union[str, AgentInput],
-    ) -> AsyncIterator[Union[str, ToolCall, dict[str, Any]]]:
-        """Asynchronously stream legacy response chunks.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Legacy agent input.
-
-        Yields
-        ------
-        str | ToolCall | dict[str, Any]
-            Text chunks, legacy tool-call payloads, and tool-result payloads.
-        """
-
-        async for event in self.runtime.generate_stream(self._build_request(input)):
-            if isinstance(event, TextChunkEvent):
-                yield event.text
-            elif isinstance(event, ToolCallEvent):
-                yield self._to_tool_call(event)
-            elif isinstance(event, ToolResultEvent):
-                yield build_tool_call_result_payload(
-                    name=event.name,
-                    args=event.args,
-                    content=event.content,
-                )
-
-    def restore_history(self, messages: list[dict[str, Any]]) -> None:
-        """Restore persisted conversation history into the runtime session.
-
-        Parameters
-        ----------
-        messages : list[dict[str, Any]]
-            Persisted chat messages.
-        """
-
-        restored: list[BaseMessage] = [
-            SystemMessage(
-                content=self._prompt_builder.build_system_prompt(
-                    self.runtime.session,
-                    TurnContext(),
-                )
-            )
-        ]
-        for message in messages:
-            role = message.get("role")
-            content = str(message.get("content", ""))
-            if role == "user":
-                restored.append(HumanMessage(content=content))
-            elif role == "assistant":
-                restored.append(AIMessage(content=content))
-        self.runtime.session.messages = restored
-
-    def get_chat_history(self, with_system: bool = False) -> str | None:
-        """Render plain-text chat history.
-
-        Parameters
-        ----------
-        with_system : bool, optional
-            Whether to include the system message.
-
-        Returns
-        -------
-        str | None
-            Serialized chat history.
-        """
-
-        try:
-            return _format_chat_history(
-                self.runtime.session.messages,
-                with_system=with_system,
-            )
-        except Exception as exc:
-            logger.warning("Failed to build chat history: %s", exc)
-            return None
-
-    def clone(self) -> "DefaultAgent":
-        """Clone the agent with a fresh session.
-
-        Returns
-        -------
-        DefaultAgent
-            Session-safe cloned agent.
-        """
-
-        return DefaultAgent(
-            model=self.model,
-            system_prompt=self._system_prompt,
-            voice_names=self.voice_names,
-            emotions=self.emotions,
-            tools=self._tool_provider.get_tool_specs(),
+        self.voice_names = normalized_voice_names
+        self.emotions = normalized_emotions
+        super().__init__(
+            model=resolved_model,
+            scenario=scenario,
+            clone_kwargs={
+                "system_prompt": system_prompt,
+                "voice_names": normalized_voice_names,
+                "emotions": normalized_emotions,
+            },
+            tool_provider=tool_provider,
         )
-
-    def add_tools(self, tools: list[BaseTool | Callable[[], BaseTool]]) -> None:
-        """Attach additional tools to the default scenario.
-
-        Parameters
-        ----------
-        tools : list[BaseTool | Callable[[], BaseTool]]
-            Tool instances or factories.
-        """
-
-        if not tools:
-            return
-        self._tool_provider.add_tools(tools)

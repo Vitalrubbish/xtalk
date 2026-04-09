@@ -349,12 +349,13 @@ class AgentRuntime:
                 content=f"Tool {name} not found",
                 tool_call_id=tool_call["id"],
             )
+        tool_input = tool_call.get("args", {})
         try:
             if hasattr(tool, "ainvoke"):
-                result = await tool.ainvoke(tool_call)
+                result = await tool.ainvoke(tool_input)
             else:
                 loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(None, tool.invoke, tool_call)
+                result = await loop.run_in_executor(None, tool.invoke, tool_input)
             if isinstance(result, ToolMessage):
                 return result
             return ToolMessage(

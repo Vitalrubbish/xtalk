@@ -1,7 +1,6 @@
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Iterable, Union, TypedDict, List, AsyncIterator, Callable, Any
-from langchain.chat_models.base import BaseChatModel
 from ..pipelines.context import PipelineContext
 from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
@@ -45,7 +44,7 @@ class Agent(ABC):
 
     def generate_stream(
         self, input: Union[str, AgentInput]
-    ) -> Iterable[Union[str, ToolCall]]:
+    ) -> Iterable[Union[str, ToolCall, dict[str, Any]]]:
         """Stream response chunks for the input.
 
         Parameters
@@ -55,9 +54,10 @@ class Agent(ABC):
 
         Yields
         ------
-        str | ToolCall
-            Tool calls followed by text chunks. The default implementation
-            delegates to ``generate()`` and yields its result in streaming form.
+        str | ToolCall | dict[str, Any]
+            Tool calls, tool-result payloads, followed by text chunks. The
+            default implementation delegates to ``generate()`` and yields its
+            result in streaming form.
         """
         result = self.generate(input)
         if isinstance(result, tuple):
@@ -94,7 +94,7 @@ class Agent(ABC):
 
     async def async_generate_stream(
         self, input: Union[str, AgentInput]
-    ) -> AsyncIterator[Union[str, ToolCall]]:
+    ) -> AsyncIterator[Union[str, ToolCall, dict[str, Any]]]:
         """Asynchronously stream agent outputs.
 
         Parameters
@@ -104,7 +104,7 @@ class Agent(ABC):
 
         Yields
         ------
-        str | ToolCall
+        str | ToolCall | dict[str, Any]
             Streamed outputs from ``generate_stream()``.
         """
 
@@ -154,16 +154,6 @@ class Agent(ABC):
             Persisted chat messages ordered by session history.
         """
         pass
-
-    def get_llm(self) -> BaseChatModel | None:
-        """Return the backing chat model when the agent exposes one.
-
-        Returns
-        -------
-        BaseChatModel | None
-            Underlying chat model or ``None``.
-        """
-        return None
 
     def get_chat_history(self) -> str | None:
         """Return the serialized conversation history when available.

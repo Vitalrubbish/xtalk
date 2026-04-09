@@ -1,13 +1,7 @@
-import { getPlatform, Platform } from "./utils";
 import { BaseWebSocket } from "./bases/websocket";
-import { WebWebSocket } from "./platforms/web"
+import { getPlatformRuntime } from "./platforms/index";
 export { createWebSocket };
 
-function createWebSocket(url: string | any, protocols?: string | string[]): BaseWebSocket {
-    switch (getPlatform()) {
-        case Platform.Web:
-            return new WebWebSocket(url, protocols);
-        default:
-            throw new Error("Unknown platform");
-    }
+function createWebSocket(url: string | URL, protocols?: string | string[]): BaseWebSocket {
+    return getPlatformRuntime().createWebSocket(url, protocols);
 }

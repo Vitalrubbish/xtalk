@@ -84,7 +84,6 @@ class AudioFrameReceived(BaseEvent):
     TYPE: ClassVar[str] = "audio.frame_received"
     audio_data: bytes
     sample_rate: int = 16000
-    is_final: bool = False
 
 
 @dataclass
@@ -217,6 +216,7 @@ class TTSSpeedChange(BaseEvent):
 class TTSChunkGenerated(BaseEvent):
     TYPE: ClassVar[str] = "tts.chunk_generated"
     audio_chunk: bytes = b""
+    sample_rate: int = 48000
 
 
 @dataclass
@@ -385,7 +385,6 @@ class TurnTTSTextAppendRequested(BaseEvent):
 
     TYPE: ClassVar[str] = "turn.tts_text_append_requested"
     text: str = ""
-    reason: str = "asr_partial"
 
 
 # ==================== Speaker Notification (Frontend) ====================
@@ -449,7 +448,6 @@ class TurnDetectorStopSpeaking(BaseEvent):
     """Turn detector determined ai should stop speaking."""
 
     TYPE: ClassVar[str] = "turn_detector.stop_speaking"
-    semantic: str = ""
 
 
 @dataclass
@@ -457,4 +455,3 @@ class TurnDetectorStartGeneration(BaseEvent):
     """Turn detector determined ai should start generation."""
 
     TYPE: ClassVar[str] = "turn_detector.start_generation"
-    semantic: str = ""

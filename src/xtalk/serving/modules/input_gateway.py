@@ -39,6 +39,22 @@ def _require(data: dict, key: str, session_id: str, context: str) -> bool:
     return True
 
 
+def _resolve_input_sample_rate(config: dict[str, Any] | None) -> int:
+    """Resolve the configured input sample rate with a safe default."""
+    if config is None:
+        return 16000
+
+    configured_sample_rate = config.get("input_sample_rate", 16000)
+    try:
+        return int(configured_sample_rate)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid input_sample_rate %r; falling back to 16000",
+            configured_sample_rate,
+        )
+        return 16000
+
+
 class TextMsgHandler(EventListenerMixin):
     """Text signal handler that dispatches frontend control messages to events."""
 
@@ -239,6 +255,7 @@ class InputGateway(EventListenerMixin):
         event_bus: EventBus,
         session_id: str,
         websocket: WebSocket,
+        config: dict[str, Any] | None = None,
     ):
         """
         Initialize WebSocket input gateway.
@@ -247,10 +264,13 @@ class InputGateway(EventListenerMixin):
             event_bus: shared event bus instance
             session_id: unique session identifier
             websocket: active WebSocket connection
+            config: service configuration shared with the session
         """
         self.event_bus = event_bus
         self.session_id = session_id
         self.websocket = websocket
+        self.config: dict[str, Any] = config or {}
+        self.input_sample_rate = _resolve_input_sample_rate(self.config)
 
         self.text_msg_handler = TextMsgHandler(event_bus, session_id, websocket)
 
@@ -284,8 +304,8 @@ class InputGateway(EventListenerMixin):
             logger.info(
                 "WebSocket disconnected - session: %s, code: %s, reason: %s",
                 self.session_id,
-                getattr(e, "code", "N/A"),
-                getattr(e, "reason", "N/A"),
+                e.code,
+                e.reason,
             )
         except Exception as e:
             error_msg = str(e).lower()
@@ -324,8 +344,7 @@ class InputGateway(EventListenerMixin):
             AudioFrameReceived(
                 session_id=self.session_id,
                 audio_data=audio_data,
-                is_final=False,
-                sample_rate=16000,
+                sample_rate=self.input_sample_rate,
             )
         )
 

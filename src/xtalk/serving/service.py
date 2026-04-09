@@ -24,9 +24,10 @@ from .modules.speaker_manager import SpeakerManager
 from .modules.embeddings_manager import EmbeddingsManager
 from .modules.recording_manager import RecordingManager
 from .modules.turn_detector_manager import TurnDetectorManager
+from .modules.persistence_manager import PersistenceManager
 from .events import BaseEvent
 from ..pipelines import Pipeline
-from .interfaces import EventListenerMixin, EventOverrides
+from .interfaces import EventListenerMixin, EventOverrides, TurnStateRestorable
 
 
 class Service:
@@ -54,9 +55,10 @@ class Service:
         service_config: dict[str, Any] | None = None,
         manager_classes: list[Type[Manager]] | None = None,
         _websocket: WebSocket | None = None,
+        _session_id: str | None = None,
         _event_overrides: dict[Type[EventListenerMixin], EventOverrides] | None = None,
     ):
-        self.session_id = str(uuid.uuid4())
+        self.session_id = _session_id or str(uuid.uuid4())
         pipeline = pipeline.clone()
         self.pipeline = pipeline  # Keep pipeline reference for later model switches
         # Per-session config (shared with managers/gateways)
@@ -69,6 +71,9 @@ class Service:
         self.event_bus = EventBus(enable_history=False, max_history=0)
 
         self._manager_classes: list[Type[Manager]] = list(manager_classes or [])
+        if self._should_enable_persistence_manager():
+            if PersistenceManager not in self._manager_classes:
+                self._manager_classes.append(PersistenceManager)
         self._managers: list[Manager] = []
         self._event_overrides: dict[Type[EventListenerMixin], EventOverrides] = (
             self._clone_event_overrides(_event_overrides)
@@ -81,7 +86,10 @@ class Service:
             manager = self._instantiate_manager(manager_cls)
             self._managers.append(manager)
         self.input_gateway = InputGateway(
-            self.event_bus, self.session_id, _websocket
+            self.event_bus,
+            self.session_id,
+            _websocket,
+            config=self.service_config,
         )
         self.output_gateway = OutputGateway(
             self.event_bus,
@@ -276,9 +284,28 @@ class Service:
                 "This Service instance is a prototype and cannot handle messages."
             )
         await self.input_gateway.handle_connection(already_accepted=already_accepted)
-        # Send session_id to frontend immediately for tracking uploads, etc.
-        await self.output_gateway.send_session_info()
         await self.input_gateway.handle_message_loop()
+
+    def restore_conversation(self, *, messages: list[dict[str, Any]]) -> None:
+        """Restore persisted conversation history into the session agent."""
+        agent = self.pipeline.get_agent()
+        if agent is None:
+            return
+        agent.restore_history(messages)
+
+    def restore_turn_state(self, *, last_turn_id: int) -> None:
+        """Restore per-manager turn counters from persisted state."""
+        for manager in self._managers:
+            if isinstance(manager, TurnStateRestorable):
+                manager.restore_turn_state(last_turn_id=last_turn_id)
+
+    async def send_session_attached(self) -> None:
+        """Notify the client that the session is attached."""
+        if not hasattr(self, "output_gateway"):
+            raise RuntimeError(
+                "This Service instance is a prototype and cannot send session events."
+            )
+        await self.output_gateway.send_session_attached()
 
     async def stop(self) -> None:
         """Stop the service and shut down all managers."""
@@ -294,7 +321,13 @@ class Service:
                 e,
             )
 
-    def clone(self, new_websocket: WebSocket) -> "Service":
+    def clone(
+        self,
+        new_websocket: WebSocket,
+        *,
+        session_id: str | None = None,
+        service_config_overrides: dict[str, Any] | None = None,
+    ) -> "Service":
         """Clone the service prototype for a new WebSocket session.
 
         Parameters
@@ -307,14 +340,23 @@ class Service:
         Service
             Cloned service instance of the same concrete type.
         """
+        cloned_service_config = dict(self.service_config)
+        if service_config_overrides:
+            cloned_service_config.update(service_config_overrides)
         new_service = type(self)(
             pipeline=self.pipeline,
-            service_config=self.service_config,
+            service_config=cloned_service_config,
             manager_classes=self._manager_classes,
             _websocket=new_websocket,
+            _session_id=session_id,
             _event_overrides=self._event_overrides,
         )
         return new_service
+
+    def _should_enable_persistence_manager(self) -> bool:
+        persistence_store = self.service_config.get("persistence_store")
+        user_id = self.service_config.get("user_id")
+        return persistence_store is not None and isinstance(user_id, str) and bool(user_id)
 
     @staticmethod
     def _clone_event_overrides(
@@ -367,6 +409,7 @@ class DefaultService(Service):
         service_config: dict[str, Any] | None = None,
         manager_classes: list[Type[Manager]] | None = None,
         _websocket: WebSocket | None = None,
+        _session_id: str | None = None,
         _event_overrides: dict[Type[EventListenerMixin], EventOverrides] | None = None,
     ):
         super().__init__(
@@ -376,5 +419,6 @@ class DefaultService(Service):
                 self.MANAGER_CLASSES if manager_classes is None else manager_classes
             ),
             _websocket=_websocket,
+            _session_id=_session_id,
             _event_overrides=_event_overrides,
         )

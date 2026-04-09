@@ -23,9 +23,13 @@ const session = createSession(getWebSocketURL());
 const $btnStart = document.getElementById('btn-start');
 const $btnStop = document.getElementById('btn-stop');
 const $btnMute = document.getElementById('btn-mute');
+const $btnNewSession = document.getElementById('btn-new-session');
+const $btnRefreshSessions = document.getElementById('btn-refresh-sessions');
 const $voiceSelect = document.getElementById('voice-select');
 const $btnUploadFile = document.getElementById('btn-upload-file');
 const $fileInput = document.getElementById('file-input');
+const $sessionList = document.getElementById('session-list');
+const $sessionListEmpty = document.getElementById('session-list-empty');
 const $streamState = document.getElementById('stream-state');
 const $sessionId = document.getElementById('session-id');
 const $waveform = document.getElementById('waveform');
@@ -61,6 +65,11 @@ let rafId = null;
 let isActive = false;
 let currentStreamState = 'idle';
 let recentAudioObjectUrl = null;
+let sessionsCache = [];
+let previousSessionId = null;
+let previousMessageCount = 0;
+let isSessionListLoading = false;
+let refreshSessionsTimer = null;
 
 const FULL_AUDIO_CHANNELS = 2;
 const FULL_AUDIO_BYTES_PER_SAMPLE = 2;
@@ -79,6 +88,107 @@ const STATE_COLORS = {
     processing: '#fbbf24',
     speaking: '#93c5fd'
 };
+
+function setConnectionButtons(isConnected) {
+    $btnStart.disabled = isConnected;
+    $btnStop.disabled = !isConnected;
+}
+
+function resetRealtimeUI() {
+    stopVisualization();
+    setConnectionButtons(false);
+}
+
+function formatSessionTitle(item) {
+    const title = (item?.title || '').trim();
+    if (title) {
+        return title;
+    }
+    if (item?.session_id === session.state.sessionId) {
+        return 'Current Draft';
+    }
+    return `Session ${String(item?.session_id || '').slice(0, 8) || '--'}`;
+}
+
+function renderSessions() {
+    const activeSessionId = session.state.sessionId;
+    $sessionList.innerHTML = '';
+    $sessionListEmpty.style.display = sessionsCache.length === 0 ? '' : 'none';
+
+    for (const item of sessionsCache) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'session-item';
+        if (item.session_id === activeSessionId) {
+            button.classList.add('active');
+        }
+
+        const title = document.createElement('div');
+        title.className = 'session-title';
+        title.textContent = formatSessionTitle(item);
+
+        const meta = document.createElement('div');
+        meta.className = 'session-meta';
+        meta.textContent = item.session_id;
+
+        button.appendChild(title);
+        button.appendChild(meta);
+        button.addEventListener('click', async () => {
+            if (item.session_id === session.state.sessionId) {
+                return;
+            }
+            try {
+                resetRecentAudioBuffer();
+                resetRealtimeUI();
+                await session.switchSession(item.session_id);
+                renderSessions();
+            } catch (error) {
+                alert('Failed to switch session: ' + (error?.message || error));
+            }
+        });
+
+        $sessionList.appendChild(button);
+    }
+}
+
+async function refreshSessions({ preserveSelection = true } = {}) {
+    if (isSessionListLoading) {
+        return;
+    }
+    isSessionListLoading = true;
+    $btnRefreshSessions.disabled = true;
+    try {
+        const sessions = await session.getSessions();
+        sessionsCache = Array.isArray(sessions) ? sessions : [];
+        $sessionListEmpty.textContent = 'No sessions yet.';
+        renderSessions();
+        if (!preserveSelection && session.state.sessionId) {
+            const exists = sessionsCache.some((item) => item.session_id === session.state.sessionId);
+            if (!exists) {
+                await session.switchSession(null);
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load sessions:', error);
+        $sessionListEmpty.textContent = 'Failed to load sessions.';
+        $sessionListEmpty.style.display = '';
+    } finally {
+        isSessionListLoading = false;
+        $btnRefreshSessions.disabled = false;
+    }
+}
+
+function scheduleRefreshSessions() {
+    if (refreshSessionsTimer) {
+        clearTimeout(refreshSessionsTimer);
+    }
+    refreshSessionsTimer = setTimeout(() => {
+        refreshSessionsTimer = null;
+        refreshSessions().catch((error) => {
+            console.error('Failed to refresh sessions:', error);
+        });
+    }, 300);
+}
 
 function ensureAudioContext() {
     if (!audioCtx) {
@@ -303,6 +413,7 @@ session.onStateChange((state) => {
     $streamState.textContent = state.streamState;
     $sessionId.textContent = state.sessionId || '--';
     currentStreamState = state.streamState;
+    renderSessions();
 
     $messages.innerHTML = '';
     for (const msg of state.messages) {
@@ -325,6 +436,14 @@ session.onStateChange((state) => {
     $latencyTts.textContent = l.ttsFirstChunk ?? '--';
     const e2eParts = [l.network, l.asr, l.llmSentence, l.ttsFirstChunk];
     $latencyE2e.textContent = e2eParts.every(v => v != null) ? e2eParts.reduce((a, b) => a + b, 0) : '--';
+
+    if (state.sessionId !== previousSessionId) {
+        previousSessionId = state.sessionId;
+        scheduleRefreshSessions();
+    } else if (state.sessionId && state.messages.length !== previousMessageCount) {
+        scheduleRefreshSessions();
+    }
+    previousMessageCount = state.messages.length;
 });
 
 session.onInputAudioChunk((pcmChunkInt16, sampleRate) => {
@@ -411,8 +530,8 @@ $btnStart.addEventListener('click', async () => {
         resetRecentAudioBuffer();
         await session.open();
         startVisualization();
-        $btnStart.disabled = true;
-        $btnStop.disabled = false;
+        setConnectionButtons(true);
+        await refreshSessions();
     } catch (e) {
         alert('Failed to start: ' + (e?.message || e));
     }
@@ -421,9 +540,7 @@ $btnStart.addEventListener('click', async () => {
 $btnStop.addEventListener('click', async () => {
     try {
         await session.close();
-        stopVisualization();
-        $btnStart.disabled = false;
-        $btnStop.disabled = true;
+        resetRealtimeUI();
     } catch (e) {
         alert('Failed to stop: ' + (e?.message || e));
     }
@@ -456,15 +573,34 @@ $btnToggleRecentAudio.addEventListener('click', () => {
     }
 });
 
+$btnRefreshSessions.addEventListener('click', async () => {
+    await refreshSessions();
+});
+
+$btnNewSession.addEventListener('click', async () => {
+    try {
+        resetRecentAudioBuffer();
+        resetRealtimeUI();
+        await session.switchSession(null);
+        renderSessions();
+    } catch (error) {
+        alert('Failed to create draft session: ' + (error?.message || error));
+    }
+});
+
 window.addEventListener('resize', () => {
     resizeCanvas();
 });
 
 window.addEventListener('beforeunload', () => {
+    if (refreshSessionsTimer) {
+        clearTimeout(refreshSessionsTimer);
+        refreshSessionsTimer = null;
+    }
     revokeRecentAudioUrl();
 });
 
-$btnStop.disabled = true;
+setConnectionButtons(false);
 setRecentAudioVisible(false);
 
 let availableAudios = [];
@@ -531,3 +667,6 @@ $fileInput.addEventListener('change', async (e) => {
 });
 
 loadReferenceAudios();
+refreshSessions().catch((error) => {
+    console.error('Initial session load failed:', error);
+});

@@ -1,13 +1,20 @@
 export { Conversation };
+export type { ConversationMessage, ConversationState, ConversationUser };
 
-type Message = {
+type ConversationMessage = {
     role: "user" | "assistant" | "info";
     content: string;
     turnId?: number;
 }
+
+type ConversationUser = {
+    id: string;
+}
+
 function defaultConversation(): {
     streamState: "idle" | "listening" | "processing" | "speaking";
     sessionId: string | null;
+    user: ConversationUser | null;
     latency: {
         network?: number,
         asr?: number,
@@ -15,7 +22,7 @@ function defaultConversation(): {
         llmSentence?: number,
         ttsFirstChunk?: number
     };
-    messages: Message[];
+    messages: ConversationMessage[];
     thought: string;
     caption: string;
     retrieval: string;
@@ -23,6 +30,7 @@ function defaultConversation(): {
     return {
         streamState: "idle",
         sessionId: null,
+        user: null,
         latency: {},
         messages: [],
         thought: "",
@@ -30,25 +38,36 @@ function defaultConversation(): {
         retrieval: "",
     };
 }
+
 type ConversationState = ReturnType<typeof defaultConversation>;
+
 class Conversation {
     private _state: ConversationState = defaultConversation();
-    private stateChangeCallback: (state: ConversationState) => void = () => { };
+    private stateChangeCallbacks = new Set<(state: ConversationState) => void>();
     private fullAudioChunkCallback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void = (_chunk, _sr) => { };
+
+    private notifyStateChange(): void {
+        for (const callback of this.stateChangeCallbacks) {
+            callback(this._state);
+        }
+    }
+
     onStateChange(callback: (state: ConversationState) => void): void {
         callback(this._state);
-        this.stateChangeCallback = callback;
+        this.stateChangeCallbacks.add(callback);
     }
+
     onFullAudioChunk(
         callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void
     ): void {
         this.fullAudioChunkCallback = callback;
     }
+
     get state(): ConversationState {
         return new Proxy(this._state, {
             set: (target, key: keyof ConversationState, value) => {
                 target[key] = value;
-                this.stateChangeCallback(target);
+                this.notifyStateChange();
                 return true;
             },
             get: (target, key: keyof ConversationState) => {
@@ -56,35 +75,53 @@ class Conversation {
             }
         });
     }
-    appendMessage(message: Message): void {
-        // If is an info, directly append
+
+    setUser(user: ConversationUser | null): void {
+        this._state.user = user;
+        this.notifyStateChange();
+    }
+
+    switch(sessionId: string | null, messages: ConversationMessage[]): void {
+        this._state.sessionId = sessionId;
+        this._state.messages = [...messages];
+        this._state.streamState = "idle";
+        this._state.thought = "";
+        this._state.caption = "";
+        this._state.retrieval = "";
+        this._state.latency = {};
+        this.notifyStateChange();
+    }
+
+    appendMessage(message: ConversationMessage): void {
         if (message.role === "info") {
-            this.state.messages.push(message);
-            this.stateChangeCallback(this._state);
+            this._state.messages.push(message);
+            this.notifyStateChange();
             return;
         }
-        // Find the latest message with same role and turnId to replace
-        for (let i = this.state.messages.length - 1; i >= 0; i--) {
-            const msg = this.state.messages[i]!;
+
+        for (let i = this._state.messages.length - 1; i >= 0; i--) {
+            const msg = this._state.messages[i]!;
             if (msg.role === message.role && msg.turnId === message.turnId) {
                 msg.content = message.content;
-                // If last message is an info, put that message in front of the updated message
-                const lastMsg = this.state.messages[this.state.messages.length - 1]!;
-                if (lastMsg.role === "info") {
-                    this.state.messages.splice(this.state.messages.length - 1, 1);
-                    this.state.messages.splice(i, 0, lastMsg);
+                const lastMsg = this._state.messages[this._state.messages.length - 1];
+                if (lastMsg && lastMsg.role === "info") {
+                    this._state.messages.splice(this._state.messages.length - 1, 1);
+                    this._state.messages.splice(i, 0, lastMsg);
                 }
-                this.stateChangeCallback(this._state);
+                this.notifyStateChange();
                 return;
             }
         }
-        // Otherwise, add as new message
-        this.state.messages.push(message);
-        this.stateChangeCallback(this._state);
+
+        this._state.messages.push(message);
+        this.notifyStateChange();
     }
-    updateLatency(latency: Conversation["state"]["latency"]) {
-        this.state.latency = { ...latency };
+
+    updateLatency(latency: Conversation["state"]["latency"]): void {
+        this._state.latency = { ...latency };
+        this.notifyStateChange();
     }
+
     emitFullAudioChunk(pcmChunkInt16: ArrayBuffer, sampleRate: number): void {
         this.fullAudioChunkCallback(pcmChunkInt16, sampleRate);
     }

@@ -4,11 +4,22 @@ import sys
 import hashlib
 import importlib
 import importlib.util
+import uuid
 from pathlib import Path
 from typing import Callable, Type, Any, Union
-from fastapi import WebSocket
+from fastapi import (
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    status,
+)
 from langchain_core.tools import BaseTool
 
+from .auth import JWTAuth, extract_bearer_token, resolve_auth_config
+from .persistence import PersistenceStore
 from .serving.service_manager import ServiceManager
 from .pipelines import Pipeline
 from .pipelines.default import DefaultPipeline
@@ -62,7 +73,18 @@ class Xtalk:
             Maximum number of concurrent sessions. If omitted, no session limit
             is enforced.
         """
-        self._service_manager = ServiceManager(service_prototype=service_prototype)
+        service_config = dict(service_prototype.service_config)
+        data_dir = service_config.get("data_dir") or "data"
+        auth_secret, auth_ttl_seconds = resolve_auth_config(service_config)
+
+        self._persistence = PersistenceStore(
+            Path(data_dir).expanduser().resolve() / "chat_history.sqlite3"
+        )
+        self._auth = JWTAuth(secret=auth_secret, ttl_seconds=auth_ttl_seconds)
+        self._service_manager = ServiceManager(
+            service_prototype=service_prototype,
+            persistence_store=self._persistence,
+        )
         self._pipeline = service_prototype.pipeline
         self._session_limiter = (
             SessionLimiter(max_sessions) if max_sessions is not None else None
@@ -209,7 +231,7 @@ class Xtalk:
         """
         self._session_limiter = SessionLimiter(limit)
 
-    async def embed_text(self, session_id: str, text: str):
+    async def embed_text(self, session_id: str, text: str, user_id: str | None = None):
         """Queue text for session-scoped embedding storage.
 
         Parameters
@@ -224,6 +246,10 @@ class Xtalk:
         ValueError
             Raised if the target session does not exist.
         """
+        if user_id is not None and not self._persistence.user_owns_session(
+            user_id, session_id
+        ):
+            raise ValueError(f"Session {session_id} not found for user {user_id}.")
         service = self._service_manager.get_service(session_id)
         if service is None:
             raise ValueError(f"Session {session_id} not found.")
@@ -251,13 +277,123 @@ class Xtalk:
             raise RuntimeError("Cannot add tools after services have been created.")
         self._pipeline.get_agent().add_tools(tools_or_factories)
 
-    async def connect(self, websocket: WebSocket):
+    def _login(self) -> dict[str, Any]:
+        user_id = str(uuid.uuid4())
+        user = self._persistence.ensure_user(user_id)
+        return {
+            "access_token": self._auth.issue_token(sub=user_id),
+            "user": user,
+        }
+
+    def _verify_access_token(self, token: str) -> str:
+        user_id = self._auth.verify_token(token)
+        self._persistence.ensure_user(user_id)
+        return user_id
+
+    def _list_sessions(self, user_id: str) -> list[dict[str, Any]]:
+        self._persistence.ensure_user(user_id)
+        return self._persistence.list_sessions(user_id)
+
+    def _get_session_detail(self, user_id: str, session_id: str) -> dict[str, Any]:
+        self._persistence.ensure_user(user_id)
+        return self._persistence.get_session_detail(user_id, session_id)
+
+    def mount_routes(
+        self,
+        app: Any,
+        *,
+        login_path: str = "/api/auth/login",
+        sessions_path: str = "/api/sessions",
+        session_detail_path: str = "/api/sessions/{session_id}",
+        upload_path: str = "/api/upload",
+        ws_path: str = "/ws",
+    ) -> None:
+        """Mount the built-in auth, session, upload, and websocket routes."""
+
+        def _require_http_user(request: Request) -> str:
+            token = extract_bearer_token(request.headers.get("authorization"))
+            if not token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Missing bearer token",
+                )
+            try:
+                return self._verify_access_token(token)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=str(exc),
+                ) from exc
+
+        def _require_ws_user(websocket: WebSocket) -> str:
+            token = websocket.query_params.get("access_token")
+            if token is None:
+                token = extract_bearer_token(websocket.headers.get("authorization"))
+            if not token:
+                raise ValueError("Missing access token")
+            return self._verify_access_token(token)
+
+        @app.post(login_path)
+        async def _login_route() -> dict[str, Any]:
+            return self._login()
+
+        @app.get(sessions_path)
+        async def _list_sessions_route(request: Request) -> dict[str, Any]:
+            user_id = _require_http_user(request)
+            return {"sessions": self._list_sessions(user_id)}
+
+        @app.get(session_detail_path)
+        async def _session_detail_route(
+            request: Request, session_id: str
+        ) -> dict[str, Any]:
+            user_id = _require_http_user(request)
+            try:
+                return self._get_session_detail(user_id, session_id)
+            except KeyError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+                ) from exc
+
+        @app.post(upload_path)
+        async def _upload_route(
+            request: Request,
+            session_id: str = Form(...),
+            file: UploadFile = File(...),
+        ) -> dict[str, str]:
+            user_id = _require_http_user(request)
+            content_type = (file.content_type or "").lower()
+            is_text = content_type.startswith("text/") if content_type else False
+            if content_type and not is_text:
+                raise HTTPException(
+                    status_code=400, detail="Only text files are supported."
+                )
+            text = (await file.read()).decode("utf-8", errors="ignore")
+            try:
+                await self.embed_text(session_id=session_id, text=text, user_id=user_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return {"status": "ok"}
+
+        @app.websocket(ws_path)
+        async def _websocket_route(websocket: WebSocket) -> None:
+            try:
+                user_id = _require_ws_user(websocket)
+            except ValueError:
+                await websocket.accept()
+                await websocket.close(code=1008, reason="Unauthorized")
+                return
+            await self.connect(websocket, user_id=user_id)
+
+    async def connect(self, websocket: WebSocket, user_id: str | None = None):
         """Accept a WebSocket session and hand it to the service manager.
 
         Parameters
         ----------
         websocket : WebSocket
             FastAPI WebSocket connection from the client.
+        user_id : str | None, optional
+            Authenticated user identifier. When omitted, the connection falls
+            back to the legacy connection-scoped session behavior.
 
         Notes
         -----
@@ -274,12 +410,12 @@ class Xtalk:
                     pass
                 return
             await self._service_manager.connect(
-                websocket=websocket, already_accepted=True
+                websocket=websocket, already_accepted=True, user_id=user_id
             )
             await self._session_limiter.release(waiter)
             return
 
-        await self._service_manager.connect(websocket=websocket)
+        await self._service_manager.connect(websocket=websocket, user_id=user_id)
 
     @staticmethod
     def _max_sessions(config: dict):

@@ -4,7 +4,10 @@
  * Public frontend client APIs for creating and controlling X-Talk sessions.
  */
 
-import { createSession } from "./core";
+import { createSession } from "./session/create";
 
 export { createSession };
-export type { Session, SessionConfig } from "./core";
+export type {
+    Session,
+    SessionConfig,
+} from "./session/types";

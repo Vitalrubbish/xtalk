@@ -148,7 +148,7 @@ class RecordingManager(Manager):
             pcm = event.audio_data or b""
             if not pcm:
                 return
-            src_sr = getattr(event, "sample_rate", 16000) or 16000
+            src_sr = event.sample_rate or 16000
             data_i16 = self._resample_to_int16(pcm, src_sr, self.TARGET_SR)
             await self._append_user_audio(data_i16)
         except Exception as e:
@@ -168,10 +168,10 @@ class RecordingManager(Manager):
         if not self._enabled:
             return
         try:
-            pcm = getattr(event, "audio_chunk", b"") or b""
+            pcm = event.audio_chunk or b""
             if not pcm:
                 return
-            src_sr = getattr(event, "sample_rate", 48000) or 48000
+            src_sr = event.sample_rate or 48000
             async with self._lock:
                 self._pending_tts_chunks.append((pcm, src_sr))
         except Exception as e:

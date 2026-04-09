@@ -153,22 +153,20 @@ class OutputGateway(EventListenerMixin):
 
     async def _forward_asr(self, action: str, event) -> None:
         """Forward an ASR result (partial or final) to the frontend."""
-        display_text = getattr(event, "display_text", "") or event.text
+        display_text = event.display_text or event.text
         await self._forward(
             action,
             {
                 "text": display_text,
-                "confidence": getattr(event, "confidence", 0.0),
-                "is_final": getattr(event, "is_final", action == "finish_asr"),
                 "turn_id": event.turn_id,
             },
         )
 
     # ── Session ─────────────────────────────────────────────────────
 
-    async def send_session_info(self) -> None:
-        """Send the session identifier to the frontend."""
-        await self._forward("session_info", {"session_id": self.session_id})
+    async def send_session_attached(self) -> None:
+        """Send the attached session identifier to the frontend."""
+        await self._forward("session_attached", {"session_id": self.session_id})
 
     # ── Event handlers ──────────────────────────────────────────────
 
@@ -221,8 +219,8 @@ class OutputGateway(EventListenerMixin):
         await self._forward(
             "speaker_updated",
             {
-                "speaker_id": getattr(event, "speaker_id", None),
-                "reason": getattr(event, "reason", ""),
+                "speaker_id": event.speaker_id,
+                "reason": event.reason,
             },
         )
 
@@ -231,8 +229,8 @@ class OutputGateway(EventListenerMixin):
         await self._forward(
             "thought_updated",
             {
-                "text": getattr(event, "text", "") or "",
-                "is_final": bool(getattr(event, "is_final", False)),
+                "text": event.text or "",
+                "is_final": bool(event.is_final),
             },
         )
 
@@ -241,9 +239,9 @@ class OutputGateway(EventListenerMixin):
         await self._forward(
             "caption_updated",
             {
-                "text": getattr(event, "text", "") or "",
-                "is_final": bool(getattr(event, "is_final", False)),
-                "reason": getattr(event, "reason", ""),
+                "text": event.text or "",
+                "is_final": bool(event.is_final),
+                "reason": event.reason,
             },
         )
 
@@ -252,8 +250,8 @@ class OutputGateway(EventListenerMixin):
         await self._forward(
             "retrieval_updated",
             {
-                "text": getattr(event, "text", "") or "",
-                "is_final": bool(getattr(event, "is_final", False)),
+                "text": event.text or "",
+                "is_final": bool(event.is_final),
             },
         )
 
@@ -277,9 +275,9 @@ class OutputGateway(EventListenerMixin):
             "full_audio_frame",
             {
                 "audio_base64": base64.b64encode(event.audio_chunk).decode("ascii"),
-                "sample_rate": int(getattr(event, "sample_rate", 48000)),
-                "channels": int(getattr(event, "channels", 2)),
-                "format": getattr(event, "format", "pcm_s16le"),
+                "sample_rate": int(event.sample_rate),
+                "channels": int(event.channels),
+                "format": event.format,
             },
         )
 
@@ -304,8 +302,8 @@ class OutputGateway(EventListenerMixin):
         await self._forward(
             "emotion_changed",
             {
-                "name": getattr(event, "emotion_name", ""),
-                "vector": getattr(event, "emotion_vector", []) or [],
+                "name": event.emotion_name,
+                "vector": event.emotion_vector or [],
             },
         )
 
@@ -314,23 +312,22 @@ class OutputGateway(EventListenerMixin):
         await self._forward(
             "latency_metrics",
             {
-                "network_latency_ms": int(getattr(event, "network_latency_ms", 0)),
-                "asr_latency_ms": int(getattr(event, "asr_latency_ms", 0)),
-                "llm_first_token_ms": int(getattr(event, "llm_first_token_ms", 0)),
-                "llm_sentence_ms": int(getattr(event, "llm_sentence_ms", 0)),
-                "tts_first_chunk_ms": int(getattr(event, "tts_first_chunk_ms", 0)),
-                "e2e_latency_ms": int(getattr(event, "e2e_latency_ms", 0)),
+                "network_latency_ms": int(event.network_latency_ms),
+                "asr_latency_ms": int(event.asr_latency_ms),
+                "llm_first_token_ms": int(event.llm_first_token_ms),
+                "llm_sentence_ms": int(event.llm_sentence_ms),
+                "tts_first_chunk_ms": int(event.tts_first_chunk_ms),
             },
         )
 
     @EventListenerMixin.event_handler(ToolCallOccurred, priority=5)
     async def _send_tool_called_signal(self, event: ToolCallOccurred) -> None:
-        if getattr(event, "name", "") == "tool_call_result":
+        if event.name == "tool_call_result":
             return
         await self._forward(
             "tool_called",
             {
-                "name": getattr(event, "name", ""),
-                "args": getattr(event, "args", {}) or {},
+                "name": event.name,
+                "args": event.args or {},
             },
         )

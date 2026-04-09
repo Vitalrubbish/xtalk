@@ -115,22 +115,29 @@ class MutableToolProvider(ToolProvider):
         return list(self._tool_factories)
 
     def get_tools(self, session, turn_context) -> list[BaseTool]:
-        """Instantiate tools for the current turn.
+        """Return session-scoped tool instances for the current turn.
 
         Parameters
         ----------
         session : Any
-            Runtime session state. Unused by the base implementation.
+            Runtime session state used to cache tool instances.
         turn_context : Any
             Structured turn context. Unused by the base implementation.
 
         Returns
         -------
         list[BaseTool]
-            Instantiated tools.
+            Tool instances reused within the current session.
         """
 
-        del session, turn_context
+        del turn_context
+        cache_key = f"_mutable_tool_provider_cache_{id(self)}"
+        cached_tools = session.metadata.get(cache_key)
+        if isinstance(cached_tools, list) and all(
+            isinstance(tool, BaseTool) for tool in cached_tools
+        ):
+            return cached_tools
+
         tools: list[BaseTool] = []
         for factory in self._tool_factories:
             try:
@@ -146,6 +153,7 @@ class MutableToolProvider(ToolProvider):
                     factory,
                     type(tool),
                 )
+        session.metadata[cache_key] = tools
         return tools
 
     @staticmethod

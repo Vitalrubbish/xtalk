@@ -40,13 +40,8 @@ _QUESTIONS: list[str] = [
     "Over the past two weeks, how much have you lost interest or pleasure in things you usually enjoy (e.g., shows, chatting, games, studying)? Use the same zero-to-three scale.",
     "Over the past two weeks, how often have you had trouble falling asleep, staying asleep, or slept too much so that you never feel rested? Zero means never, three means nearly every day.",
     "Over the past two weeks, how often have you felt drained or low on energy, even when you haven’t done much? Rate it from zero to three.",
-    "Over the past two weeks, how often have you noticed a much poorer appetite or eaten far more than usual? Rate it from zero to three.",
-    "Over the past two weeks, how often have you felt bad about yourself-felt you’re not good enough, a failure, or that you’ve let others down? Rate it from zero to three.",
-    "Over the past two weeks, how often have you had trouble concentrating on daily tasks such as reading text or watching videos? Rate it from zero to three.",
-    "Over the past two weeks, how often have you moved or spoken noticeably slower than usual-or the opposite, felt restless, on edge, and unable to sit still? Rate it from zero to three.",
     "Over the past two weeks, how often have you had thoughts that life is pointless, that you should disappear, or that hurting yourself might end everything? Zero means not at all, three means nearly every day.",
 ]
-
 
 def build_mental_questionnaire_tool() -> BaseTool:
     """Build a stateful per-session questionnaire tool factory."""
@@ -56,22 +51,26 @@ def build_mental_questionnaire_tool() -> BaseTool:
     total_score = 0
     finished = False
     risk_item_score = 0
+    print(
+        "[mental_questionnaire] tool created "
+        f"(total_questions={total_questions})"
+    )
 
     def _build_recommendation(score: int, risk_score: int) -> str:
         """Generate a short suggestion from questionnaire results."""
 
-        if score <= 4:
+        if score <= 2:
             base = (
                 "Your responses suggest only minimal emotional distress-perhaps occasional mood swings or stress. "
                 "Keep the habits that already help you, such as regular routines, light exercise, or chatting with trusted people."
             )
-        elif score <= 9:
+        elif score <= 5:
             base = (
                 "Your answers point to mild distress that may occasionally affect your mood or efficiency. "
                 "Give yourself extra care: schedule breaks, talk with friends or family, and plan small pleasant activities. "
                 "If the discomfort lingers or intensifies, consider a brief check-in with a professional."
             )
-        elif score <= 14:
+        elif score <= 9:
             base = (
                 "You appear to be experiencing a moderate level of distress, which may already be affecting sleep, focus, school, or work. "
                 "Please take these signals seriously: try contacting a counselor, campus mental-health center, or psychiatrist soon "
@@ -119,13 +118,13 @@ def build_mental_questionnaire_tool() -> BaseTool:
     }
 
     def _classify_score(score: int) -> str:
-        if score <= 4:
+        if score <= 2:
             return "No or minimal depressive symptoms"
-        if score <= 9:
+        if score <= 5:
             return "Mild depressive symptoms"
-        if score <= 14:
+        if score <= 9:
             return "Moderate depressive symptoms"
-        if score <= 19:
+        if score <= 12:
             return "Moderately severe depressive symptoms"
         return "Severe depressive symptoms"
 
@@ -151,7 +150,7 @@ def build_mental_questionnaire_tool() -> BaseTool:
              * `score`: accumulated score
              * `max_score`: maximum possible score
              * `severity`: rough severity label (from `_classify_score`)
-             * `recommendation`: personalized suggestion based on `score` and the ninth question
+             * `recommendation`: personalized suggestion based on `score` and the final risk question
              * `message`: fixed reminder that this is only a self-screening tool
         4. Calling the tool after completion returns the same final result. Recreate the session or reset the agent to restart.
 
@@ -169,10 +168,21 @@ def build_mental_questionnaire_tool() -> BaseTool:
         """
 
         nonlocal current_index, total_score, finished, risk_item_score
+        print(
+            "[mental_questionnaire] invoked "
+            f"(answer={answer}, current_index={current_index}, "
+            f"total_score={total_score}, finished={finished}, "
+            f"risk_item_score={risk_item_score})"
+        )
 
         if finished:
             severity = _classify_score(total_score)
             recommendation = _build_recommendation(total_score, risk_item_score)
+            print(
+                "[mental_questionnaire] already finished "
+                f"(score={total_score}, severity={severity}, "
+                f"risk_item_score={risk_item_score})"
+            )
             payload = {
                 "finished": True,
                 "question_index": total_questions,
@@ -186,6 +196,7 @@ def build_mental_questionnaire_tool() -> BaseTool:
             return json.dumps(payload, ensure_ascii=False)
 
         if current_index == 0 and answer is None:
+            print("[mental_questionnaire] starting questionnaire")
             payload = {
                 "finished": False,
                 "question_index": 0,
@@ -200,15 +211,32 @@ def build_mental_questionnaire_tool() -> BaseTool:
                 clamped = max(0, min(3, int(answer)))
             except Exception:
                 clamped = 0
+            print(
+                "[mental_questionnaire] normalized answer "
+                f"(raw={answer}, clamped={clamped}, index={current_index})"
+            )
             if current_index == total_questions - 1:
                 risk_item_score = clamped
+                print(
+                    "[mental_questionnaire] updated risk item "
+                    f"(risk_item_score={risk_item_score})"
+                )
             total_score += clamped
             current_index += 1
+            print(
+                "[mental_questionnaire] advanced state "
+                f"(next_index={current_index}, total_score={total_score})"
+            )
 
         if current_index >= total_questions:
             finished = True
             severity = _classify_score(total_score)
             recommendation = _build_recommendation(total_score, risk_item_score)
+            print(
+                "[mental_questionnaire] questionnaire completed "
+                f"(score={total_score}, severity={severity}, "
+                f"risk_item_score={risk_item_score})"
+            )
             payload = {
                 "finished": True,
                 "question_index": total_questions - 1,
@@ -226,6 +254,10 @@ def build_mental_questionnaire_tool() -> BaseTool:
         if current_index >= total_questions:
             current_index = total_questions - 1
 
+        print(
+            "[mental_questionnaire] returning next question "
+            f"(question_index={current_index}, total_questions={total_questions})"
+        )
         payload = {
             "finished": False,
             "question_index": current_index,

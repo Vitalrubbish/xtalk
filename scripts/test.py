@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Automated backend testing and test-set generation for Xtalk."""
+"""Automated backend testing and test-set generation for Xtalk.
+
+Example commands:
+    python scripts/test.py --create logs/test_templates/smoke --out logs/tests
+    python scripts/test.py --config server_configs/sample_local.json --input logs/tests/smoke --out logs/test_results/smoke
+    python scripts/test.py --config server_configs/sample_local.json --input logs/tests/smoke --out logs/test_results/smoke --concurrency 2 --with-vad
+"""
 
 from __future__ import annotations
 
@@ -38,7 +44,11 @@ except Exception:  # pragma: no cover - optional dependency
 DEFAULT_TEST_CONFIG = {
     "concurrency": 1,
     "with_vad": False,
+    "vad_redemption_ms": 500,
 }
+DEFAULT_SETTLE_SECONDS = 1.5
+EMBEDDED_SERVER_HOST = "127.0.0.1"
+EMBEDDED_SERVER_PORT = 0
 SERVICE_CONFIG_PATCH = {
     "recording": True,
     "send_full_audio_to_client": True,
@@ -90,6 +100,7 @@ class EffectiveTestConfig:
 
     concurrency: int
     with_vad: bool
+    vad_redemption_ms: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,39 +149,6 @@ def parse_args() -> argparse.Namespace:
         help="Force-disable client-side VAD in test mode.",
     )
     parser.set_defaults(with_vad_override=None)
-    parser.add_argument(
-        "--test-config",
-        type=Path,
-        help="Explicit path to the dataset test configuration JSON.",
-    )
-    parser.add_argument(
-        "--tts-config",
-        type=Path,
-        help="Explicit path to the TTS configuration JSON used by --create.",
-    )
-    parser.add_argument(
-        "--case-timeout",
-        type=float,
-        default=None,
-        help="Optional per-case timeout in seconds for test mode.",
-    )
-    parser.add_argument(
-        "--settle-seconds",
-        type=float,
-        default=1.5,
-        help="Idle settling time after the last activity before closing a case.",
-    )
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Host used by the embedded FastAPI server in test mode.",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=0,
-        help="Port used by the embedded FastAPI server in test mode. 0 picks a free port.",
-    )
     return parser.parse_args()
 
 
@@ -193,13 +171,9 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def resolve_root_json(
     root: Path,
-    explicit_path: Path | None,
     preferred_names: tuple[str, ...],
 ) -> Path | None:
     """Resolve a single JSON file from a dataset root."""
-    if explicit_path is not None:
-        return explicit_path.resolve()
-
     candidates = sorted(path for path in root.glob("*.json") if path.is_file())
     if not candidates:
         return None
@@ -213,7 +187,7 @@ def resolve_root_json(
 
     names = ", ".join(path.name for path in candidates)
     raise ValueError(
-        f"Found multiple JSON files under {root}, please pass an explicit path: {names}"
+        f"Found multiple JSON files under {root} and could not choose one: {names}"
     )
 
 
@@ -237,14 +211,12 @@ def merge_service_config(raw_config: dict[str, Any]) -> dict[str, Any]:
 def load_effective_test_config(
     dataset_root: Path,
     *,
-    explicit_config_path: Path | None,
     concurrency_override: int | None,
     with_vad_override: bool | None,
-) -> tuple[EffectiveTestConfig, Path | None]:
+) -> EffectiveTestConfig:
     """Load and resolve the dataset test configuration."""
     config_path = resolve_root_json(
         dataset_root,
-        explicit_path=explicit_config_path,
         preferred_names=PREFERRED_TEST_CONFIG_NAMES,
     )
     raw_config = dict(DEFAULT_TEST_CONFIG)
@@ -260,7 +232,19 @@ def load_effective_test_config(
     if concurrency <= 0:
         raise ValueError("concurrency must be a positive integer")
     with_vad = bool(raw_config.get("with_vad", False))
-    return EffectiveTestConfig(concurrency=concurrency, with_vad=with_vad), config_path
+    vad_redemption_ms = int(
+        raw_config.get(
+            "vad_redemption_ms",
+            DEFAULT_TEST_CONFIG["vad_redemption_ms"],
+        )
+    )
+    if vad_redemption_ms <= 0:
+        raise ValueError("vad_redemption_ms must be a positive integer")
+    return EffectiveTestConfig(
+        concurrency=concurrency,
+        with_vad=with_vad,
+        vad_redemption_ms=vad_redemption_ms,
+    )
 
 
 def parse_timestamp_spec(raw_spec: str) -> RelativeTimeSpec:
@@ -350,7 +334,9 @@ def parse_generation_case(case_dir: Path) -> list[GeneratedCaseLine]:
                     f"Invalid timestamp entry in {timestamp_path}:{line_no}: {line}"
                 )
             time_text, text = line.split(":", 1)
-            lines.append(GeneratedCaseLine(time_spec=time_text.strip(), text=text.strip()))
+            lines.append(
+                GeneratedCaseLine(time_spec=time_text.strip(), text=text.strip())
+            )
 
     if not lines:
         raise ValueError(f"No valid generation entries found in {timestamp_path}")
@@ -440,7 +426,9 @@ def decode_tts_audio_payload(
 ) -> tuple[bytes, int]:
     """Normalize a TTS payload into WAV-ready PCM16 bytes."""
     try:
-        audio, sample_rate = sf.read(io.BytesIO(payload), dtype="float32", always_2d=False)
+        audio, sample_rate = sf.read(
+            io.BytesIO(payload), dtype="float32", always_2d=False
+        )
         if isinstance(audio, np.ndarray) and audio.ndim > 1:
             audio = np.mean(audio, axis=1)
         if not isinstance(audio, np.ndarray):
@@ -564,31 +552,42 @@ class AnchorClock:
 
 
 class ClientVADController:
-    """Client-side VAD state machine aligned with the frontend defaults."""
+    """Client-side VAD state machine aligned with frontend/backend VAD timing."""
 
     SAMPLE_RATE = 16000
     FRAME_SAMPLES = 512
     FRAME_BYTES = FRAME_SAMPLES * 2
     MIN_SPEECH_MS = 250
-    REDEMPTION_MS = 500
+    DEFAULT_REDEMPTION_MS = 500
     _SHARED_VAD: Any = None
 
-    def __init__(self) -> None:
+    def __init__(self, *, redemption_ms: int = DEFAULT_REDEMPTION_MS) -> None:
         from xtalk.speech.vad.silero_vad import SileroVAD
 
         if self.__class__._SHARED_VAD is None:
             self.__class__._SHARED_VAD = SileroVAD()
         self._vad = self.__class__._SHARED_VAD
+        self._redemption_ms = redemption_ms
         self._speech_run_frames = 0
         self._non_speech_run_frames = 0
         self._in_speech = False
         self._min_speech_frames = max(
             1,
-            int(round(self.MIN_SPEECH_MS / ((self.FRAME_SAMPLES * 1000.0) / self.SAMPLE_RATE))),
+            int(
+                round(
+                    self.MIN_SPEECH_MS
+                    / ((self.FRAME_SAMPLES * 1000.0) / self.SAMPLE_RATE)
+                )
+            ),
         )
         self._redemption_frames = max(
             1,
-            int(round(self.REDEMPTION_MS / ((self.FRAME_SAMPLES * 1000.0) / self.SAMPLE_RATE))),
+            int(
+                round(
+                    self._redemption_ms
+                    / ((self.FRAME_SAMPLES * 1000.0) / self.SAMPLE_RATE)
+                )
+            ),
         )
 
     def feed(self, frame: bytes) -> list[str]:
@@ -601,13 +600,19 @@ class ClientVADController:
         if is_speech:
             self._speech_run_frames += 1
             self._non_speech_run_frames = 0
-            if not self._in_speech and self._speech_run_frames >= self._min_speech_frames:
+            if (
+                not self._in_speech
+                and self._speech_run_frames >= self._min_speech_frames
+            ):
                 self._in_speech = True
                 events.append("vad_speech_start")
         else:
             self._non_speech_run_frames += 1
             self._speech_run_frames = 0
-            if self._in_speech and self._non_speech_run_frames >= self._redemption_frames:
+            if (
+                self._in_speech
+                and self._non_speech_run_frames >= self._redemption_frames
+            ):
                 self._in_speech = False
                 events.append("vad_speech_end")
         return events
@@ -790,6 +795,7 @@ class CaseRunner:
         websocket_url: str,
         http_base_url: str,
         with_vad: bool,
+        vad_redemption_ms: int,
         settle_seconds: float,
     ) -> None:
         self._case_dir = case_dir
@@ -798,6 +804,7 @@ class CaseRunner:
         self._websocket_url = websocket_url
         self._http_base_url = http_base_url
         self._with_vad = with_vad
+        self._vad_redemption_ms = vad_redemption_ms
         self._settle_seconds = settle_seconds
         self._anchors = AnchorClock()
         self._connection_started: float | None = None
@@ -829,7 +836,9 @@ class CaseRunner:
             )
             self._receiver_task = asyncio.create_task(self._receiver_loop(websocket))
 
-            await websocket.send(json.dumps({"action": "attach_session", "session_id": None}))
+            await websocket.send(
+                json.dumps({"action": "attach_session", "session_id": None})
+            )
             await self._attached_event.wait()
             self._connection_started = asyncio.get_running_loop().time()
             await self._touch_activity()
@@ -880,7 +889,9 @@ class CaseRunner:
         separator = "&" if "?" in self._websocket_url else "?"
         return f"{self._websocket_url}{separator}access_token={token}"
 
-    async def _receiver_loop(self, websocket: websockets.WebSocketClientProtocol) -> None:
+    async def _receiver_loop(
+        self, websocket: websockets.WebSocketClientProtocol
+    ) -> None:
         try:
             async for message in websocket:
                 if isinstance(message, bytes):
@@ -966,8 +977,14 @@ class CaseRunner:
     ) -> None:
         pcm_bytes = load_audio_as_pcm16(audio_path, target_sr=16000)
         frame_bytes = ClientVADController.FRAME_BYTES
-        vad_controller = ClientVADController() if self._with_vad else None
-        trailing_frames = vad_controller.trailing_silence_frames() if vad_controller else 0
+        vad_controller = (
+            ClientVADController(redemption_ms=self._vad_redemption_ms)
+            if self._with_vad
+            else None
+        )
+        trailing_frames = (
+            vad_controller.trailing_silence_frames() if vad_controller else 0
+        )
         total_frames = int(math.ceil(len(pcm_bytes) / frame_bytes)) + trailing_frames
         stream_started = asyncio.get_running_loop().time()
         await self._anchors.set("last_user_start", stream_started)
@@ -1036,10 +1053,7 @@ class CaseRunner:
                 self._settle_seconds,
                 NO_RESPONSE_GRACE_SECONDS,
             )
-            if (
-                self._scheduler_done.is_set()
-                and playback_idle
-            ):
+            if self._scheduler_done.is_set() and playback_idle:
                 if ai_end_seen is not None:
                     if (
                         last_full_audio_at is not None
@@ -1065,7 +1079,9 @@ class CaseRunner:
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
         full_audio_bytes = bytes(self._full_audio_bytes)
         if not full_audio_bytes:
-            raise RuntimeError(f"{self._case_dir.name}: did not receive any full_audio_frame")
+            raise RuntimeError(
+                f"{self._case_dir.name}: did not receive any full_audio_frame"
+            )
         if not stereo_pcm_has_right_channel_signal(full_audio_bytes):
             raise RuntimeError(
                 f"{self._case_dir.name}: received full_audio_frame but AI channel is empty"
@@ -1101,9 +1117,8 @@ async def run_test_mode(args: argparse.Namespace) -> None:
 
     raw_service_config = load_json(args.config.resolve())
     merged_service_config = merge_service_config(raw_service_config)
-    effective_test_config, _ = load_effective_test_config(
+    effective_test_config = load_effective_test_config(
         dataset_root,
-        explicit_config_path=args.test_config.resolve() if args.test_config else None,
         concurrency_override=args.concurrency,
         with_vad_override=args.with_vad_override,
     )
@@ -1119,6 +1134,7 @@ async def run_test_mode(args: argparse.Namespace) -> None:
         {
             "concurrency": effective_test_config.concurrency,
             "with_vad": effective_test_config.with_vad,
+            "vad_redemption_ms": effective_test_config.vad_redemption_ms,
         },
     )
     write_json(output_root / "service_config.json", merged_service_config)
@@ -1131,9 +1147,10 @@ async def run_test_mode(args: argparse.Namespace) -> None:
 
     async with EmbeddedServer(
         config=merged_service_config,
-        host=args.host,
-        port=args.port,
+        host=EMBEDDED_SERVER_HOST,
+        port=EMBEDDED_SERVER_PORT,
     ) as server:
+
         async def run_one_case(case_dir: Path) -> None:
             async with semaphore:
                 runner = CaseRunner(
@@ -1143,12 +1160,10 @@ async def run_test_mode(args: argparse.Namespace) -> None:
                     websocket_url=server.websocket_url,
                     http_base_url=server.http_base_url,
                     with_vad=effective_test_config.with_vad,
-                    settle_seconds=args.settle_seconds,
+                    vad_redemption_ms=effective_test_config.vad_redemption_ms,
+                    settle_seconds=DEFAULT_SETTLE_SECONDS,
                 )
-                if args.case_timeout is None:
-                    await runner.run()
-                else:
-                    await asyncio.wait_for(runner.run(), timeout=args.case_timeout)
+                await runner.run()
 
         await asyncio.gather(*(run_one_case(case_dir) for case_dir in case_dirs))
 
@@ -1179,13 +1194,10 @@ def run_create_mode(args: argparse.Namespace) -> None:
 
     tts_config_path = resolve_root_json(
         source_root,
-        explicit_path=args.tts_config.resolve() if args.tts_config else None,
         preferred_names=PREFERRED_TTS_CONFIG_NAMES,
     )
     if tts_config_path is None:
-        raise ValueError(
-            f"No TTS config JSON found under {source_root}; pass --tts-config explicitly."
-        )
+        raise ValueError(f"No TTS config JSON found under {source_root}.")
 
     tts_model = load_tts_from_config(tts_config_path)
     if tts_model is None:

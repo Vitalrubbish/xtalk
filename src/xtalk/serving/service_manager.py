@@ -90,7 +90,9 @@ class ServiceManager:
             return
 
         if self._persistence is None:
-            await websocket.close(code=1011, reason="Persistence not configured")
+            await self._connect_without_persistence(
+                websocket, already_accepted=already_accepted
+            )
             return
 
         service: Service | None = None
@@ -119,6 +121,31 @@ class ServiceManager:
             await service.handle_message_loop(already_accepted=True)
         except Exception as e:
             logger.error("Error handling authenticated WebSocket connection: %s", e)
+            try:
+                await websocket.close(code=1011, reason="Internal server error")
+            except Exception:
+                pass
+        finally:
+            if service:
+                await self.remove_service(service.session_id)
+
+    async def _connect_without_persistence(
+        self, websocket: WebSocket, *, already_accepted: bool = False
+    ) -> None:
+        """Handle authenticated websocket sessions without persistence state."""
+        service: Service | None = None
+        try:
+            if not already_accepted:
+                await websocket.accept()
+            await self._receive_attach_request(websocket)
+            service = await self.create_service(websocket)
+            await service.send_session_attached()
+            await service.handle_message_loop(already_accepted=True)
+        except Exception as e:
+            logger.error(
+                "Error handling non-persistent authenticated WebSocket connection: %s",
+                e,
+            )
             try:
                 await websocket.close(code=1011, reason="Internal server error")
             except Exception:
@@ -158,16 +185,19 @@ class ServiceManager:
     def _resolve_session(
         self, user_id: str, attach_data: dict[str, Any]
     ) -> dict[str, Any]:
-        requested_session_id = attach_data.get("session_id")
-        if isinstance(requested_session_id, str):
-            requested_session_id = requested_session_id.strip() or None
-        else:
-            requested_session_id = None
-
+        requested_session_id = self._resolve_requested_session_id(attach_data)
         if requested_session_id is None:
             return self._persistence.create_session(user_id)
 
         return self._persistence.get_or_create_session(user_id, requested_session_id)
+
+    @staticmethod
+    def _resolve_requested_session_id(attach_data: dict[str, Any]) -> str | None:
+        """Normalize the optional session identifier from attach_session."""
+        requested_session_id = attach_data.get("session_id")
+        if isinstance(requested_session_id, str):
+            return requested_session_id.strip() or None
+        return None
 
     def _build_service_config(
         self, service_config_overrides: dict[str, Any]

@@ -74,11 +74,14 @@ class Xtalk:
             is enforced.
         """
         service_config = dict(service_prototype.service_config)
+        self._persistence_enabled = self._is_persistence_enabled(service_config)
         data_dir = service_config.get("data_dir") or "data"
         auth_secret, auth_ttl_seconds = resolve_auth_config(service_config)
 
-        self._persistence = PersistenceStore(
-            Path(data_dir).expanduser().resolve() / "chat_history.sqlite3"
+        self._persistence = (
+            PersistenceStore(Path(data_dir).expanduser().resolve() / "chat_history.sqlite3")
+            if self._persistence_enabled
+            else None
         )
         self._auth = JWTAuth(secret=auth_secret, ttl_seconds=auth_ttl_seconds)
         self._service_manager = ServiceManager(
@@ -246,8 +249,12 @@ class Xtalk:
         ValueError
             Raised if the target session does not exist.
         """
-        if user_id is not None and not self._persistence.user_owns_session(
+        if (
+            self._persistence is not None
+            and user_id is not None
+            and not self._persistence.user_owns_session(
             user_id, session_id
+            )
         ):
             raise ValueError(f"Session {session_id} not found for user {user_id}.")
         service = self._service_manager.get_service(session_id)
@@ -279,7 +286,11 @@ class Xtalk:
 
     def _login(self) -> dict[str, Any]:
         user_id = str(uuid.uuid4())
-        user = self._persistence.ensure_user(user_id)
+        user = (
+            self._persistence.ensure_user(user_id)
+            if self._persistence is not None
+            else {"id": user_id}
+        )
         return {
             "access_token": self._auth.issue_token(sub=user_id),
             "user": user,
@@ -287,14 +298,19 @@ class Xtalk:
 
     def _verify_access_token(self, token: str) -> str:
         user_id = self._auth.verify_token(token)
-        self._persistence.ensure_user(user_id)
+        if self._persistence is not None:
+            self._persistence.ensure_user(user_id)
         return user_id
 
     def _list_sessions(self, user_id: str) -> list[dict[str, Any]]:
+        if self._persistence is None:
+            return []
         self._persistence.ensure_user(user_id)
         return self._persistence.list_sessions(user_id)
 
     def _get_session_detail(self, user_id: str, session_id: str) -> dict[str, Any]:
+        if self._persistence is None:
+            raise KeyError(session_id)
         self._persistence.ensure_user(user_id)
         return self._persistence.get_session_detail(user_id, session_id)
 
@@ -429,6 +445,22 @@ class Xtalk:
     @staticmethod
     def _load_service_config(config: dict):
         return config.get("service_config", {})
+
+    @staticmethod
+    def _is_persistence_enabled(service_config: dict[str, Any]) -> bool:
+        """Return whether session persistence is enabled for the service."""
+        value = service_config.get("enable_persistence")
+        if value is None:
+            return True
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+        return bool(value)
 
     @classmethod
     def _load_pipeline(

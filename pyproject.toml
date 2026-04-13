@@ -22,6 +22,14 @@ dynamic         = ["version"]
 
 [project.optional-dependencies]
 dev  = ["pytest", "pytest-cov"]
+testing = [
+  "requests",
+  "soundfile",
+  "websockets",
+  "uvicorn[standard]",
+  "soxr",
+  "torch",
+]
 ali = [
   "dashscope >=1.25.3"
 ]

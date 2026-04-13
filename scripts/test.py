@@ -982,12 +982,14 @@ class CaseRunner:
             if self._with_vad
             else None
         )
+        audio_frame_count = int(math.ceil(len(pcm_bytes) / frame_bytes))
         trailing_frames = (
             vad_controller.trailing_silence_frames() if vad_controller else 0
         )
-        total_frames = int(math.ceil(len(pcm_bytes) / frame_bytes)) + trailing_frames
+        total_frames = audio_frame_count + trailing_frames
         stream_started = asyncio.get_running_loop().time()
         await self._anchors.set("last_user_start", stream_started)
+        last_user_end_set = False
 
         for frame_index in range(total_frames):
             target_send_time = stream_started + (
@@ -1004,12 +1006,18 @@ class CaseRunner:
 
             await websocket.send(frame)
             await self._touch_activity()
+            if not last_user_end_set and frame_index + 1 >= audio_frame_count:
+                await self._anchors.set(
+                    "last_user_end", asyncio.get_running_loop().time()
+                )
+                last_user_end_set = True
             if vad_controller is not None:
                 for action in vad_controller.feed(frame):
                     await websocket.send(json.dumps({"action": action}))
                     await self._touch_activity()
 
-        await self._anchors.set("last_user_end", asyncio.get_running_loop().time())
+        if not last_user_end_set:
+            await self._anchors.set("last_user_end", asyncio.get_running_loop().time())
 
     async def _send_silence_until(
         self,
@@ -1165,7 +1173,10 @@ async def run_test_mode(args: argparse.Namespace) -> None:
                 )
                 await runner.run()
 
-        await asyncio.gather(*(run_one_case(case_dir) for case_dir in case_dirs))
+        try:
+            await asyncio.gather(*(run_one_case(case_dir) for case_dir in case_dirs))
+        finally:
+            shutil.rmtree(temp_recording_root, ignore_errors=True)
 
 
 def resolve_create_output_root(source_root: Path, requested_out: Path) -> Path:
@@ -1192,6 +1203,10 @@ def run_create_mode(args: argparse.Namespace) -> None:
     if not source_root.is_dir():
         raise ValueError(f"Generation source directory does not exist: {source_root}")
 
+    test_config_path = resolve_root_json(
+        source_root,
+        preferred_names=PREFERRED_TEST_CONFIG_NAMES,
+    )
     tts_config_path = resolve_root_json(
         source_root,
         preferred_names=PREFERRED_TTS_CONFIG_NAMES,
@@ -1205,7 +1220,8 @@ def run_create_mode(args: argparse.Namespace) -> None:
 
     output_root = resolve_create_output_root(source_root, args.out.resolve())
     output_root.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(tts_config_path, output_root / "tts_config.json")
+    if test_config_path is not None:
+        shutil.copyfile(test_config_path, output_root / "test_config.json")
 
     sample_rate_hint = int(getattr(tts_model, "sample_rate", 48000) or 48000)
     for case_dir in discover_case_dirs(source_root):

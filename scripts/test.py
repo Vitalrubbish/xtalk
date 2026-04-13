@@ -151,8 +151,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--case-timeout",
         type=float,
-        default=180.0,
-        help="Per-case timeout in seconds for test mode.",
+        default=None,
+        help="Optional per-case timeout in seconds for test mode.",
     )
     parser.add_argument(
         "--settle-seconds",
@@ -470,6 +470,17 @@ def count_wav_frames(path: Path) -> int:
     """Return the number of frames in a WAV file."""
     with wave.open(str(path), "rb") as wav_file:
         return int(wav_file.getnframes())
+
+
+def stereo_pcm_has_right_channel_signal(pcm_bytes: bytes) -> bool:
+    """Return whether stereo PCM16 data contains non-zero right-channel samples."""
+    if not pcm_bytes:
+        return False
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+    if samples.size < 2:
+        return False
+    stereo = samples.reshape(-1, 2)
+    return bool(np.any(stereo[:, 1]))
 
 
 class EmbeddedServer:
@@ -800,6 +811,7 @@ class CaseRunner:
         self._receiver_task: asyncio.Task[None] | None = None
         self._playback: PlaybackSimulator | None = None
         self._error: Exception | None = None
+        self._last_full_audio_at: float | None = None
 
     async def run(self) -> None:
         """Execute the case end to end and write the output WAV."""
@@ -835,7 +847,7 @@ class CaseRunner:
             await self._send_scheduled_inputs(websocket, scheduled_inputs)
             self._scheduler_done_at = asyncio.get_running_loop().time()
             self._scheduler_done.set()
-            await self._wait_until_idle()
+            await self._wait_until_idle(websocket)
         finally:
             await websocket.close()
             if self._receiver_task is not None:
@@ -904,6 +916,7 @@ class CaseRunner:
             await self._playback.mark_server_tts_finished()
             return
         if action == "full_audio_frame":
+            self._last_full_audio_at = asyncio.get_running_loop().time()
             self._collect_full_audio_frame(data)
             return
         if action == "error":
@@ -931,9 +944,7 @@ class CaseRunner:
     ) -> None:
         for scheduled_input in scheduled_inputs:
             target_time = await self._resolve_target_time(scheduled_input.time_spec)
-            now = asyncio.get_running_loop().time()
-            if target_time > now:
-                await asyncio.sleep(target_time - now)
+            await self._send_silence_until(websocket, target_time)
             await self._stream_audio_file(websocket, scheduled_input.audio_path)
             if self._error is not None:
                 raise self._error
@@ -983,7 +994,25 @@ class CaseRunner:
 
         await self._anchors.set("last_user_end", asyncio.get_running_loop().time())
 
-    async def _wait_until_idle(self) -> None:
+    async def _send_silence_until(
+        self,
+        websocket: websockets.WebSocketClientProtocol,
+        target_time: float,
+    ) -> None:
+        """Continuously send silent PCM frames until the target monotonic time."""
+        silence_frame = b"\x00" * ClientVADController.FRAME_BYTES
+        frame_duration = ClientVADController.FRAME_SAMPLES / 16000.0
+        while True:
+            now = asyncio.get_running_loop().time()
+            remaining = target_time - now
+            if remaining <= 0.0:
+                return
+            await websocket.send(silence_frame)
+            await asyncio.sleep(min(frame_duration, remaining))
+
+    async def _wait_until_idle(
+        self, websocket: websockets.WebSocketClientProtocol
+    ) -> None:
         while True:
             if self._error is not None:
                 raise self._error
@@ -991,10 +1020,13 @@ class CaseRunner:
             if self._playback is not None:
                 playback_idle = await self._playback.is_idle()
 
+            await websocket.send(b"\x00" * ClientVADController.FRAME_BYTES)
+
             async with self._activity_lock:
                 last_activity = self._last_activity
             quiet_for = asyncio.get_running_loop().time() - last_activity
             ai_end_seen = await self._anchors.get("last_ai_end")
+            last_full_audio_at = self._last_full_audio_at
             scheduler_quiet_for = 0.0
             if self._scheduler_done_at is not None:
                 scheduler_quiet_for = (
@@ -1007,10 +1039,20 @@ class CaseRunner:
             if (
                 self._scheduler_done.is_set()
                 and playback_idle
-                and quiet_for >= self._settle_seconds
-                and (ai_end_seen is not None or no_response_grace_elapsed)
             ):
-                return
+                if ai_end_seen is not None:
+                    if (
+                        last_full_audio_at is not None
+                        and last_full_audio_at >= ai_end_seen
+                        and quiet_for >= self._settle_seconds
+                    ):
+                        return
+                elif no_response_grace_elapsed:
+                    if (
+                        last_full_audio_at is not None
+                        and quiet_for >= self._settle_seconds
+                    ):
+                        return
             if self._ws_closed.is_set():
                 return
             await asyncio.sleep(0.1)
@@ -1020,23 +1062,17 @@ class CaseRunner:
             self._last_activity = asyncio.get_running_loop().time()
 
     async def _materialize_output(self) -> None:
-        live_frames = len(self._full_audio_bytes) // 4
-        server_recording = self._temp_recording_path if self._temp_recording_path.exists() else None
-        use_server_recording = False
-        if server_recording is not None:
-            try:
-                server_frames = count_wav_frames(server_recording)
-                use_server_recording = server_frames > live_frames
-            except Exception:
-                use_server_recording = live_frames == 0
-
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
-        if use_server_recording and server_recording is not None:
-            shutil.copyfile(server_recording, self._output_path)
-            return
+        full_audio_bytes = bytes(self._full_audio_bytes)
+        if not full_audio_bytes:
+            raise RuntimeError(f"{self._case_dir.name}: did not receive any full_audio_frame")
+        if not stereo_pcm_has_right_channel_signal(full_audio_bytes):
+            raise RuntimeError(
+                f"{self._case_dir.name}: received full_audio_frame but AI channel is empty"
+            )
         write_pcm_wav(
             self._output_path,
-            pcm_bytes=bytes(self._full_audio_bytes),
+            pcm_bytes=full_audio_bytes,
             sample_rate=48000,
             channels=2,
         )
@@ -1109,7 +1145,10 @@ async def run_test_mode(args: argparse.Namespace) -> None:
                     with_vad=effective_test_config.with_vad,
                     settle_seconds=args.settle_seconds,
                 )
-                await asyncio.wait_for(runner.run(), timeout=args.case_timeout)
+                if args.case_timeout is None:
+                    await runner.run()
+                else:
+                    await asyncio.wait_for(runner.run(), timeout=args.case_timeout)
 
         await asyncio.gather(*(run_one_case(case_dir) for case_dir in case_dirs))
 

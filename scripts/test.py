@@ -76,6 +76,7 @@ class RelativeTimeSpec:
     value: float | None = None
     anchor: str | None = None
     offset: float = 0.0
+    occurrence: int | None = None
 
 
 @dataclass(frozen=True)
@@ -292,6 +293,7 @@ def parse_case_inputs(case_dir: Path) -> list[ScheduledAudioInput]:
         raise ValueError(f"Missing timestamp.txt in {case_dir}")
 
     scheduled_inputs: list[ScheduledAudioInput] = []
+    relative_anchor_occurrences: dict[str, int] = {}
     with timestamp_path.open("r", encoding="utf-8") as file_obj:
         for line_no, raw_line in enumerate(file_obj, start=1):
             line = raw_line.strip()
@@ -305,9 +307,20 @@ def parse_case_inputs(case_dir: Path) -> list[ScheduledAudioInput]:
             audio_path = case_dir / audio_name.strip()
             if not audio_path.exists():
                 raise ValueError(f"Missing audio file {audio_path}")
+            time_spec = parse_timestamp_spec(time_text)
+            if time_spec.kind == "relative" and time_spec.anchor is not None:
+                occurrence = relative_anchor_occurrences.get(time_spec.anchor, 0) + 1
+                relative_anchor_occurrences[time_spec.anchor] = occurrence
+                time_spec = RelativeTimeSpec(
+                    kind=time_spec.kind,
+                    value=time_spec.value,
+                    anchor=time_spec.anchor,
+                    offset=time_spec.offset,
+                    occurrence=occurrence,
+                )
             scheduled_inputs.append(
                 ScheduledAudioInput(
-                    time_spec=parse_timestamp_spec(time_text),
+                    time_spec=time_spec,
                     audio_path=audio_path,
                 )
             )
@@ -532,11 +545,13 @@ class AnchorClock:
     def __init__(self) -> None:
         self._condition = asyncio.Condition()
         self._values: dict[str, float] = {}
+        self._history: dict[str, list[float]] = {}
 
     async def set(self, name: str, value: float) -> None:
         """Set an anchor and notify waiting tasks."""
         async with self._condition:
             self._values[name] = value
+            self._history.setdefault(name, []).append(value)
             self._condition.notify_all()
 
     async def wait_for(self, name: str) -> float:
@@ -544,6 +559,16 @@ class AnchorClock:
         async with self._condition:
             await self._condition.wait_for(lambda: name in self._values)
             return self._values[name]
+
+    async def wait_for_occurrence(self, name: str, occurrence: int) -> float:
+        """Wait until the requested anchor occurrence becomes available."""
+        if occurrence <= 0:
+            raise ValueError("occurrence must be a positive integer")
+        async with self._condition:
+            await self._condition.wait_for(
+                lambda: len(self._history.get(name, [])) >= occurrence
+            )
+            return self._history[name][occurrence - 1]
 
     async def get(self, name: str) -> float | None:
         """Return an anchor value if it already exists."""
@@ -967,7 +992,11 @@ class CaseRunner:
             return self._connection_started + float(time_spec.value or 0.0)
         if time_spec.anchor is None:
             raise RuntimeError("Relative time spec missing anchor")
-        anchor_value = await self._anchors.wait_for(time_spec.anchor)
+        if time_spec.occurrence is None:
+            raise RuntimeError("Relative time spec missing anchor occurrence")
+        anchor_value = await self._anchors.wait_for_occurrence(
+            time_spec.anchor, time_spec.occurrence
+        )
         return anchor_value + time_spec.offset
 
     async def _stream_audio_file(

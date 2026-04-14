@@ -2,7 +2,7 @@ import { BaseHTTPClient } from "./bases/http";
 import type { ResolvableURL, SessionServiceURLConfig, SessionServiceURLs } from "./bases/http";
 import { getPlatformRuntime } from "./platforms/index";
 
-export { createHTTPClient, buildAuthenticatedWebSocketURL, resolvePlatformServiceURLs };
+export { createHTTPClient, buildAuthenticatedWebSocketURL, delay, resolvePlatformServiceURLs };
 
 function createHTTPClient(): BaseHTTPClient {
     return getPlatformRuntime().createHTTPClient();
@@ -23,4 +23,8 @@ function buildAuthenticatedWebSocketURL(
         websocketURL,
         accessToken,
     );
+}
+
+function delay(milliseconds: number): Promise<void> {
+    return getPlatformRuntime().delay(milliseconds);
 }

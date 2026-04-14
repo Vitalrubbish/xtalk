@@ -24,6 +24,7 @@ type PlatformRuntime = {
     createInputAudioSession(config: InputAudioSessionConfig): BaseInputAudioSession;
     createOutputAudioSession(config: OutputAudioSessionConfig): BaseOutputAudioSession;
     createWebSocket(url: string | URL, protocols?: string | string[]): BaseWebSocket;
+    delay(milliseconds: number): Promise<void>;
     createHTTPClient(): BaseHTTPClient;
     resolveServiceURLs(
         websocketURL: ResolvableURL,
@@ -57,6 +58,11 @@ const WEB_PLATFORM_RUNTIME: PlatformRuntime = {
     },
     createWebSocket(url, protocols) {
         return new WebWebSocket(url, protocols);
+    },
+    delay(milliseconds) {
+        return new Promise((resolve) => {
+            window.setTimeout(resolve, milliseconds);
+        });
     },
     createHTTPClient() {
         return new WebHTTPClient();

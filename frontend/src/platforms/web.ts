@@ -1,4 +1,5 @@
 import { BaseWebSocket } from "../bases/websocket";
+import type { BaseWebSocketCloseEvent, BaseWebSocketMessageEvent } from "../bases/websocket";
 import { BaseInputAudioSession, BaseOutputAudioSession } from "../bases/audio-session";
 import type { InputAudioSessionConfig, OutputAudioSessionConfig } from "../bases/audio-session";
 import { BaseHTTPClient, HTTPRequestError } from "../bases/http";
@@ -35,8 +36,34 @@ class WebWebSocket extends BaseWebSocket {
     close(): void {
         this.instance.close();
     }
-    addEventListener(type: "open" | "message" | "close" | "error", listener: (evt?: any) => any): void {
-        this.instance.addEventListener(type, listener);
+    addEventListener(type: "open" | "error", listener: () => any): void;
+    addEventListener(type: "message", listener: (evt: BaseWebSocketMessageEvent) => any): void;
+    addEventListener(type: "close", listener: (evt: BaseWebSocketCloseEvent) => any): void;
+    addEventListener(
+        type: "open" | "message" | "close" | "error",
+        listener: (() => any) | ((evt: BaseWebSocketMessageEvent) => any) | ((evt: BaseWebSocketCloseEvent) => any),
+    ): void {
+        if (type === "message") {
+            this.instance.addEventListener("message", (event: MessageEvent<string | ArrayBuffer>) => {
+                (listener as (evt: BaseWebSocketMessageEvent) => any)({
+                    data: event.data,
+                });
+            });
+            return;
+        }
+        if (type === "close") {
+            this.instance.addEventListener("close", (event: CloseEvent) => {
+                (listener as (evt: BaseWebSocketCloseEvent) => any)({
+                    code: event.code,
+                    reason: event.reason,
+                    wasClean: event.wasClean,
+                });
+            });
+            return;
+        }
+        this.instance.addEventListener(type, () => {
+            (listener as () => any)();
+        });
     }
 }
 

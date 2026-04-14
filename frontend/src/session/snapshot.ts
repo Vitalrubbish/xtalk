@@ -11,6 +11,7 @@ export {
 
 type PersistedConversationSnapshot = {
     accessToken: string | null;
+    supportsSessionRecovery: boolean;
     user: ConversationUser | null;
     sessionId: string | null;
     messages: ConversationMessage[];
@@ -62,6 +63,7 @@ function loadPersistedConversationSnapshot(
         }
         const parsed = JSON.parse(raw) as {
             accessToken?: unknown;
+            supportsSessionRecovery?: unknown;
             user?: unknown;
             sessionId?: unknown;
             messages?: unknown;
@@ -74,6 +76,7 @@ function loadPersistedConversationSnapshot(
             : null;
         return {
             accessToken: typeof parsed.accessToken === "string" ? parsed.accessToken : null,
+            supportsSessionRecovery: parsed.supportsSessionRecovery === true,
             user,
             sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
             messages: normalizePersistedMessages(parsed.messages),
@@ -110,12 +113,14 @@ function clearPersistedConversationSnapshot(
 
 function buildPersistedConversationSnapshot(
     accessToken: string | null,
+    supportsSessionRecovery: boolean,
     user: ConversationUser | null,
     sessionId: string | null,
     messages: ConversationMessage[],
 ): PersistedConversationSnapshot {
     return {
         accessToken,
+        supportsSessionRecovery,
         user,
         sessionId,
         messages: messages.map((message) => ({

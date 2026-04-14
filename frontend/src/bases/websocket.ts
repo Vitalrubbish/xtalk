@@ -1,5 +1,17 @@
 export { BaseWebSocket };
-type WebSocketEventType = 'open' | 'message' | 'close' | 'error';
+export type { BaseWebSocketCloseEvent, BaseWebSocketEventType, BaseWebSocketMessageEvent };
+
+type BaseWebSocketCloseEvent = {
+    code?: number;
+    reason?: string;
+    wasClean?: boolean;
+};
+
+type BaseWebSocketMessageEvent = {
+    data: string | ArrayBuffer;
+};
+
+type BaseWebSocketEventType = 'open' | 'message' | 'close' | 'error';
 abstract class BaseWebSocket {
     abstract ready(): boolean;
 
@@ -7,7 +19,11 @@ abstract class BaseWebSocket {
 
     abstract close(): void;
 
-    abstract addEventListener(type: WebSocketEventType, listener: (evt?: any) => any): void;
+    abstract addEventListener(type: 'open' | 'error', listener: () => any): void;
+
+    abstract addEventListener(type: 'message', listener: (evt: BaseWebSocketMessageEvent) => any): void;
+
+    abstract addEventListener(type: 'close', listener: (evt: BaseWebSocketCloseEvent) => any): void;
 
     sendJson(data: object): void {
         this.send(JSON.stringify(data));

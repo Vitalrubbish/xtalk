@@ -15,6 +15,7 @@ import base64
 import io
 import json
 import math
+import re
 import shutil
 import socket
 import subprocess
@@ -31,6 +32,7 @@ import requests
 import soundfile as sf
 import uvicorn
 import websockets
+import yaml
 from fastapi import FastAPI
 
 from xtalk.api import Xtalk
@@ -45,6 +47,7 @@ DEFAULT_TEST_CONFIG = {
     "concurrency": 1,
     "with_vad": False,
     "vad_redemption_ms": 500,
+    "judge_llm": None,
 }
 DEFAULT_SETTLE_SECONDS = 1.5
 EMBEDDED_SERVER_HOST = "127.0.0.1"
@@ -85,6 +88,7 @@ class ScheduledAudioInput:
 
     time_spec: RelativeTimeSpec
     audio_path: Path
+    expected_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,53 @@ class EffectiveTestConfig:
     concurrency: int
     with_vad: bool
     vad_redemption_ms: int
+    judge_llm: "JudgeLLMConfig | None"
+
+
+@dataclass(frozen=True)
+class JudgeLLMConfig:
+    """Configuration for the LLM used to judge ASR outputs."""
+
+    model: str
+    base_url: str
+    api_key: str
+
+
+@dataclass(frozen=True)
+class CaseCriteria:
+    """Optional evaluation criteria loaded from ``criteria.yaml``."""
+
+    judge_asr: bool = False
+
+
+@dataclass(frozen=True)
+class ASRResultRecord:
+    """One ASR event received from the backend during a test case."""
+
+    action: str
+    text: str
+    turn_id: int | None
+    received_at: float
+
+
+@dataclass(frozen=True)
+class CaseExecutionResult:
+    """Execution artifacts and status for one test case."""
+
+    case_name: str
+    output_path: Path
+    criteria: CaseCriteria
+    scheduled_inputs: list[ScheduledAudioInput]
+    asr_results: list[ASRResultRecord]
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class ASRJudgement:
+    """Result of judging ASR outputs against expected transcripts."""
+
+    passed: bool
+    reason: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -136,6 +187,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Override the dataset concurrency in test mode.",
     )
+    parser.add_argument(
+        "--vad-redemption-ms",
+        type=int,
+        help="Override the client-side VAD redemption time in test mode.",
+    )
     vad_group = parser.add_mutually_exclusive_group()
     vad_group.add_argument(
         "--with-vad",
@@ -150,6 +206,21 @@ def parse_args() -> argparse.Namespace:
         help="Force-disable client-side VAD in test mode.",
     )
     parser.set_defaults(with_vad_override=None)
+    parser.add_argument(
+        "--judge-llm-model",
+        type=str,
+        help="Override judge_llm.model in test mode.",
+    )
+    parser.add_argument(
+        "--judge-llm-base-url",
+        type=str,
+        help="Override judge_llm.base_url in test mode.",
+    )
+    parser.add_argument(
+        "--judge-llm-api-key",
+        type=str,
+        help="Override judge_llm.api_key in test mode.",
+    )
     return parser.parse_args()
 
 
@@ -168,6 +239,16 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as file_obj:
         json.dump(payload, file_obj, ensure_ascii=False, indent=2, sort_keys=True)
         file_obj.write("\n")
+
+
+def get_case_asr_report_path(output_root: Path, case_name: str) -> Path:
+    """Return the ASR report path for one case."""
+    return output_root / "logs" / f"{case_name}.asr.json"
+
+
+def get_legacy_case_asr_report_path(output_root: Path, case_name: str) -> Path:
+    """Return the legacy ASR report path kept for cleanup compatibility."""
+    return output_root / f"{case_name}.asr.json"
 
 
 def resolve_root_json(
@@ -214,6 +295,10 @@ def load_effective_test_config(
     *,
     concurrency_override: int | None,
     with_vad_override: bool | None,
+    vad_redemption_ms_override: int | None,
+    judge_llm_model_override: str | None,
+    judge_llm_base_url_override: str | None,
+    judge_llm_api_key_override: str | None,
 ) -> EffectiveTestConfig:
     """Load and resolve the dataset test configuration."""
     config_path = resolve_root_json(
@@ -228,6 +313,23 @@ def load_effective_test_config(
         raw_config["concurrency"] = concurrency_override
     if with_vad_override is not None:
         raw_config["with_vad"] = with_vad_override
+    if vad_redemption_ms_override is not None:
+        raw_config["vad_redemption_ms"] = vad_redemption_ms_override
+
+    raw_judge_llm = raw_config.get("judge_llm")
+    if raw_judge_llm is None:
+        judge_llm_config: dict[str, Any] = {}
+    elif isinstance(raw_judge_llm, dict):
+        judge_llm_config = dict(raw_judge_llm)
+    else:
+        raise ValueError("judge_llm must be a JSON object when provided")
+
+    if judge_llm_model_override is not None:
+        judge_llm_config["model"] = judge_llm_model_override
+    if judge_llm_base_url_override is not None:
+        judge_llm_config["base_url"] = judge_llm_base_url_override
+    if judge_llm_api_key_override is not None:
+        judge_llm_config["api_key"] = judge_llm_api_key_override
 
     concurrency = int(raw_config.get("concurrency", 1))
     if concurrency <= 0:
@@ -241,10 +343,29 @@ def load_effective_test_config(
     )
     if vad_redemption_ms <= 0:
         raise ValueError("vad_redemption_ms must be a positive integer")
+
+    judge_llm: JudgeLLMConfig | None = None
+    if judge_llm_config:
+        model = judge_llm_config.get("model")
+        base_url = judge_llm_config.get("base_url")
+        api_key = judge_llm_config.get("api_key")
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("judge_llm.model must be a non-empty string")
+        if not isinstance(base_url, str) or not base_url.strip():
+            raise ValueError("judge_llm.base_url must be a non-empty string")
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError("judge_llm.api_key must be a non-empty string")
+        judge_llm = JudgeLLMConfig(
+            model=model.strip(),
+            base_url=base_url.strip(),
+            api_key=api_key.strip(),
+        )
+
     return EffectiveTestConfig(
         concurrency=concurrency,
         with_vad=with_vad,
         vad_redemption_ms=vad_redemption_ms,
+        judge_llm=judge_llm,
     )
 
 
@@ -303,7 +424,15 @@ def parse_case_inputs(case_dir: Path) -> list[ScheduledAudioInput]:
                 raise ValueError(
                     f"Invalid timestamp entry in {timestamp_path}:{line_no}: {line}"
                 )
-            time_text, audio_name = line.split(":", 1)
+            time_text, remainder = line.split(":", 1)
+            audio_name_text = remainder.strip()
+            expected_text: str | None = None
+            if ":" in audio_name_text:
+                audio_name, expected_text = audio_name_text.split(":", 1)
+                audio_name = audio_name.strip()
+                expected_text = expected_text.strip() or None
+            else:
+                audio_name = audio_name_text
             audio_path = case_dir / audio_name.strip()
             if not audio_path.exists():
                 raise ValueError(f"Missing audio file {audio_path}")
@@ -322,6 +451,7 @@ def parse_case_inputs(case_dir: Path) -> list[ScheduledAudioInput]:
                 ScheduledAudioInput(
                     time_spec=time_spec,
                     audio_path=audio_path,
+                    expected_text=expected_text,
                 )
             )
 
@@ -354,6 +484,19 @@ def parse_generation_case(case_dir: Path) -> list[GeneratedCaseLine]:
     if not lines:
         raise ValueError(f"No valid generation entries found in {timestamp_path}")
     return lines
+
+
+def load_case_criteria(case_dir: Path) -> CaseCriteria:
+    """Load optional per-case evaluation criteria from ``criteria.yaml``."""
+    criteria_path = case_dir / "criteria.yaml"
+    if not criteria_path.exists():
+        return CaseCriteria()
+
+    with criteria_path.open("r", encoding="utf-8") as file_obj:
+        payload = yaml.safe_load(file_obj) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected YAML object in {criteria_path}")
+    return CaseCriteria(judge_asr=bool(payload.get("judge_asr", False)))
 
 
 def pick_free_port(host: str) -> int:
@@ -482,6 +625,227 @@ def stereo_pcm_has_right_channel_signal(pcm_bytes: bytes) -> bool:
         return False
     stereo = samples.reshape(-1, 2)
     return bool(np.any(stereo[:, 1]))
+
+
+def extract_active_segments(
+    samples: np.ndarray,
+    sample_rate: int,
+    *,
+    bridge_gap_seconds: float = 1.0,
+    min_segment_seconds: float = 0.08,
+) -> list[tuple[int, int]]:
+    """Extract contiguous active audio regions from one mono PCM channel.
+
+    Parameters
+    ----------
+    samples : np.ndarray
+        Mono PCM16 samples.
+    sample_rate : int
+        Sample rate in Hz.
+
+    Returns
+    -------
+    list[tuple[int, int]]
+        Active segments as ``(start_sample, end_sample)`` pairs.
+    """
+    if samples.size == 0:
+        return []
+    max_abs = int(np.max(np.abs(samples)))
+    if max_abs <= 0:
+        return []
+
+    threshold = max(300, int(max_abs * 0.02))
+    mask = np.abs(samples) >= threshold
+    bridge_gap = max(1, int(round(sample_rate * bridge_gap_seconds)))
+    min_segment = max(1, int(round(sample_rate * min_segment_seconds)))
+
+    start = 0
+    while start < mask.size:
+        if mask[start]:
+            start += 1
+            continue
+        end = start
+        while end < mask.size and not mask[end]:
+            end += 1
+        if start > 0 and end < mask.size and end - start <= bridge_gap:
+            mask[start:end] = True
+        start = end
+
+    segments: list[tuple[int, int]] = []
+    idx = 0
+    while idx < mask.size:
+        if not mask[idx]:
+            idx += 1
+            continue
+        start = idx
+        while idx < mask.size and mask[idx]:
+            idx += 1
+        if idx - start >= min_segment:
+            segments.append((start, idx))
+    return segments
+
+
+def compute_case_latency_samples(output_path: Path) -> list[float]:
+    """Compute user-to-AI latency samples for one stereo result WAV file.
+
+    Parameters
+    ----------
+    output_path : Path
+        Stereo WAV path whose left/right channels are user/AI audio.
+
+    Returns
+    -------
+    list[float]
+        One latency value in milliseconds for each matched user/AI pair.
+    """
+    audio, sample_rate = sf.read(output_path, dtype="int16", always_2d=True)
+    if audio.shape[1] < 2:
+        return []
+
+    user_segments = extract_active_segments(
+        audio[:, 0],
+        int(sample_rate),
+        bridge_gap_seconds=1.0,
+    )
+    ai_segments = extract_active_segments(
+        audio[:, 1],
+        int(sample_rate),
+        bridge_gap_seconds=1.0,
+    )
+    if not user_segments or not ai_segments:
+        return []
+
+    latencies_ms: list[float] = []
+    ai_index = 0
+    for user_index, (_, user_end) in enumerate(user_segments):
+        next_user_start = (
+            user_segments[user_index + 1][0]
+            if user_index + 1 < len(user_segments)
+            else None
+        )
+        while ai_index < len(ai_segments) and ai_segments[ai_index][0] < user_end:
+            ai_index += 1
+        if ai_index >= len(ai_segments):
+            break
+
+        ai_start, _ = ai_segments[ai_index]
+        if next_user_start is not None and ai_start >= next_user_start:
+            continue
+
+        latencies_ms.append((ai_start - user_end) * 1000.0 / float(sample_rate))
+        ai_index += 1
+    return latencies_ms
+
+
+def resolve_chat_completions_url(base_url: str) -> str:
+    """Resolve an OpenAI-compatible chat completions endpoint from a base URL."""
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/chat/completions"):
+        return normalized
+    if normalized.endswith("/v1"):
+        return f"{normalized}/chat/completions"
+    return f"{normalized}/v1/chat/completions"
+
+
+def extract_llm_text(response_payload: dict[str, Any]) -> str:
+    """Extract the first textual assistant message from a chat completions response."""
+    choices = response_payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("Judge LLM response did not include choices")
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise RuntimeError("Judge LLM response choice has invalid shape")
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise RuntimeError("Judge LLM response choice did not include a message")
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                text_parts.append(text.strip())
+        if text_parts:
+            return "\n".join(text_parts)
+    raise RuntimeError("Judge LLM response did not include textual content")
+
+
+def parse_judgement_json(raw_text: str) -> ASRJudgement:
+    """Parse the judge model response into a structured ASR judgement."""
+    match = re.search(r"\{.*\}", raw_text, flags=re.DOTALL)
+    candidate = match.group(0) if match else raw_text
+    payload = json.loads(candidate)
+    if not isinstance(payload, dict):
+        raise RuntimeError("Judge LLM response is not a JSON object")
+    passed = bool(payload.get("passed", False))
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        reason = "No explanation provided by judge LLM."
+    return ASRJudgement(passed=passed, reason=reason.strip())
+
+
+def judge_asr_with_llm(
+    judge_llm: JudgeLLMConfig,
+    *,
+    expected_texts: list[str],
+    actual_texts: list[str],
+) -> ASRJudgement:
+    """Judge whether ASR outputs preserve the expected utterance semantics.
+
+    Parameters
+    ----------
+    judge_llm : JudgeLLMConfig
+        Judge model configuration.
+    expected_texts : list[str]
+        Expected user utterances from ``timestamp.txt``.
+    actual_texts : list[str]
+        Final ASR texts reported by the backend.
+
+    Returns
+    -------
+    ASRJudgement
+        Structured judgement result returned by the LLM.
+    """
+    expected_lines = "\n".join(
+        f"{index}. {text}" for index, text in enumerate(expected_texts, start=1)
+    )
+    actual_lines = "\n".join(
+        f"{index}. {text}" for index, text in enumerate(actual_texts, start=1)
+    )
+    prompt = (
+        "Compare the expected user utterances with the backend ASR final outputs. "
+        "Allow minor punctuation, filler-word, or paraphrase differences when the meaning stays the same. "
+        "Fail if meaning changes, important information is missing, order changes, or the counts differ. "
+        'Return strict JSON like {"passed": true, "reason": "..."}.\n\n'
+        f"Expected utterances:\n{expected_lines or '(none)'}\n\n"
+        f"ASR final outputs:\n{actual_lines or '(none)'}"
+    )
+    payload = {
+        "model": judge_llm.model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a strict but semantics-aware ASR judge.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0,
+    }
+    response = requests.post(
+        resolve_chat_completions_url(judge_llm.base_url),
+        headers={
+            "Authorization": f"Bearer {judge_llm.api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=60,
+    )
+    response.raise_for_status()
+    return parse_judgement_json(extract_llm_text(response.json()))
 
 
 class EmbeddedServer:
@@ -815,6 +1179,7 @@ class CaseRunner:
         self,
         *,
         case_dir: Path,
+        scheduled_inputs: list[ScheduledAudioInput],
         output_path: Path,
         temp_recording_path: Path,
         websocket_url: str,
@@ -824,6 +1189,7 @@ class CaseRunner:
         settle_seconds: float,
     ) -> None:
         self._case_dir = case_dir
+        self._scheduled_inputs = scheduled_inputs
         self._output_path = output_path
         self._temp_recording_path = temp_recording_path
         self._websocket_url = websocket_url
@@ -844,6 +1210,12 @@ class CaseRunner:
         self._playback: PlaybackSimulator | None = None
         self._error: Exception | None = None
         self._last_full_audio_at: float | None = None
+        self._asr_results: list[ASRResultRecord] = []
+
+    @property
+    def asr_results(self) -> list[ASRResultRecord]:
+        """Return ASR events collected during the case run."""
+        return list(self._asr_results)
 
     async def run(self) -> None:
         """Execute the case end to end and write the output WAV."""
@@ -877,8 +1249,7 @@ class CaseRunner:
                 )
             )
 
-            scheduled_inputs = parse_case_inputs(self._case_dir)
-            await self._send_scheduled_inputs(websocket, scheduled_inputs)
+            await self._send_scheduled_inputs(websocket, self._scheduled_inputs)
             self._scheduler_done_at = asyncio.get_running_loop().time()
             self._scheduler_done.set()
             await self._wait_until_idle(websocket)
@@ -950,6 +1321,25 @@ class CaseRunner:
             return
         if action == "tts_finished" and self._playback is not None:
             await self._playback.mark_server_tts_finished()
+            return
+        if action in {"update_asr", "finish_asr"}:
+            text = ""
+            turn_id: int | None = None
+            if isinstance(data, dict):
+                raw_text = data.get("text")
+                if isinstance(raw_text, str):
+                    text = raw_text
+                raw_turn_id = data.get("turn_id")
+                if isinstance(raw_turn_id, int):
+                    turn_id = raw_turn_id
+            self._asr_results.append(
+                ASRResultRecord(
+                    action=action,
+                    text=text,
+                    turn_id=turn_id,
+                    received_at=asyncio.get_running_loop().time(),
+                )
+            )
             return
         if action == "full_audio_frame":
             self._last_full_audio_at = asyncio.get_running_loop().time()
@@ -1144,6 +1534,148 @@ def validate_vad_configuration(config: dict[str, Any], *, with_vad: bool) -> Non
         )
 
 
+def build_asr_report_payload(
+    *,
+    scheduled_inputs: list[ScheduledAudioInput],
+    asr_results: list[ASRResultRecord],
+    judgement: ASRJudgement | None,
+) -> dict[str, Any]:
+    """Build the persisted ASR report payload for one case."""
+    expected = [
+        {
+            "audio": item.audio_path.name,
+            "text": item.expected_text,
+        }
+        for item in scheduled_inputs
+    ]
+    observed = [
+        {
+            "action": record.action,
+            "text": record.text,
+            "turn_id": record.turn_id,
+            "received_at": record.received_at,
+        }
+        for record in asr_results
+    ]
+    payload: dict[str, Any] = {
+        "expected": expected,
+        "observed": observed,
+    }
+    if judgement is not None:
+        payload["judge_asr"] = {
+            "passed": judgement.passed,
+            "reason": judgement.reason,
+        }
+    return payload
+
+
+def validate_case_inputs_for_criteria(
+    case_name: str,
+    scheduled_inputs: list[ScheduledAudioInput],
+    criteria: CaseCriteria,
+) -> None:
+    """Validate that scheduled inputs satisfy case-level evaluation criteria.
+
+    Parameters
+    ----------
+    case_name : str
+        Case directory name.
+    scheduled_inputs : list[ScheduledAudioInput]
+        Parsed timestamp entries for the case.
+    criteria : CaseCriteria
+        Case-level evaluation settings.
+    """
+    if not criteria.judge_asr:
+        return
+    missing_text_audios = [
+        item.audio_path.name
+        for item in scheduled_inputs
+        if item.expected_text is None or not item.expected_text.strip()
+    ]
+    if missing_text_audios:
+        missing_summary = ", ".join(missing_text_audios)
+        raise ValueError(
+            f"{case_name}: judge_asr=true requires timestamp.txt to include transcript text as the third column for every entry; missing text for: {missing_summary}"
+        )
+
+
+async def evaluate_case_result(
+    result: CaseExecutionResult,
+    *,
+    judge_llm: JudgeLLMConfig | None,
+    output_root: Path,
+) -> bool:
+    """Evaluate one executed case and persist auxiliary analysis files."""
+    audio_exists = result.output_path.exists()
+    asr_report_path = get_case_asr_report_path(output_root, result.case_name)
+    if not result.criteria.judge_asr:
+        return result.error is None and audio_exists
+
+    if result.error is not None or not audio_exists:
+        failure_reasons: list[str] = []
+        if result.error is not None:
+            failure_reasons.append(result.error)
+        if not audio_exists:
+            failure_reasons.append("output audio is missing")
+        write_json(
+            asr_report_path,
+            build_asr_report_payload(
+                scheduled_inputs=result.scheduled_inputs,
+                asr_results=result.asr_results,
+                judgement=ASRJudgement(
+                    passed=False,
+                    reason="; ".join(failure_reasons),
+                ),
+            ),
+        )
+        return False
+
+    expected_texts = [
+        item.expected_text.strip()
+        for item in result.scheduled_inputs
+        if item.expected_text is not None and item.expected_text.strip()
+    ]
+    if len(expected_texts) != len(result.scheduled_inputs):
+        report_payload = build_asr_report_payload(
+            scheduled_inputs=result.scheduled_inputs,
+            asr_results=result.asr_results,
+            judgement=ASRJudgement(
+                passed=False,
+                reason="judge_asr=true requires transcript text on every timestamp.txt line.",
+            ),
+        )
+        write_json(asr_report_path, report_payload)
+        return False
+
+    actual_texts = [
+        record.text.strip()
+        for record in result.asr_results
+        if record.action == "finish_asr" and record.text.strip()
+    ]
+    if judge_llm is None:
+        raise ValueError("judge_llm must be configured when any case enables judge_asr")
+
+    try:
+        judgement = await asyncio.to_thread(
+            judge_asr_with_llm,
+            judge_llm,
+            expected_texts=expected_texts,
+            actual_texts=actual_texts,
+        )
+    except Exception as exc:
+        judgement = ASRJudgement(
+            passed=False,
+            reason=f"Judge LLM request failed: {exc}",
+        )
+    report_payload = build_asr_report_payload(
+        scheduled_inputs=result.scheduled_inputs,
+        asr_results=result.asr_results,
+        judgement=judgement,
+    )
+    write_json(asr_report_path, report_payload)
+    return judgement.passed
+
+
 async def run_test_mode(args: argparse.Namespace) -> None:
     """Run automated backend tests."""
     if args.config is None:
@@ -1158,6 +1690,10 @@ async def run_test_mode(args: argparse.Namespace) -> None:
         dataset_root,
         concurrency_override=args.concurrency,
         with_vad_override=args.with_vad_override,
+        vad_redemption_ms_override=args.vad_redemption_ms,
+        judge_llm_model_override=args.judge_llm_model,
+        judge_llm_base_url_override=args.judge_llm_base_url,
+        judge_llm_api_key_override=args.judge_llm_api_key,
     )
     validate_vad_configuration(
         merged_service_config,
@@ -1166,12 +1702,23 @@ async def run_test_mode(args: argparse.Namespace) -> None:
 
     output_root = args.out.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    logs_output_root = output_root / "logs"
+    logs_output_root.mkdir(parents=True, exist_ok=True)
     write_json(
         output_root / "test_config.json",
         {
             "concurrency": effective_test_config.concurrency,
             "with_vad": effective_test_config.with_vad,
             "vad_redemption_ms": effective_test_config.vad_redemption_ms,
+            "judge_llm": (
+                {
+                    "model": effective_test_config.judge_llm.model,
+                    "base_url": effective_test_config.judge_llm.base_url,
+                    "api_key": effective_test_config.judge_llm.api_key,
+                }
+                if effective_test_config.judge_llm is not None
+                else None
+            ),
         },
     )
     write_json(output_root / "service_config.json", merged_service_config)
@@ -1180,7 +1727,29 @@ async def run_test_mode(args: argparse.Namespace) -> None:
     temp_recording_root.mkdir(parents=True, exist_ok=True)
 
     case_dirs = discover_case_dirs(dataset_root)
+    case_inputs = {case_dir.name: parse_case_inputs(case_dir) for case_dir in case_dirs}
+    case_criteria = {case_dir.name: load_case_criteria(case_dir) for case_dir in case_dirs}
+    for case_dir in case_dirs:
+        validate_case_inputs_for_criteria(
+            case_dir.name,
+            case_inputs[case_dir.name],
+            case_criteria[case_dir.name],
+        )
+    for case_dir in case_dirs:
+        (output_root / f"{case_dir.name}.wav").unlink(missing_ok=True)
+        get_legacy_case_asr_report_path(output_root, case_dir.name).unlink(
+            missing_ok=True
+        )
+        get_case_asr_report_path(output_root, case_dir.name).unlink(missing_ok=True)
+    if (
+        any(criteria.judge_asr for criteria in case_criteria.values())
+        and effective_test_config.judge_llm is None
+    ):
+        raise ValueError(
+            "judge_llm must be configured in the dataset config or CLI when any case enables judge_asr"
+        )
     semaphore = asyncio.Semaphore(effective_test_config.concurrency)
+    case_results: list[CaseExecutionResult] = []
 
     async with EmbeddedServer(
         config=merged_service_config,
@@ -1192,6 +1761,7 @@ async def run_test_mode(args: argparse.Namespace) -> None:
             async with semaphore:
                 runner = CaseRunner(
                     case_dir=case_dir,
+                    scheduled_inputs=case_inputs[case_dir.name],
                     output_path=output_root / f"{case_dir.name}.wav",
                     temp_recording_path=temp_recording_root / f"{case_dir.name}.wav",
                     websocket_url=server.websocket_url,
@@ -1200,12 +1770,51 @@ async def run_test_mode(args: argparse.Namespace) -> None:
                     vad_redemption_ms=effective_test_config.vad_redemption_ms,
                     settle_seconds=DEFAULT_SETTLE_SECONDS,
                 )
-                await runner.run()
+                error: str | None = None
+                try:
+                    await runner.run()
+                except Exception as exc:
+                    error = str(exc)
+                case_results.append(
+                    CaseExecutionResult(
+                        case_name=case_dir.name,
+                        output_path=output_root / f"{case_dir.name}.wav",
+                        criteria=case_criteria[case_dir.name],
+                        scheduled_inputs=case_inputs[case_dir.name],
+                        asr_results=runner.asr_results,
+                        error=error,
+                    )
+                )
 
         try:
             await asyncio.gather(*(run_one_case(case_dir) for case_dir in case_dirs))
         finally:
             shutil.rmtree(temp_recording_root, ignore_errors=True)
+
+    eval_cases: dict[str, dict[str, bool]] = {}
+    latency_values_ms: list[float] = []
+    for case_result in sorted(case_results, key=lambda item: item.case_name):
+        passed = await evaluate_case_result(
+            case_result,
+            judge_llm=effective_test_config.judge_llm,
+            output_root=output_root,
+        )
+        eval_cases[case_result.case_name] = {"passed": passed}
+        if case_result.error is None and case_result.output_path.exists():
+            latency_values_ms.extend(compute_case_latency_samples(case_result.output_path))
+
+    latency_ms = (
+        sum(latency_values_ms) / float(len(latency_values_ms))
+        if latency_values_ms
+        else 0.0
+    )
+    write_json(
+        output_root / "eval.json",
+        {
+            "latency_ms": latency_ms,
+            "cases": eval_cases,
+        },
+    )
 
 
 def resolve_create_output_root(source_root: Path, requested_out: Path) -> Path:
@@ -1251,6 +1860,7 @@ def run_create_mode(args: argparse.Namespace) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     if test_config_path is not None:
         shutil.copyfile(test_config_path, output_root / "test_config.json")
+    shutil.copyfile(tts_config_path, output_root / "tts_config.json")
 
     sample_rate_hint = int(getattr(tts_model, "sample_rate", 48000) or 48000)
     for case_dir in discover_case_dirs(source_root):
@@ -1271,7 +1881,7 @@ def run_create_mode(args: argparse.Namespace) -> None:
                 sample_rate=sample_rate,
                 channels=1,
             )
-            timestamp_lines.append(f"{line.time_spec}:{audio_name}")
+            timestamp_lines.append(f"{line.time_spec}:{audio_name}:{line.text}")
 
         (case_output_dir / "timestamp.txt").write_text(
             "\n".join(timestamp_lines) + "\n",

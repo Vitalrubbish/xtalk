@@ -6,10 +6,12 @@ import { BaseHTTPClient, HTTPRequestError } from "../bases/http";
 import type { ResolvableURL, SessionServiceURLConfig, SessionServiceURLs } from "../bases/http";
 import { BaseEncoding } from "../bases/encoding";
 import { BasePersistenceStore } from "../bases/persistence";
+import { BaseDeferredTaskScheduler } from "../bases/task-scheduler";
 
 import vadProcessorUrl from "../../worklets/vad-processor.worklet.js";
 import fastEnhancerOnnxUrl from "../../models/fastenhancer_s.onnx";
 export {
+    WebDeferredTaskScheduler,
     WebWebSocket,
     WebInputAudioSession,
     WebOutputAudioSession,
@@ -19,6 +21,72 @@ export {
     resolveWebServiceURLs,
     buildWebSocketURLWithAccessToken,
 };
+
+/**
+ * Web implementation of deferred task scheduling for non-blocking callbacks.
+ */
+class WebDeferredTaskScheduler extends BaseDeferredTaskScheduler {
+    private readonly taskQueue: Array<() => void> = [];
+    private readonly messageChannel: MessageChannel | null;
+    private timeoutId: number | null = null;
+    private scheduled = false;
+    private disposed = false;
+
+    constructor() {
+        super();
+        this.messageChannel = typeof MessageChannel === "function" ? new MessageChannel() : null;
+        if (this.messageChannel) {
+            this.messageChannel.port1.onmessage = () => {
+                this.flush();
+            };
+        }
+    }
+
+    schedule(task: () => void): void {
+        if (this.disposed) {
+            return;
+        }
+        this.taskQueue.push(task);
+        if (this.scheduled) {
+            return;
+        }
+        this.scheduled = true;
+        if (this.messageChannel) {
+            this.messageChannel.port2.postMessage(null);
+            return;
+        }
+        this.timeoutId = window.setTimeout(() => {
+            this.timeoutId = null;
+            this.flush();
+        }, 0);
+    }
+
+    dispose(): void {
+        this.disposed = true;
+        this.taskQueue.length = 0;
+        this.scheduled = false;
+        if (this.timeoutId !== null) {
+            window.clearTimeout(this.timeoutId);
+            this.timeoutId = null;
+        }
+        if (this.messageChannel) {
+            this.messageChannel.port1.onmessage = null;
+            this.messageChannel.port1.close();
+            this.messageChannel.port2.close();
+        }
+    }
+
+    private flush(): void {
+        if (this.disposed) {
+            return;
+        }
+        this.scheduled = false;
+        const queuedTasks = this.taskQueue.splice(0, this.taskQueue.length);
+        for (const task of queuedTasks) {
+            task();
+        }
+    }
+}
 
 class WebWebSocket extends BaseWebSocket {
     private instance: WebSocket;

@@ -1,10 +1,13 @@
 import { createInputAudioSession, createOutputAudioSession } from "../audio-session";
 import type { InputAudioSessionConfig, OutputAudioSessionConfig } from "../bases/audio-session";
 import type { BaseOutputAudioSession } from "../bases/audio-session";
+import type { BaseDeferredTaskScheduler } from "../bases/task-scheduler";
 import type { BaseWebSocket } from "../bases/websocket";
+import type { BaseWebSocketCloseEvent, BaseWebSocketMessageEvent } from "../bases/websocket";
 import { Conversation } from "../conversation";
 import { buildAuthenticatedWebSocketURL } from "../http";
 import { ActionHandler } from "../action-handler";
+import { createDeferredTaskScheduler } from "../task-scheduler";
 import { createWebSocket } from "../websocket";
 import type { AudioChunkCallback } from "./types";
 
@@ -19,6 +22,7 @@ function createSessionRuntimeController(
         conversation,
         getAccessToken,
         inputConfig,
+        onUnexpectedDisconnect,
         outputConfig,
         websocketURL,
     }: {
@@ -26,6 +30,7 @@ function createSessionRuntimeController(
         conversation: Conversation;
         getAccessToken: () => string | null;
         inputConfig: InputAudioSessionConfig;
+        onUnexpectedDisconnect: (details: BaseWebSocketCloseEvent) => void;
         outputConfig: OutputAudioSessionConfig;
         websocketURL: string | URL;
     },
@@ -33,9 +38,11 @@ function createSessionRuntimeController(
     let websocket: BaseWebSocket | null = null;
     let inputAudioSession: ReturnType<typeof createInputAudioSession> | null = null;
     let outputAudioSession: ReturnType<typeof createOutputAudioSession> | null = null;
+    let activeCloseState: { expected: boolean } | null = null;
     let preferredMuted = false;
     let inputAudioChunkCallback: AudioChunkCallback = (_chunk, _sr) => { };
     let outputAudioChunkCallback: AudioChunkCallback = (_chunk, _sr) => { };
+    let observerTaskScheduler: BaseDeferredTaskScheduler | null = null;
 
     function requireRuntime(): {
         websocket: BaseWebSocket;
@@ -54,12 +61,17 @@ function createSessionRuntimeController(
         }
 
         const wsURL = buildAuthenticatedWebSocketURL(websocketURL, accessToken);
+        const closeState = { expected: false };
         websocket = createWebSocket(wsURL);
+        activeCloseState = closeState;
         inputAudioSession = createInputAudioSession(inputConfig);
         outputAudioSession = createOutputAudioSession(outputConfig);
+        observerTaskScheduler?.dispose();
+        observerTaskScheduler = createDeferredTaskScheduler();
         const currentWebSocket = websocket;
         const currentInputAudioSession = inputAudioSession;
         const currentOutputAudioSession = outputAudioSession;
+        const currentObserverTaskScheduler = observerTaskScheduler;
         currentInputAudioSession.muted = preferredMuted;
 
         let rejectAttached: ((reason?: unknown) => void) | null = null;
@@ -77,13 +89,16 @@ function createSessionRuntimeController(
             });
         });
 
-        currentWebSocket.addEventListener("close", () => {
+        currentWebSocket.addEventListener("close", (event: BaseWebSocketCloseEvent) => {
             conversation.state.streamState = "idle";
             rejectAttached?.(new Error("WebSocket closed before session attachment"));
+            if (!closeState.expected) {
+                onUnexpectedDisconnect(event);
+            }
         });
         currentWebSocket.addEventListener(
             "message",
-            async (event: { data: string | ArrayBuffer }) => {
+            async (event: BaseWebSocketMessageEvent) => {
                 if (typeof event.data === "string") {
                     const message: { action: string; data: unknown } = JSON.parse(event.data);
                     await actionHandler.handleAction(
@@ -100,10 +115,13 @@ function createSessionRuntimeController(
         );
 
         currentInputAudioSession.onFrame(async (audioChunk) => {
-            inputAudioChunkCallback(audioChunk, inputConfig.sampleRate);
             if (currentWebSocket.ready()) {
                 currentWebSocket.sendAudioChunk(audioChunk);
             }
+            const callback = inputAudioChunkCallback;
+            currentObserverTaskScheduler.schedule(() => {
+                callback(audioChunk, inputConfig.sampleRate);
+            });
         });
         currentInputAudioSession.onSpeechStart(async () => {
             if (currentWebSocket.ready()) {
@@ -129,7 +147,10 @@ function createSessionRuntimeController(
         });
 
         currentOutputAudioSession.onChunkStarted(async (audioChunk) => {
-            outputAudioChunkCallback(audioChunk, outputConfig.sampleRate);
+            const callback = outputAudioChunkCallback;
+            currentObserverTaskScheduler.schedule(() => {
+                callback(audioChunk, outputConfig.sampleRate);
+            });
             if (currentWebSocket.ready()) {
                 await actionHandler.handleAction(
                     "client_audio_chunk_started",
@@ -178,6 +199,12 @@ function createSessionRuntimeController(
         const currentOutput = outputAudioSession;
         const currentWebSocket = websocket;
 
+        if (activeCloseState) {
+            activeCloseState.expected = true;
+            activeCloseState = null;
+        }
+        observerTaskScheduler?.dispose();
+        observerTaskScheduler = null;
         inputAudioSession = null;
         outputAudioSession = null;
         websocket = null;

@@ -1,4 +1,4 @@
-import { createHTTPClient, resolvePlatformServiceURLs } from "../http";
+import { createHTTPClient, delay, resolvePlatformServiceURLs } from "../http";
 import { createPersistenceStore } from "../persistence";
 import { Conversation } from "../conversation";
 import { ActionHandler } from "../action-handler";
@@ -14,6 +14,9 @@ import { createSessionRuntimeController } from "./runtime";
 import type { Session, SessionConfig } from "./types";
 
 export { createSession };
+
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAYS_MS = [0, 1000, 2000, 5000, 5000];
 
 /**
  * Creates a session client bound to the provided websocket endpoint.
@@ -66,6 +69,7 @@ function createSession(
         conversation,
         httpClient,
         initialAccessToken: restoredSnapshot?.accessToken ?? null,
+        initialSupportsSessionRecovery: restoredSnapshot?.supportsSessionRecovery ?? false,
         serviceURLs,
     });
     const runtimeController = createSessionRuntimeController({
@@ -73,6 +77,12 @@ function createSession(
         conversation,
         getAccessToken: authController.getAccessToken,
         inputConfig: resolvedInputConfig,
+        onUnexpectedDisconnect: () => {
+            if (manualCloseRequested || pendingOpen || reconnectPromise) {
+                return;
+            }
+            void startReconnect();
+        },
         outputConfig: resolvedOutputConfig,
         websocketURL,
     });
@@ -91,6 +101,7 @@ function createSession(
             persistenceKey,
             buildPersistedConversationSnapshot(
                 authController.getAccessToken(),
+                authController.getSupportsSessionRecovery(),
                 state.user,
                 state.sessionId,
                 state.messages,
@@ -99,31 +110,105 @@ function createSession(
     });
 
     let pendingOpen: Promise<void> | null = null;
+    let reconnectPromise: Promise<void> | null = null;
     let canRetryRuntimeAfterRestoredAuth = restoredSnapshot?.accessToken != null;
+    let manualCloseRequested = false;
+
+    function shouldAutoReconnect(): boolean {
+        return (
+            !manualCloseRequested
+            && !!conversation.state.sessionId
+            && authController.getSupportsSessionRecovery()
+        );
+    }
+
+    async function updateSessionRecoverySupport(): Promise<void> {
+        const supported = await sessionAPI.probeSessionRecovery(conversation.state.sessionId);
+        authController.setSupportsSessionRecovery(supported);
+    }
+
+    async function openRuntime(): Promise<void> {
+        await authController.ensureLoggedIn();
+        await runtimeController.close();
+        try {
+            await runtimeController.initialize();
+            canRetryRuntimeAfterRestoredAuth = false;
+        } catch (error) {
+            await runtimeController.close();
+            if (canRetryRuntimeAfterRestoredAuth) {
+                canRetryRuntimeAfterRestoredAuth = false;
+                authController.resetAuthState(true);
+                await authController.ensureLoggedIn();
+                await runtimeController.initialize();
+                canRetryRuntimeAfterRestoredAuth = false;
+            } else {
+                throw error;
+            }
+        }
+        await updateSessionRecoverySupport();
+        conversation.state.connectionState = "connected";
+    }
+
+    async function startReconnect(): Promise<void> {
+        if (reconnectPromise || !shouldAutoReconnect()) {
+            if (!manualCloseRequested && !authController.getSupportsSessionRecovery()) {
+                conversation.state.connectionState = "disconnected";
+            }
+            return reconnectPromise ?? Promise.resolve();
+        }
+
+        reconnectPromise = (async () => {
+            const targetSessionId = conversation.state.sessionId;
+            if (!targetSessionId) {
+                conversation.state.connectionState = "disconnected";
+                return;
+            }
+
+            conversation.state.connectionState = "reconnecting";
+            conversation.state.streamState = "idle";
+
+            for (let attempt = 0; attempt < MAX_RECONNECT_ATTEMPTS; attempt += 1) {
+                if (!shouldAutoReconnect() || conversation.state.sessionId !== targetSessionId) {
+                    conversation.state.connectionState = "disconnected";
+                    return;
+                }
+                await delay(RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)] ?? 5000);
+                try {
+                    await runtimeController.close();
+                    await authController.ensureLoggedIn();
+                    await runtimeController.initialize();
+                    await sessionAPI.refreshSession(targetSessionId);
+                    authController.setSupportsSessionRecovery(true);
+                    if (!manualCloseRequested) {
+                        conversation.state.connectionState = "connected";
+                    }
+                    return;
+                } catch {
+                    await runtimeController.close();
+                }
+            }
+
+            conversation.state.connectionState = "disconnected";
+        })();
+
+        try {
+            await reconnectPromise;
+        } finally {
+            reconnectPromise = null;
+        }
+    }
 
     return {
         async open() {
             if (pendingOpen) {
                 return pendingOpen;
             }
+            if (reconnectPromise) {
+                return reconnectPromise;
+            }
             pendingOpen = (async () => {
-                await authController.ensureLoggedIn();
-                await runtimeController.close();
-                try {
-                    await runtimeController.initialize();
-                    canRetryRuntimeAfterRestoredAuth = false;
-                } catch (error) {
-                    await runtimeController.close();
-                    if (canRetryRuntimeAfterRestoredAuth) {
-                        canRetryRuntimeAfterRestoredAuth = false;
-                        authController.resetAuthState(true);
-                        await authController.ensureLoggedIn();
-                        await runtimeController.initialize();
-                        canRetryRuntimeAfterRestoredAuth = false;
-                        return;
-                    }
-                    throw error;
-                }
+                manualCloseRequested = false;
+                await openRuntime();
             })();
             try {
                 await pendingOpen;
@@ -132,7 +217,9 @@ function createSession(
             }
         },
         async close() {
+            manualCloseRequested = true;
             await runtimeController.close();
+            conversation.state.connectionState = "disconnected";
         },
         onStateChange(callback) {
             conversation.onStateChange(callback);

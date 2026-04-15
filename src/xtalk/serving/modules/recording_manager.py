@@ -22,7 +22,8 @@ import os
 import time
 import wave
 import asyncio
-from typing import Optional, Any
+from collections import deque
+from typing import Optional, Any, Literal
 
 import numpy as np
 
@@ -34,13 +35,18 @@ from ..events import (
     FullAudioFrameReady,
     TTSChunkGenerated,
     TTSChunkPlayed,
+    TTSPaused,
+    TTSResumed,
     TTSStarted,
+    TTSStopped,
     SessionConfigReceived,
 )
 
 
 # TODO: refined time control by adding timestamps to user audio frames and TTS chunks; current implementation does not consider network latency and code execution time and may drift.
-# TODO: when interrupting during an audio chunk on frontend, that chunk's tts_chunk_played event will not be sent, and the played part of that chunk will not appear in the final recording; this will result in TTS early stops before user interruption in the recording
+# TODO: interrupted chunk capture is estimated from backend timing only; without
+# frontend playback-progress signals, chunk-internal stop positions remain
+# approximate.
 class RecordingManager(Manager):
     """Record user and TTS audio streams for each session."""
 
@@ -73,8 +79,12 @@ class RecordingManager(Manager):
         self._samples_user = 0
         self._samples_tts = 0
 
-        # FIFO queue of pending TTS chunks until playback confirmed; each item=(pcm_bytes, sample_rate)
-        self._pending_tts_chunks: list[tuple[bytes, int]] = []
+        # FIFO queue of pending TTS chunks until playback confirmed/estimated.
+        self._pending_tts_chunks: deque[np.ndarray] = deque()
+        self._pending_tts_samples = 0
+        self._estimated_played_samples = 0
+        self._tts_state: Literal["idle", "playing", "paused"] = "idle"
+        self._last_progress_mono_ts: Optional[float] = None
 
         # Time-based padding: track when each channel ends (in seconds, using time.time())
         # Initialized lazily on first audio to avoid initial silence gap
@@ -129,6 +139,71 @@ class RecordingManager(Manager):
             self._init_file(None)
         self._init_audio_timer()
 
+    def _reset_pending_tts_locked(self) -> None:
+        """Reset pending TTS playback state under ``self._lock``."""
+        self._pending_tts_chunks.clear()
+        self._pending_tts_samples = 0
+        self._estimated_played_samples = 0
+        self._tts_state = "idle"
+        self._last_progress_mono_ts = None
+
+    def _advance_estimated_tts_progress_locked(self, now_mono: float) -> None:
+        """Advance estimated TTS playback progress under ``self._lock``."""
+        if self._tts_state != "playing" or self._pending_tts_samples <= 0:
+            self._last_progress_mono_ts = now_mono
+            return
+        if self._last_progress_mono_ts is None:
+            self._last_progress_mono_ts = now_mono
+            return
+
+        elapsed_sec = now_mono - self._last_progress_mono_ts
+        self._last_progress_mono_ts = now_mono
+        if elapsed_sec <= 0:
+            return
+
+        added_samples = int(elapsed_sec * self.TARGET_SR)
+        if added_samples <= 0:
+            return
+
+        remaining_samples = max(
+            0, self._pending_tts_samples - self._estimated_played_samples
+        )
+        self._estimated_played_samples += min(added_samples, remaining_samples)
+
+    def _consume_pending_tts_prefix_locked(self, n_samples: int) -> np.ndarray:
+        """Consume and return a prefix from pending TTS samples under ``self._lock``."""
+        if n_samples <= 0 or self._pending_tts_samples <= 0:
+            self._estimated_played_samples = 0
+            return np.zeros((0,), dtype=np.int16)
+
+        remaining = min(n_samples, self._pending_tts_samples)
+        parts: list[np.ndarray] = []
+        while remaining > 0 and self._pending_tts_chunks:
+            chunk = self._pending_tts_chunks[0]
+            if chunk.size <= remaining:
+                parts.append(chunk)
+                self._pending_tts_chunks.popleft()
+                self._pending_tts_samples -= chunk.size
+                remaining -= chunk.size
+                continue
+
+            parts.append(chunk[:remaining].copy())
+            self._pending_tts_chunks[0] = chunk[remaining:].copy()
+            self._pending_tts_samples -= remaining
+            remaining = 0
+
+        consumed_samples = n_samples - remaining
+        self._estimated_played_samples = max(
+            0, self._estimated_played_samples - consumed_samples
+        )
+        if self._pending_tts_samples == 0:
+            self._tts_state = "idle"
+        return (
+            np.concatenate(parts)
+            if parts
+            else np.zeros((0,), dtype=np.int16)
+        )
+
     # ==================== Event handlers ====================
 
     @Manager.event_handler(SessionConfigReceived, priority=100)
@@ -160,7 +235,7 @@ class RecordingManager(Manager):
         if not self._enabled:
             return
         async with self._lock:
-            self._pending_tts_chunks.clear()
+            self._reset_pending_tts_locked()
 
     @Manager.event_handler(TTSChunkGenerated, priority=50)
     async def _on_tts_chunk_generated(self, event: TTSChunkGenerated) -> None:
@@ -172,10 +247,38 @@ class RecordingManager(Manager):
             if not pcm:
                 return
             src_sr = event.sample_rate or 48000
+            data_i16 = self._resample_to_int16(pcm, src_sr, self.TARGET_SR)
+            if data_i16.size <= 0:
+                return
+            now_mono = time.monotonic()
             async with self._lock:
-                self._pending_tts_chunks.append((pcm, src_sr))
+                self._advance_estimated_tts_progress_locked(now_mono)
+                self._pending_tts_chunks.append(data_i16.copy())
+                self._pending_tts_samples += data_i16.size
+                if self._tts_state == "idle":
+                    self._tts_state = "playing"
+                if self._last_progress_mono_ts is None:
+                    self._last_progress_mono_ts = now_mono
         except Exception as e:
             logger.warning("RecordingManager: failed to queue TTS chunk: %s", e)
+
+    @Manager.event_handler(TTSPaused, priority=50)
+    async def _on_tts_paused(self, event: TTSPaused) -> None:
+        """Pause estimated TTS playback progression."""
+        if not self._enabled:
+            return
+        async with self._lock:
+            self._advance_estimated_tts_progress_locked(time.monotonic())
+            self._tts_state = "paused"
+
+    @Manager.event_handler(TTSResumed, priority=50)
+    async def _on_tts_resumed(self, event: TTSResumed) -> None:
+        """Resume estimated TTS playback progression."""
+        if not self._enabled:
+            return
+        async with self._lock:
+            self._tts_state = "playing" if self._pending_tts_samples > 0 else "idle"
+            self._last_progress_mono_ts = time.monotonic()
 
     @Manager.event_handler(TTSChunkPlayed, priority=50)
     async def _on_tts_chunk_played(self, event: TTSChunkPlayed) -> None:
@@ -185,13 +288,36 @@ class RecordingManager(Manager):
         self._init_on_audio()
         try:
             async with self._lock:
+                self._advance_estimated_tts_progress_locked(time.monotonic())
                 if not self._pending_tts_chunks:
                     return
-                pcm, src_sr = self._pending_tts_chunks.pop(0)
-            data_i16 = self._resample_to_int16(pcm, src_sr, self.TARGET_SR)
+                data_i16 = self._pending_tts_chunks.popleft()
+                self._pending_tts_samples -= data_i16.size
+                self._estimated_played_samples = max(
+                    0, self._estimated_played_samples - data_i16.size
+                )
+                if self._pending_tts_samples == 0:
+                    self._tts_state = "idle"
             await self._append_tts_audio(data_i16)
         except Exception as e:
             logger.warning("RecordingManager: failed to handle TTS chunk played: %s", e)
+
+    @Manager.event_handler(TTSStopped, priority=50)
+    async def _on_tts_stopped(self, event: TTSStopped) -> None:
+        """Append the estimated played TTS prefix, then discard the remainder."""
+        if not self._enabled:
+            return
+        self._init_on_audio()
+        try:
+            async with self._lock:
+                self._advance_estimated_tts_progress_locked(time.monotonic())
+                data_i16 = self._consume_pending_tts_prefix_locked(
+                    self._estimated_played_samples
+                )
+                self._reset_pending_tts_locked()
+            await self._append_tts_audio(data_i16)
+        except Exception as e:
+            logger.warning("RecordingManager: failed to handle TTS stopped: %s", e)
 
     # ==================== Resampling ====================
 
@@ -349,6 +475,10 @@ class RecordingManager(Manager):
         self._samples_user = 0
         self._samples_tts = 0
         self._pending_tts_chunks.clear()
+        self._pending_tts_samples = 0
+        self._estimated_played_samples = 0
+        self._tts_state = "idle"
+        self._last_progress_mono_ts = None
         self._timer_user = None
         self._timer_tts = None
 

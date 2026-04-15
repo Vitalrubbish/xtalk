@@ -4,8 +4,10 @@ import { BaseHTTPClient } from "../bases/http";
 import type { ResolvableURL, SessionServiceURLConfig, SessionServiceURLs } from "../bases/http";
 import { BaseEncoding } from "../bases/encoding";
 import { BasePersistenceStore } from "../bases/persistence";
+import { BaseDeferredTaskScheduler } from "../bases/task-scheduler";
 import { BaseWebSocket } from "../bases/websocket";
 import {
+    WebDeferredTaskScheduler,
     WebEncoding,
     WebHTTPClient,
     WebInputAudioSession,
@@ -24,7 +26,9 @@ type PlatformRuntime = {
     createInputAudioSession(config: InputAudioSessionConfig): BaseInputAudioSession;
     createOutputAudioSession(config: OutputAudioSessionConfig): BaseOutputAudioSession;
     createWebSocket(url: string | URL, protocols?: string | string[]): BaseWebSocket;
+    delay(milliseconds: number): Promise<void>;
     createHTTPClient(): BaseHTTPClient;
+    createDeferredTaskScheduler(): BaseDeferredTaskScheduler;
     resolveServiceURLs(
         websocketURL: ResolvableURL,
         config?: SessionServiceURLConfig,
@@ -58,8 +62,16 @@ const WEB_PLATFORM_RUNTIME: PlatformRuntime = {
     createWebSocket(url, protocols) {
         return new WebWebSocket(url, protocols);
     },
+    delay(milliseconds) {
+        return new Promise((resolve) => {
+            window.setTimeout(resolve, milliseconds);
+        });
+    },
     createHTTPClient() {
         return new WebHTTPClient();
+    },
+    createDeferredTaskScheduler() {
+        return new WebDeferredTaskScheduler();
     },
     resolveServiceURLs(websocketURL, config) {
         return resolveWebServiceURLs(websocketURL, config);

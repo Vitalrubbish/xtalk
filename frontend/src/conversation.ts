@@ -12,6 +12,7 @@ type ConversationUser = {
 }
 
 function defaultConversation(): {
+    connectionState: "connected" | "reconnecting" | "disconnected";
     streamState: "idle" | "listening" | "processing" | "speaking";
     sessionId: string | null;
     user: ConversationUser | null;
@@ -28,6 +29,7 @@ function defaultConversation(): {
     retrieval: string;
 } {
     return {
+        connectionState: "disconnected",
         streamState: "idle",
         sessionId: null,
         user: null,
@@ -66,7 +68,7 @@ class Conversation {
     get state(): ConversationState {
         return new Proxy(this._state, {
             set: (target, key: keyof ConversationState, value) => {
-                target[key] = value;
+                Reflect.set(target, key, value);
                 this.notifyStateChange();
                 return true;
             },

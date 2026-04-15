@@ -57,6 +57,8 @@ const $recentAudioPlayer = document.getElementById('recent-audio-player');
 let audioCtx = null;
 let inputAnalyser = null;
 let outputAnalyser = null;
+let inputMonitorGain = null;
+let outputMonitorGain = null;
 let inputDataArray = null;
 let outputDataArray = null;
 let inputBufferLength = 0;
@@ -196,6 +198,61 @@ function ensureAudioContext() {
         audioCtx = new AC();
     }
     return audioCtx;
+}
+
+function ensureInputAnalyser() {
+    ensureAudioContext();
+    if (!inputAnalyser) {
+        inputAnalyser = audioCtx.createAnalyser();
+        inputAnalyser.fftSize = 1024;
+        inputAnalyser.smoothingTimeConstant = 0.7;
+        inputBufferLength = inputAnalyser.fftSize;
+        inputDataArray = new Uint8Array(inputBufferLength);
+    }
+    if (!inputMonitorGain) {
+        inputMonitorGain = audioCtx.createGain();
+        inputMonitorGain.gain.value = 0;
+        inputAnalyser.connect(inputMonitorGain);
+        inputMonitorGain.connect(audioCtx.destination);
+    }
+    return inputAnalyser;
+}
+
+function ensureOutputAnalyser() {
+    ensureAudioContext();
+    if (!outputAnalyser) {
+        outputAnalyser = audioCtx.createAnalyser();
+        outputAnalyser.fftSize = 1024;
+        outputAnalyser.smoothingTimeConstant = 0.7;
+        outputBufferLength = outputAnalyser.fftSize;
+        outputDataArray = new Uint8Array(outputBufferLength);
+    }
+    if (!outputMonitorGain) {
+        outputMonitorGain = audioCtx.createGain();
+        outputMonitorGain.gain.value = 0;
+        outputAnalyser.connect(outputMonitorGain);
+        outputMonitorGain.connect(audioCtx.destination);
+    }
+    return outputAnalyser;
+}
+
+function playPcmChunkThroughAnalyser(pcmChunkInt16, sampleRate, analyser) {
+    const int16 = new Int16Array(pcmChunkInt16);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768;
+    }
+
+    const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
+    buffer.getChannelData(0).set(float32);
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(analyser);
+    source.onended = () => {
+        source.onended = null;
+        try { source.disconnect(); } catch { }
+    };
+    source.start();
 }
 
 function resizeCanvas() {
@@ -448,34 +505,8 @@ session.onStateChange((state) => {
 
 session.onInputAudioChunk((pcmChunkInt16, sampleRate) => {
     try {
-        ensureAudioContext();
-        if (!inputAnalyser) {
-            inputAnalyser = audioCtx.createAnalyser();
-            inputAnalyser.fftSize = 1024;
-            inputAnalyser.smoothingTimeConstant = 0.7;
-            inputBufferLength = inputAnalyser.fftSize;
-            inputDataArray = new Uint8Array(inputBufferLength);
-        }
-
-        const int16 = new Int16Array(pcmChunkInt16);
-        const float32 = new Float32Array(int16.length);
-        for (let i = 0; i < int16.length; i++) {
-            float32[i] = int16[i] / 32768;
-        }
-
-        const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
-        buffer.getChannelData(0).set(float32);
-        const source = audioCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(inputAnalyser);
-        const gain = audioCtx.createGain();
-        gain.gain.value = 0;
-        inputAnalyser.connect(gain);
-        gain.connect(audioCtx.destination);
-        source.start();
-        source.addEventListener('ended', () => {
-            try { source.disconnect(); } catch { }
-        });
+        const analyser = ensureInputAnalyser();
+        playPcmChunkThroughAnalyser(pcmChunkInt16, sampleRate, analyser);
     } catch (e) {
         console.error('Input audio chunk error:', e);
     }
@@ -483,34 +514,8 @@ session.onInputAudioChunk((pcmChunkInt16, sampleRate) => {
 
 session.onOutputAudioChunk((pcmChunkInt16, sampleRate) => {
     try {
-        ensureAudioContext();
-        if (!outputAnalyser) {
-            outputAnalyser = audioCtx.createAnalyser();
-            outputAnalyser.fftSize = 1024;
-            outputAnalyser.smoothingTimeConstant = 0.7;
-            outputBufferLength = outputAnalyser.fftSize;
-            outputDataArray = new Uint8Array(outputBufferLength);
-        }
-
-        const int16 = new Int16Array(pcmChunkInt16);
-        const float32 = new Float32Array(int16.length);
-        for (let i = 0; i < int16.length; i++) {
-            float32[i] = int16[i] / 32768;
-        }
-
-        const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
-        buffer.getChannelData(0).set(float32);
-        const source = audioCtx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(outputAnalyser);
-        const gain = audioCtx.createGain();
-        gain.gain.value = 0;
-        outputAnalyser.connect(gain);
-        gain.connect(audioCtx.destination);
-        source.start();
-        source.addEventListener('ended', () => {
-            try { source.disconnect(); } catch { }
-        });
+        const analyser = ensureOutputAnalyser();
+        playPcmChunkThroughAnalyser(pcmChunkInt16, sampleRate, analyser);
     } catch (e) {
         console.error('Output audio chunk error:', e);
     }

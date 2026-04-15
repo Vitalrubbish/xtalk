@@ -42,6 +42,10 @@ function createSessionAPI(
         return await withAuthorizedToken((token) => httpClient.getJSON<T>(input, token));
     }
 
+    async function loadSessionDetail(sessionId: string): Promise<SessionDetail> {
+        return await authorizedGetJSON<SessionDetail>(serviceURLs.sessionDetail(sessionId));
+    }
+
     return {
         async getSessions(): Promise<SessionSummary[]> {
             const payload = await authorizedGetJSON<{ sessions?: SessionSummary[] }>(
@@ -57,9 +61,22 @@ function createSessionAPI(
                 return;
             }
 
-            const payload = await authorizedGetJSON<SessionDetail>(
-                serviceURLs.sessionDetail(sessionId),
-            );
+            const payload = await loadSessionDetail(sessionId);
+            conversation.switch(payload.session_id, mapSessionMessages(payload.messages));
+        },
+        async probeSessionRecovery(sessionId: string | null): Promise<boolean> {
+            if (!sessionId) {
+                return false;
+            }
+            try {
+                await loadSessionDetail(sessionId);
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        async refreshSession(sessionId: string): Promise<void> {
+            const payload = await loadSessionDetail(sessionId);
             conversation.switch(payload.session_id, mapSessionMessages(payload.messages));
         },
         async uploadFile(file: Blob, endpoint?: string | URL): Promise<void> {

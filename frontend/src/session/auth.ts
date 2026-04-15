@@ -13,16 +13,19 @@ function createSessionAuthController(
         conversation,
         httpClient,
         initialAccessToken,
+        initialSupportsSessionRecovery,
         serviceURLs,
     }: {
         clearPersistedSnapshot: () => void;
         conversation: Conversation;
         httpClient: BaseHTTPClient;
         initialAccessToken: string | null;
+        initialSupportsSessionRecovery: boolean;
         serviceURLs: SessionServiceURLs;
     },
 ) {
     let accessToken: string | null = initialAccessToken;
+    let supportsSessionRecovery = initialSupportsSessionRecovery;
 
     async function performLogin(): Promise<void> {
         const payload = await httpClient.postJSON<{
@@ -46,6 +49,7 @@ function createSessionAuthController(
 
     function resetAuthState(resetConversation: boolean): void {
         accessToken = null;
+        supportsSessionRecovery = false;
         conversation.setUser(null);
         if (resetConversation) {
             conversation.switch(null, []);
@@ -80,7 +84,13 @@ function createSessionAuthController(
         getAccessToken(): string | null {
             return accessToken;
         },
+        getSupportsSessionRecovery(): boolean {
+            return supportsSessionRecovery;
+        },
         resetAuthState,
+        setSupportsSessionRecovery(value: boolean): void {
+            supportsSessionRecovery = value;
+        },
         withAuthorizedToken,
     };
 }

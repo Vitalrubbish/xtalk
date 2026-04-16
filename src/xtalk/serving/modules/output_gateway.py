@@ -59,6 +59,7 @@ class OutputGateway(EventListenerMixin):
         self.session_id = session_id
         self.websocket = websocket
         self.config: dict[str, Any] = config or {}
+        self._full_audio_chunk_bytes = 128 * 1024
 
     # ── WebSocket helpers ───────────────────────────────────────────
 
@@ -271,15 +272,18 @@ class OutputGateway(EventListenerMixin):
     async def _send_full_audio_frame_signal(self, event: FullAudioFrameReady) -> None:
         if not event.audio_chunk:
             return
-        await self._forward(
-            "full_audio_frame",
-            {
-                "audio_base64": base64.b64encode(event.audio_chunk).decode("ascii"),
-                "sample_rate": int(event.sample_rate),
-                "channels": int(event.channels),
-                "format": event.format,
-            },
-        )
+        total_bytes = len(event.audio_chunk)
+        for start in range(0, total_bytes, self._full_audio_chunk_bytes):
+            chunk = event.audio_chunk[start : start + self._full_audio_chunk_bytes]
+            await self._forward(
+                "full_audio_frame",
+                {
+                    "audio_base64": base64.b64encode(chunk).decode("ascii"),
+                    "sample_rate": int(event.sample_rate),
+                    "channels": int(event.channels),
+                    "format": event.format,
+                },
+            )
 
     @EventListenerMixin.event_handler(TTSVoiceChange, priority=5)
     async def _send_voice_changed_signal(self, event: TTSVoiceChange) -> None:

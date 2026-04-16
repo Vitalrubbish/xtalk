@@ -223,9 +223,8 @@ class TTSChunkGenerated(BaseEvent):
 class TTSChunkPlayed(BaseEvent):
     """Frontend confirmed playback completion for a TTS audio chunk.
 
-    InputGateway publishes this after receiving tts_chunk_played.
-    RecordingManager subscribes and writes the chunk into right-channel buffer.
-    Chunks are processed in FIFO order (no index needed).
+    InputGateway publishes this after receiving tts_chunk_played so downstream
+    listeners can observe frontend playback completion in FIFO order.
     """
 
     TYPE: ClassVar[str] = "tts.chunk_played_confirm"

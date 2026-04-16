@@ -224,10 +224,6 @@ class RecordingManager(Manager):
         elapsed_sec = max(0.0, current - self._origin_mono)
         return int(elapsed_sec * self.TARGET_SR)
 
-    def _total_user_samples_locked(self) -> int:
-        """Return the absolute left-channel length in samples."""
-        return self._emitted_user_samples + self._user_buffer.total_samples
-
     def _total_tts_samples_locked(self) -> int:
         """Return the absolute right-channel length in samples."""
         return self._emitted_tts_samples + self._tts_buffer.total_samples
@@ -257,29 +253,6 @@ class RecordingManager(Manager):
                 break
             interval_sec = self._user_frame_samples / self.TARGET_SR
             self._user_next_tick_mono += interval_sec
-
-    def _align_user_to_target_locked(
-        self, target_total: int, boundary_mono: Optional[float] = None
-    ) -> None:
-        """Extend the left channel to a target sample position with silence."""
-        if boundary_mono is not None:
-            self._advance_user_until_locked(boundary_mono)
-        missing = max(0, target_total - self._total_user_samples_locked())
-        if missing > 0:
-            self._user_buffer.append_silence(missing)
-        if (
-            boundary_mono is not None
-            and self._user_next_tick_mono is not None
-            and self._user_frame_samples > 0
-        ):
-            interval_sec = self._user_frame_samples / self.TARGET_SR
-            self._user_next_tick_mono = boundary_mono + interval_sec
-
-    def _align_user_to_clock_locked(self, now_mono: float) -> None:
-        """Extend the left channel to the current clock boundary with silence."""
-        self._align_user_to_target_locked(
-            self._clock_samples_locked(now_mono), boundary_mono=now_mono
-        )
 
     def _truncate_tts_buffer_locked(self, target_total_samples: int) -> None:
         """Trim the unflushed right channel to an absolute sample position."""
@@ -349,8 +322,8 @@ class RecordingManager(Manager):
 
     def _prepare_shutdown_locked(self, now_mono: float) -> None:
         """Fold queued scheduler state into channel buffers before finalization."""
-        if self._user_next_tick_mono is not None or self._user_queue:
-            self._align_user_to_clock_locked(now_mono)
+        if self._user_next_tick_mono is not None:
+            self._advance_user_until_locked(now_mono)
         while self._user_queue:
             self._user_buffer.append_pcm(self._user_queue.popleft())
 
@@ -424,10 +397,6 @@ class RecordingManager(Manager):
                             self._clear_tts_playback_locked()
                             self._tts_record_point_mono = now_mono
                             if not self._tts_queue:
-                                self._align_user_to_target_locked(
-                                    self._total_tts_samples_locked(),
-                                    boundary_mono=now_mono,
-                                )
                                 should_flush = True
                                 self._tts_wakeup.clear()
                                 break
@@ -475,17 +444,29 @@ class RecordingManager(Manager):
         interleaved[1::2] = tts
         return interleaved.tobytes()
 
+    @staticmethod
+    def _pad_pcm_bytes(pcm_bytes: bytes, n_samples: int) -> bytes:
+        """Pad mono PCM bytes with trailing silence to the requested length."""
+        target_len = n_samples * 2
+        if len(pcm_bytes) >= target_len:
+            return pcm_bytes
+        return pcm_bytes + (b"\x00" * (target_len - len(pcm_bytes)))
+
     async def _drain_aligned_stereo_chunk(self) -> bytes:
-        """Drain the aligned portion shared by both channels as stereo PCM."""
+        """Drain buffered audio and pad the shorter channel only in the output."""
         async with self._lock:
-            n_write = min(self._user_buffer.total_samples, self._tts_buffer.total_samples)
+            user_samples = self._user_buffer.total_samples
+            tts_samples = self._tts_buffer.total_samples
+            n_write = max(user_samples, tts_samples)
             if n_write <= 0:
                 return b""
 
             user_bytes = self._user_buffer.consume_prefix(n_write)
             tts_bytes = self._tts_buffer.consume_prefix(n_write)
-            self._emitted_user_samples += n_write
-            self._emitted_tts_samples += n_write
+            self._emitted_user_samples += user_samples
+            self._emitted_tts_samples += tts_samples
+            user_bytes = self._pad_pcm_bytes(user_bytes, n_write)
+            tts_bytes = self._pad_pcm_bytes(tts_bytes, n_write)
         return self._interleave_stereo(user_bytes, tts_bytes, n_write)
 
     async def _flush_outputs(self) -> bool:
@@ -678,9 +659,6 @@ class RecordingManager(Manager):
             self._tts_paused = False
 
             if self._tts_playing_ends_at is None and not self._tts_queue:
-                self._align_user_to_target_locked(
-                    self._total_tts_samples_locked(), boundary_mono=now_mono
-                )
                 should_flush = True
 
             self._tts_wakeup.set()
@@ -700,9 +678,6 @@ class RecordingManager(Manager):
 
                 now_mono = time.monotonic()
                 self._finalize_tts_to_boundary_locked(now_mono)
-                self._align_user_to_target_locked(
-                    self._total_tts_samples_locked(), boundary_mono=now_mono
-                )
                 self._tts_wakeup.set()
             await self._flush_all_outputs()
         except Exception as e:

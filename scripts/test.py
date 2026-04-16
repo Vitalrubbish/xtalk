@@ -57,7 +57,6 @@ SERVICE_CONFIG_PATCH = {
     "send_full_audio_to_client": True,
     "enable_persistence": False,
 }
-NO_RESPONSE_GRACE_SECONDS = 5.0
 NON_ACTIVITY_ACTIONS = {"thought_updated"}
 PREFERRED_TEST_CONFIG_NAMES = (
     "test_config.json",
@@ -1204,7 +1203,6 @@ class CaseRunner:
         self._ws_closed = asyncio.Event()
         self._activity_lock = asyncio.Lock()
         self._last_activity: float = 0.0
-        self._scheduler_done_at: float | None = None
         self._full_audio_bytes = bytearray()
         self._receiver_task: asyncio.Task[None] | None = None
         self._playback: PlaybackSimulator | None = None
@@ -1250,7 +1248,6 @@ class CaseRunner:
             )
 
             await self._send_scheduled_inputs(websocket, self._scheduled_inputs)
-            self._scheduler_done_at = asyncio.get_running_loop().time()
             self._scheduler_done.set()
             await self._wait_until_idle(websocket)
         finally:
@@ -1469,28 +1466,17 @@ class CaseRunner:
             async with self._activity_lock:
                 last_activity = self._last_activity
             quiet_for = asyncio.get_running_loop().time() - last_activity
+            last_user_end = await self._anchors.get("last_user_end")
             ai_end_seen = await self._anchors.get("last_ai_end")
             last_full_audio_at = self._last_full_audio_at
-            scheduler_quiet_for = 0.0
-            if self._scheduler_done_at is not None:
-                scheduler_quiet_for = (
-                    asyncio.get_running_loop().time() - self._scheduler_done_at
-                )
-            no_response_grace_elapsed = scheduler_quiet_for >= max(
-                self._settle_seconds,
-                NO_RESPONSE_GRACE_SECONDS,
-            )
             if self._scheduler_done.is_set() and playback_idle:
-                if ai_end_seen is not None:
+                if last_user_end is None:
+                    if quiet_for >= self._settle_seconds:
+                        return
+                elif ai_end_seen is not None and ai_end_seen >= last_user_end:
                     if (
                         last_full_audio_at is not None
                         and last_full_audio_at >= ai_end_seen
-                        and quiet_for >= self._settle_seconds
-                    ):
-                        return
-                elif no_response_grace_elapsed:
-                    if (
-                        last_full_audio_at is not None
                         and quiet_for >= self._settle_seconds
                     ):
                         return

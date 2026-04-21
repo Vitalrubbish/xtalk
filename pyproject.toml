@@ -130,7 +130,8 @@ soulx-duplug = [
   "websockets",
 ]
 example = [
-  "pypdf"
+  "pypdf",
+  "fastapi==0.128.0"
 ]
 [tool.setuptools]
 package-dir = {"" = "src"}

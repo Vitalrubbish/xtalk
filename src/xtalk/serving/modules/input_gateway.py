@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import json
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -271,6 +272,7 @@ class InputGateway(EventListenerMixin):
         self.websocket = websocket
         self.config: dict[str, Any] = config or {}
         self.input_sample_rate = _resolve_input_sample_rate(self.config)
+        self._pending_text_tasks: set[asyncio.Task[None]] = set()
 
         self.text_msg_handler = TextMsgHandler(event_bus, session_id, websocket)
 
@@ -298,7 +300,9 @@ class InputGateway(EventListenerMixin):
                 data = await self.websocket.receive()
                 if data.get("type") == "websocket.disconnect":
                     break
-
+                if data.get("type") == "websocket.receive" and "text" in data:
+                    self._schedule_text_message(data["text"])
+                    continue
                 await self._process_message(data)
         except WebSocketDisconnect as e:
             logger.info(
@@ -321,6 +325,40 @@ class InputGateway(EventListenerMixin):
                     self.session_id,
                     e,
                 )
+        finally:
+            await self._wait_for_pending_text_tasks()
+
+    def _schedule_text_message(self, text_message: str) -> None:
+        """Run text message handling without blocking binary frame reception."""
+        task = asyncio.create_task(self._run_text_message_task(text_message))
+        self._pending_text_tasks.add(task)
+        task.add_done_callback(self._pending_text_tasks.discard)
+
+    async def _run_text_message_task(self, text_message: str) -> None:
+        """Handle one text message and surface task failures through logging."""
+        try:
+            await self._handle_text_message(text_message)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "disconnect" in error_msg or "closed" in error_msg:
+                logger.info(
+                    "WebSocket text message task stopped after disconnect - session: %s, detail: %s",
+                    self.session_id,
+                    e,
+                )
+            else:
+                logger.error(
+                    "WebSocket text message task failed - session: %s, error: %s",
+                    self.session_id,
+                    e,
+                )
+
+    async def _wait_for_pending_text_tasks(self) -> None:
+        """Await all in-flight text message tasks before shutting down the loop."""
+        if not self._pending_text_tasks:
+            return
+        pending = tuple(self._pending_text_tasks)
+        await asyncio.gather(*pending, return_exceptions=True)
 
     async def _process_message(self, data: dict) -> None:
         """Process a raw WebSocket receive payload and publish events."""

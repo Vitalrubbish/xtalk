@@ -137,7 +137,16 @@ class ASR(ABC):
 
 
 class TTS(ABC):
-    """Abstract base class for text-to-speech engines."""
+    """Abstract base class for text-to-speech engines.
+
+    Notes
+    -----
+    ``synthesize`` is the required baseline API for every implementation.
+    Streaming-capable engines should additionally override
+    ``synthesize_stream``; non-streaming engines should inherit the default
+    compatibility wrapper. The inherited streaming helpers do not by
+    themselves declare native streaming capability.
+    """
 
     @abstractmethod
     def synthesize(self, text: str) -> bytes:
@@ -152,6 +161,11 @@ class TTS(ABC):
         -------
         bytes
             PCM 16-bit mono audio bytes at 48 kHz.
+
+        Notes
+        -----
+        Every TTS implementation, including streaming backends, must provide
+        this method.
         """
         pass
 
@@ -169,6 +183,13 @@ class TTS(ABC):
         ------
         bytes
             PCM 16-bit mono audio bytes at 48 kHz.
+
+        Notes
+        -----
+        Override this method only when the backend supports native streaming
+        synthesis. The default implementation yields a single chunk produced
+        by ``synthesize`` for compatibility and should not be treated as a
+        declaration of streaming support.
         """
         yield self.synthesize(text)
 
@@ -186,6 +207,11 @@ class TTS(ABC):
         -------
         bytes
             Synthesized PCM audio bytes.
+
+        Notes
+        -----
+        This method is an optional async optimization. Implementations may
+        inherit the default executor-based wrapper.
         """
         loop = asyncio.get_running_loop()
         func = partial(self.synthesize, text, **kwargs)
@@ -208,6 +234,12 @@ class TTS(ABC):
         ------
         bytes
             Streamed PCM audio chunks.
+
+        Notes
+        -----
+        This method is an optional async optimization for streaming-capable
+        backends. When not overridden, it asynchronously iterates over
+        ``synthesize_stream``.
         """
         loop = asyncio.get_running_loop()
         iterable = self.synthesize_stream(text, **kwargs)

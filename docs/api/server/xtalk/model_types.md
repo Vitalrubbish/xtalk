@@ -376,6 +376,14 @@ class TTS(ABC)
 
 Abstract base class for text-to-speech engines.
 
+### Notes
+
+``synthesize`` is the required baseline API for every implementation.
+Streaming-capable engines should additionally override
+``synthesize_stream``; non-streaming engines should inherit the default
+compatibility wrapper. The inherited streaming helpers do not by
+themselves declare native streaming capability.
+
 ### Methods
 
 #### synthesize
@@ -397,6 +405,11 @@ Synthesize audio for a full text input.
 
 - `bytes`
   PCM 16-bit mono audio bytes at 48 kHz.
+
+##### Notes
+
+Every TTS implementation, including streaming backends, must provide
+this method.
 
 #### synthesize_stream
 
@@ -420,6 +433,13 @@ Stream synthesized audio chunks for a text input.
 - `bytes`
   PCM 16-bit mono audio bytes at 48 kHz.
 
+##### Notes
+
+Override this method only when the backend supports native streaming
+synthesis. The default implementation yields a single chunk produced
+by ``synthesize`` for compatibility and should not be treated as a
+declaration of streaming support.
+
 #### async_synthesize
 
 _Defined in `xtalk.speech.interfaces`._
@@ -442,6 +462,11 @@ Asynchronously synthesize audio for text.
 - `bytes`
   Synthesized PCM audio bytes.
 
+##### Notes
+
+This method is an optional async optimization. Implementations may
+inherit the default executor-based wrapper.
+
 #### async_synthesize_stream
 
 _Defined in `xtalk.speech.interfaces`._
@@ -463,6 +488,12 @@ Asynchronously stream synthesized audio chunks.
 
 - `bytes`
   Streamed PCM audio chunks.
+
+##### Notes
+
+This method is an optional async optimization for streaming-capable
+backends. When not overridden, it asynchronously iterates over
+``synthesize_stream``.
 
 #### clone
 

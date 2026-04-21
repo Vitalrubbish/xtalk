@@ -15,6 +15,7 @@ import base64
 import io
 import json
 import math
+import multiprocessing
 import re
 import shutil
 import socket
@@ -54,10 +55,9 @@ EMBEDDED_SERVER_HOST = "127.0.0.1"
 EMBEDDED_SERVER_PORT = 0
 SERVICE_CONFIG_PATCH = {
     "recording": True,
-    "send_full_audio_to_client": True,
+    "send_full_audio_to_client": False,
     "enable_persistence": False,
 }
-NO_RESPONSE_GRACE_SECONDS = 5.0
 NON_ACTIVITY_ACTIONS = {"thought_updated"}
 PREFERRED_TEST_CONFIG_NAMES = (
     "test_config.json",
@@ -855,8 +855,7 @@ class EmbeddedServer:
         self._config = config
         self._host = host
         self._port = port if port > 0 else pick_free_port(host)
-        self._server: uvicorn.Server | None = None
-        self._task: asyncio.Task[None] | None = None
+        self._process: multiprocessing.Process | None = None
 
     @property
     def http_base_url(self) -> str:
@@ -870,26 +869,19 @@ class EmbeddedServer:
 
     async def __aenter__(self) -> "EmbeddedServer":
         """Start the embedded server."""
-        app = FastAPI(title="Xtalk Automated Test Server")
-        xtalk_instance = Xtalk.from_config(self._config)
-        xtalk_instance.mount_routes(app)
-
-        uvicorn_config = uvicorn.Config(
-            app=app,
-            host=self._host,
-            port=self._port,
-            log_level="error",
-            lifespan="off",
+        ctx = multiprocessing.get_context("spawn")
+        self._process = ctx.Process(
+            target=_run_embedded_server_process,
+            args=(self._config, self._host, self._port),
+            name="xtalk-test-server",
         )
-        self._server = uvicorn.Server(uvicorn_config)
-        self._server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
-        self._task = asyncio.create_task(self._server.serve())
+        self._process.start()
 
         deadline = time.monotonic() + 15.0
         while True:
-            if self._server.started:
+            if self._is_port_open():
                 return self
-            if self._task.done():
+            if self._process.exitcode is not None:
                 raise RuntimeError("Embedded server exited before startup completed")
             if time.monotonic() >= deadline:
                 raise TimeoutError("Timed out waiting for embedded server startup")
@@ -897,10 +889,34 @@ class EmbeddedServer:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         """Stop the embedded server."""
-        if self._server is not None:
-            self._server.should_exit = True
-        if self._task is not None:
-            await self._task
+        if self._process is None:
+            return
+        if self._process.is_alive():
+            self._process.terminate()
+            self._process.join(timeout=5.0)
+        if self._process.is_alive():
+            self._process.kill()
+            self._process.join(timeout=5.0)
+        self._process.close()
+        self._process = None
+
+    def _is_port_open(self) -> bool:
+        """Return whether the embedded server port is accepting TCP connections."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.2)
+            return sock.connect_ex((self._host, self._port)) == 0
+
+
+def _run_embedded_server_process(
+    config: dict[str, Any],
+    host: str,
+    port: int,
+) -> None:
+    """Run the embedded FastAPI/Uvicorn server inside a dedicated process."""
+    app = FastAPI(title="Xtalk Automated Test Server")
+    xtalk_instance = Xtalk.from_config(config)
+    xtalk_instance.mount_routes(app)
+    uvicorn.run(app, host=host, port=port, log_level="error", lifespan="off")
 
 
 class AnchorClock:
@@ -1204,7 +1220,6 @@ class CaseRunner:
         self._ws_closed = asyncio.Event()
         self._activity_lock = asyncio.Lock()
         self._last_activity: float = 0.0
-        self._scheduler_done_at: float | None = None
         self._full_audio_bytes = bytearray()
         self._receiver_task: asyncio.Task[None] | None = None
         self._playback: PlaybackSimulator | None = None
@@ -1250,7 +1265,6 @@ class CaseRunner:
             )
 
             await self._send_scheduled_inputs(websocket, self._scheduled_inputs)
-            self._scheduler_done_at = asyncio.get_running_loop().time()
             self._scheduler_done.set()
             await self._wait_until_idle(websocket)
         finally:
@@ -1464,35 +1478,17 @@ class CaseRunner:
             if self._playback is not None:
                 playback_idle = await self._playback.is_idle()
 
-            await websocket.send(b"\x00" * ClientVADController.FRAME_BYTES)
-
             async with self._activity_lock:
                 last_activity = self._last_activity
             quiet_for = asyncio.get_running_loop().time() - last_activity
+            last_user_end = await self._anchors.get("last_user_end")
             ai_end_seen = await self._anchors.get("last_ai_end")
-            last_full_audio_at = self._last_full_audio_at
-            scheduler_quiet_for = 0.0
-            if self._scheduler_done_at is not None:
-                scheduler_quiet_for = (
-                    asyncio.get_running_loop().time() - self._scheduler_done_at
-                )
-            no_response_grace_elapsed = scheduler_quiet_for >= max(
-                self._settle_seconds,
-                NO_RESPONSE_GRACE_SECONDS,
-            )
             if self._scheduler_done.is_set() and playback_idle:
-                if ai_end_seen is not None:
-                    if (
-                        last_full_audio_at is not None
-                        and last_full_audio_at >= ai_end_seen
-                        and quiet_for >= self._settle_seconds
-                    ):
+                if last_user_end is None:
+                    if quiet_for >= self._settle_seconds:
                         return
-                elif no_response_grace_elapsed:
-                    if (
-                        last_full_audio_at is not None
-                        and quiet_for >= self._settle_seconds
-                    ):
+                elif ai_end_seen is not None and ai_end_seen >= last_user_end:
+                    if quiet_for >= self._settle_seconds:
                         return
             if self._ws_closed.is_set():
                 return
@@ -1504,6 +1500,8 @@ class CaseRunner:
 
     async def _materialize_output(self) -> None:
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
+        if await self._copy_server_recording():
+            return
         full_audio_bytes = bytes(self._full_audio_bytes)
         if not full_audio_bytes:
             raise RuntimeError(
@@ -1519,6 +1517,23 @@ class CaseRunner:
             sample_rate=48000,
             channels=2,
         )
+
+    async def _copy_server_recording(self) -> bool:
+        """Copy the server-side recording file when it is available locally."""
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if self._temp_recording_path.exists():
+                try:
+                    size = self._temp_recording_path.stat().st_size
+                except OSError:
+                    size = 0
+                if size > 44:
+                    await asyncio.to_thread(
+                        shutil.copyfile, self._temp_recording_path, self._output_path
+                    )
+                    return True
+            await asyncio.sleep(0.1)
+        return False
 
 
 def validate_vad_configuration(config: dict[str, Any], *, with_vad: bool) -> None:

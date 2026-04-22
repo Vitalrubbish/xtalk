@@ -9,9 +9,11 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from typing import Optional
 import asyncio
+import time
 
 
 class LLMTurnDetector(TurnDetector):
+    INCOMPLETE_MAX_LAST_SECS = 7
     STOP_SPEAKING_PROMPT = """Classify the user's input. Output `backchannel` or `interrupt`. Apply the following rules in order:
 
 If the user's input is a backchannel expression, such as “mm-hmm” or “okay,” or "嗯嗯" or "对对" then output `backchannel`. Backchannel can only be very short, and semantically meaningless.
@@ -19,11 +21,13 @@ If the user's input is a backchannel expression, such as “mm-hmm” or “okay
 If the user's input is semantically complete, or the intent is to interrupt someone else's response, then output `interrupt`.
 
 """
-    START_GENERATION_PROMPT = """Classify the user's input. Output `finished` or `incomplete`. Apply the following rules in order:
+    START_GENERATION_PROMPT = """Classify the user's input. Output `finished` or `incomplete` or `wait`. Apply the following rules in order:
+
+As long as the user's input is semantically complete, output `finished`. Most inputs should fall in this category.
+
+If the user's input explicitly indicates "wait" or "等一下", then output `wait`.
 
 If the user's input is semantically incomplete, as if they stopped halfway through speaking, for example ending with hesitation words or fillers, then output `incomplete`.
-
-Otherwise output finished.
 
 If you find the input abnormal, for example containing ASR misrecognized characters, also output finished.
 
@@ -39,7 +43,8 @@ If you find the input abnormal, for example containing ASR misrecognized charact
         self._listening = True
         # FIXED: lock listening
         self._listening_lock = asyncio.Lock()
-        self._incomplete_cache_text = ""
+        self._text_prefix = ""
+        self._incomplete_started_at = None
 
     def clone(self) -> "TurnDetector":
         return LLMTurnDetector(self._model)
@@ -59,73 +64,98 @@ If you find the input abnormal, for example containing ASR misrecognized charact
         speech_pause: Optional[bool] = None,
     ) -> TurnDetectionResult | list[TurnDetectionResult]:
         if text == None:
+            # Avoid infinite incomplete first
+            if self._incomplete_started_at != None:
+                elapsed = time.monotonic() - self._incomplete_started_at
+                if elapsed > self.INCOMPLETE_MAX_LAST_SECS:
+                    self._reset_incomplete_state()
+                    return TurnDetectionResult(
+                        action=TurnDetectionAction.START_GENERATION,
+                        semantic=TurnDetectionSemantic.COMPLETE,
+                    )
             return TurnDetectionResult(
                 action=TurnDetectionAction.DO_NOTHING,
                 semantic=TurnDetectionSemantic.IDLE,
             )
         async with self.listening_lock():
+            text_without_prefix = self._remove_prefix(text)
             if self.listening:
                 if speech_pause:
-                    # Cut down prefix to avoid misclassfication
-                    text_to_judge = text
-                    if text.startswith(self._incomplete_cache_text):
-                        text_to_judge = text_to_judge[
-                            len(self._incomplete_cache_text) :
-                        ]
-                    messages = [
-                        SystemMessage(content=self.START_GENERATION_PROMPT),
-                        HumanMessage(content=text_to_judge),
-                    ]
-                    response = (await self._model.ainvoke(messages)).content
-                    if "finished" in response.lower():
-                        self._incomplete_cache_text = ""
+                    # Use full text for wait detection, and use text without prefix for generation completion detection, to avoid misclassification caused by redundant info
+                    response, no_prefix_response = await self._gather_two_responses(
+                        self.START_GENERATION_PROMPT, text, text_without_prefix
+                    )
+                    if "finished" in no_prefix_response.lower():
+                        self._record_prefix("")
+                        self._reset_incomplete_state()
                         return TurnDetectionResult(
                             action=TurnDetectionAction.START_GENERATION,
                             semantic=TurnDetectionSemantic.COMPLETE,
                         )
-                    # Cache current text to get cut down in the future to avoid misclassification
-                    self._incomplete_cache_text = text
+                    if "wait" in response.lower():
+                        self._record_prefix("")
+                        self._reset_incomplete_state()
+                        return TurnDetectionResult(
+                            action=TurnDetectionAction.START_GENERATION,
+                            semantic=TurnDetectionSemantic.WAIT,
+                        )
+                    self._set_incomplete_state(time.monotonic())
                     return TurnDetectionResult(
                         action=TurnDetectionAction.DO_NOTHING,
                         semantic=TurnDetectionSemantic.INCOMPLETE,
                     )
             else:
-                messages = [
-                    SystemMessage(content=self.STOP_SPEAKING_PROMPT),
-                    HumanMessage(content=text),
-                ]
-                response = (await self._model.ainvoke(messages)).content
+                response, no_prefix_response = await self._gather_two_responses(
+                    self.STOP_SPEAKING_PROMPT, text, text_without_prefix
+                )
                 if "backchannel" in response.lower():
+                    self._record_prefix(text)
                     return TurnDetectionResult(
                         action=TurnDetectionAction.DO_NOTHING,
                         semantic=TurnDetectionSemantic.BACKCHANNEL,
                     )
-                if "interrupt" in response.lower():
-                    result = TurnDetectionResult(
+                if "interrupt" in no_prefix_response.lower():
+                    return TurnDetectionResult(
                         action=TurnDetectionAction.STOP_SPEAKING,
                         semantic=TurnDetectionSemantic.INCOMPLETE,
                     )
-
-                    # Need to additional check for start generation if meet speech paused (indicating a potential end of speech)
-                    if speech_pause:
-                        messages = [
-                            SystemMessage(content=self.START_GENERATION_PROMPT),
-                            HumanMessage(content=text),
-                        ]
-                        response = (await self._model.ainvoke(messages)).content
-                        if "complete" in response.lower():
-                            result = [
-                                TurnDetectionResult(
-                                    action=TurnDetectionAction.STOP_SPEAKING,
-                                    semantic=TurnDetectionSemantic.COMPLETE,
-                                ),
-                                TurnDetectionResult(
-                                    action=TurnDetectionAction.START_GENERATION,
-                                    semantic=TurnDetectionSemantic.COMPLETE,
-                                ),
-                            ]
-                    return result
             return TurnDetectionResult(
                 action=TurnDetectionAction.DO_NOTHING,
                 semantic=TurnDetectionSemantic.IDLE,
             )
+
+    # Remove prefix to avoid misclassfication
+    def _remove_prefix(self, text: str) -> str:
+        prefix = self._text_prefix
+        common_prefix_len = 0
+        for curr_char, prefix_char in zip(text, prefix):
+            if curr_char != prefix_char:
+                break
+            common_prefix_len += 1
+        return text[common_prefix_len:]
+
+    def _record_prefix(self, prefix: str):
+        self._text_prefix = prefix
+
+    async def _gather_two_responses(
+        self, system_message: str, user_text_1: str, user_text_2: str
+    ) -> tuple[str, str]:
+        messages_1 = [
+            SystemMessage(content=system_message),
+            HumanMessage(content=user_text_1),
+        ]
+        messages_2 = [
+            SystemMessage(content=system_message),
+            HumanMessage(content=user_text_2),
+        ]
+        response_1, response_2 = await asyncio.gather(
+            self._model.ainvoke(messages_1),
+            self._model.ainvoke(messages_2),
+        )
+        return response_1.content, response_2.content
+
+    def _reset_incomplete_state(self):
+        self._incomplete_started_at = None
+
+    def _set_incomplete_state(self, start_time: float):
+        self._incomplete_started_at = start_time

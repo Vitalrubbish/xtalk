@@ -179,8 +179,16 @@ class ParaformerLocal(ASR):
         )
         return self._parse_result(result)
 
-    def recognize_stream(self, audio: bytes, *, is_final: bool) -> str:
+    def recognize_stream(
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+        recognized: str | None = None,
+    ) -> str:
         """Streaming recognition that manages funasr cache or buffered chunks."""
+        del chat_history, recognized
         if not self.model_name.endswith("streaming"):
             if audio:
                 self._stream_audio.extend(audio)

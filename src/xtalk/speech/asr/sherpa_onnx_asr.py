@@ -129,7 +129,14 @@ class SherpaOnnxASR(ASR):
             return await self._offline_decode(speech, self.TARGET_SAMPLE_RATE)
         return await self._streaming_decode(speech)
 
-    def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str:
+    def recognize_stream(
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+        recognized: str | None = None,
+    ) -> str:
         """
         Streaming recognition interface.
 
@@ -138,6 +145,7 @@ class SherpaOnnxASR(ASR):
         - streaming mode: each call decodes the buffered audio via the streaming
           service and returns the server's current transcript (which may update).
         """
+        del chat_history, recognized
         if self.mode == "offline":
             if not self._mock_recognizer:
                 return ""
@@ -160,9 +168,15 @@ class SherpaOnnxASR(ASR):
             raise RuntimeError(f"SherpaOnnxASR streaming recognize_stream failed: {e}")
 
     async def async_recognize_stream(
-        self, audio: bytes, *, is_final: bool = False
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+        recognized: str | None = None,
     ) -> str:
         """Asynchronous streaming recognition."""
+        del chat_history, recognized
         if self.mode == "offline":
             if not self._mock_recognizer:
                 return ""

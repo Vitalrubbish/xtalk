@@ -105,10 +105,18 @@ class EasyTurnASR(ASR):
             except Exception as inner:
                 raise RuntimeError(f"Recognition error after retry: {inner}") from inner
 
-    def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str:
+    def recognize_stream(
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+        recognized: str | None = None,
+    ) -> str:
         """
         Streaming recognition: buffer incremental PCM data and return accumulated text.
         """
+        del chat_history, recognized
         if isinstance(audio, (bytes, bytearray, memoryview)):
             chunk = bytes(audio)
         else:

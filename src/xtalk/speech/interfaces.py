@@ -45,7 +45,14 @@ class ASR(ABC):
         """
         pass
 
-    def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str:
+    def recognize_stream(
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+        recognized: str | None = None,
+    ) -> str:
         """Recognize audio incrementally in streaming mode.
 
         Parameters
@@ -55,12 +62,18 @@ class ASR(ABC):
         is_final : bool, optional
             Whether the caller is forcing a final decode because the user paused
             or the turn ended.
+        chat_history : str | None, optional
+            Serialized chat history for the current session, excluding the
+            in-progress turn when unavailable.
+        recognized : str | None, optional
+            Text already recognized for the current turn before this call.
 
         Returns
         -------
         str
             Current recognition result.
         """
+        del chat_history, recognized
         recognizer = self._get_mock_recognizer()
 
         if not audio:
@@ -113,7 +126,12 @@ class ASR(ABC):
         return result
 
     async def async_recognize_stream(
-        self, audio: bytes, *, is_final: bool = False
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+        recognized: str | None = None,
     ) -> str:
         """Asynchronously recognize incremental audio input.
 
@@ -123,6 +141,11 @@ class ASR(ABC):
             Incremental PCM 16-bit mono audio bytes.
         is_final : bool, optional
             Whether the chunk should force a final decode.
+        chat_history : str | None, optional
+            Serialized chat history for the current session, excluding the
+            in-progress turn when unavailable.
+        recognized : str | None, optional
+            Text already recognized for the current turn before this call.
 
         Returns
         -------
@@ -131,7 +154,14 @@ class ASR(ABC):
         """
         loop = asyncio.get_running_loop()
         result: str = await loop.run_in_executor(
-            None, partial(self.recognize_stream, audio, is_final=is_final)
+            None,
+            partial(
+                self.recognize_stream,
+                audio,
+                is_final=is_final,
+                chat_history=chat_history,
+                recognized=recognized,
+            ),
         )
         return result
 

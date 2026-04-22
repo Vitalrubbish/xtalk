@@ -76,12 +76,14 @@ class AudioConsumer:
         self._event_bus = event_bus
         self._asr_model = pipeline.get_asr_model()
         self._asr_model.reset()
+        self._agent = pipeline.get_agent()
         self._session_id = session_id
         # Flag to avoid repeat pause or end
         self._ended = True
         self._paused = False
         # Cache for recognition used in _recognize_and_publish
         self._recognized_text = ""
+        self._turn_chat_history: str | None = None
         # Assume PCM 16bit mono
         bytes_per_second = self.SAMPLE_RATE * 1 * (16 // 8)
         # Store audio before ASR starts; make sure ASR do not leave alone the first words
@@ -113,6 +115,7 @@ class AudioConsumer:
             return
         self._ended = False
         self._paused = False
+        self._turn_chat_history = self._snapshot_chat_history()
         self._start_consumer()
         await self._audio_queue.put(await self._pre_buffer.get())
 
@@ -194,7 +197,10 @@ class AudioConsumer:
         recognized_text = self._recognized_text
         if len(audio) > 0 or is_final_chunk:
             recognized_text = await self._asr_model.async_recognize_stream(
-                audio, is_final=is_final_chunk
+                audio,
+                is_final=is_final_chunk,
+                chat_history=self._turn_chat_history,
+                recognized=self._recognized_text,
             )
         if is_asr_end:
             self._recognized_text = recognized_text
@@ -225,11 +231,26 @@ class AudioConsumer:
 
     async def _reset_states(self):
         self._recognized_text = ""
+        self._turn_chat_history = None
         await self._pre_buffer.get()
         await self._audio_queue.get()
         self._consumer_running_event.clear()
         self._consumer_idle_event.set()
         self._asr_model.reset()
+
+    def _snapshot_chat_history(self) -> str | None:
+        """Capture the session chat history for the current ASR turn."""
+        if self._agent is None:
+            return None
+        try:
+            return self._agent.get_chat_history()
+        except Exception as exc:
+            logger.warning(
+                "Failed to snapshot chat history for ASR - session: %s, error: %s",
+                self._session_id,
+                exc,
+            )
+            return None
 
 
 class ASRManager(Manager, TurnStateRestorable):

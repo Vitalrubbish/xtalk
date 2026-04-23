@@ -51,7 +51,6 @@ class ASR(ABC):
         *,
         is_final: bool = False,
         chat_history: str | None = None,
-        recognized: str | None = None,
     ) -> str:
         """Recognize audio incrementally in streaming mode.
 
@@ -65,15 +64,13 @@ class ASR(ABC):
         chat_history : str | None, optional
             Serialized chat history for the current session, excluding the
             in-progress turn when unavailable.
-        recognized : str | None, optional
-            Text already recognized for the current turn before this call.
 
         Returns
         -------
         str
             Current recognition result.
         """
-        del chat_history, recognized
+        del chat_history
         recognizer = self._get_mock_recognizer()
 
         if not audio:
@@ -131,7 +128,6 @@ class ASR(ABC):
         *,
         is_final: bool = False,
         chat_history: str | None = None,
-        recognized: str | None = None,
     ) -> str:
         """Asynchronously recognize incremental audio input.
 
@@ -144,8 +140,6 @@ class ASR(ABC):
         chat_history : str | None, optional
             Serialized chat history for the current session, excluding the
             in-progress turn when unavailable.
-        recognized : str | None, optional
-            Text already recognized for the current turn before this call.
 
         Returns
         -------
@@ -160,7 +154,6 @@ class ASR(ABC):
                 audio,
                 is_final=is_final,
                 chat_history=chat_history,
-                recognized=recognized,
             ),
         )
         return result

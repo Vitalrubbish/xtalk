@@ -141,12 +141,11 @@ class SenseVoiceSmallLocal(ASR):
         *,
         is_final: bool = False,
         chat_history: str | None = None,
-        recognized: str | None = None,
     ) -> str:
         """
         Pseudo streaming: each call runs one-shot recognition on buffered audio.
         """
-        del chat_history, recognized
+        del chat_history
         if not audio:
             return self._mock_recognizer.recognized_text
         return self._mock_recognizer.recognize(audio, is_final=is_final)

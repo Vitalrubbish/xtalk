@@ -162,9 +162,8 @@ class Qwen3ASRFlashRealtime(ASR):
         *,
         is_final: bool = False,
         chat_history: str | None = None,
-        recognized: str | None = None,
     ) -> str:
-        del chat_history, recognized
+        del chat_history
         self._ensure_session()
 
         assert self._conv is not None

@@ -135,7 +135,6 @@ class SherpaOnnxASR(ASR):
         *,
         is_final: bool = False,
         chat_history: str | None = None,
-        recognized: str | None = None,
     ) -> str:
         """
         Streaming recognition interface.
@@ -145,7 +144,7 @@ class SherpaOnnxASR(ASR):
         - streaming mode: each call decodes the buffered audio via the streaming
           service and returns the server's current transcript (which may update).
         """
-        del chat_history, recognized
+        del chat_history
         if self.mode == "offline":
             if not self._mock_recognizer:
                 return ""
@@ -173,10 +172,9 @@ class SherpaOnnxASR(ASR):
         *,
         is_final: bool = False,
         chat_history: str | None = None,
-        recognized: str | None = None,
     ) -> str:
         """Asynchronous streaming recognition."""
-        del chat_history, recognized
+        del chat_history
         if self.mode == "offline":
             if not self._mock_recognizer:
                 return ""

@@ -37,6 +37,7 @@ import yaml
 from fastapi import FastAPI
 
 from xtalk.api import Xtalk
+from xtalk.model_loader import init_registered_model
 
 try:
     import soxr
@@ -1901,7 +1902,11 @@ def load_tts_from_config(config_path: Path):
     tts_config = raw_config.get("tts", raw_config)
     if not isinstance(tts_config, dict):
         raise ValueError(f"Invalid TTS config in {config_path}")
-    return Xtalk._init_model(tts_config, Xtalk.MODEL_REGISTRY["tts"])
+    return init_registered_model(
+        slot="tts",
+        model_config=tts_config,
+        registry=Xtalk.MODEL_REGISTRY,
+    )
 
 
 def run_create_mode(args: argparse.Namespace) -> None:
@@ -1936,6 +1941,9 @@ def run_create_mode(args: argparse.Namespace) -> None:
         lines = parse_generation_case(case_dir)
         case_output_dir = output_root / case_dir.name
         case_output_dir.mkdir(parents=True, exist_ok=True)
+        criteria_path = case_dir / "criteria.yaml"
+        if criteria_path.exists():
+            shutil.copyfile(criteria_path, case_output_dir / "criteria.yaml")
         timestamp_lines: list[str] = []
         for index, line in enumerate(lines):
             audio_name = f"audio_{index:03d}.wav"

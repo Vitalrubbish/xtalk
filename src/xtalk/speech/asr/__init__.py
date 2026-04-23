@@ -63,3 +63,11 @@ try:
     __all__.append("EasyTurnASR")
 except:
     pass
+
+# History-correcting ASR wrapper
+try:
+    from .history_correcting_asr import HistoryCorrectingASR as HistoryCorrectingASR
+
+    __all__.append("HistoryCorrectingASR")
+except:
+    pass

@@ -200,7 +200,6 @@ class AudioConsumer:
                 audio,
                 is_final=is_final_chunk,
                 chat_history=self._turn_chat_history,
-                recognized=self._recognized_text,
             )
         if is_asr_end:
             self._recognized_text = recognized_text

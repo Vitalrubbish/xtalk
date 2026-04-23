@@ -37,6 +37,7 @@ import yaml
 from fastapi import FastAPI
 
 from xtalk.api import Xtalk
+from xtalk.model_loader import init_registered_model
 
 try:
     import soxr
@@ -73,13 +74,17 @@ PREFERRED_TTS_CONFIG_NAMES = (
 
 @dataclass(frozen=True)
 class RelativeTimeSpec:
-    """Represents a scheduled timestamp expression."""
+    """Represents a scheduled timestamp expression.
+
+    Relative anchors resolve against the first matching runtime event after the
+    previous scheduled input. User anchors bind to the previous user clip, while
+    AI anchors bind to the response for the previous user clip.
+    """
 
     kind: Literal["absolute", "relative"]
     value: float | None = None
     anchor: str | None = None
     offset: float = 0.0
-    occurrence: int | None = None
 
 
 @dataclass(frozen=True)
@@ -414,7 +419,6 @@ def parse_case_inputs(case_dir: Path) -> list[ScheduledAudioInput]:
         raise ValueError(f"Missing timestamp.txt in {case_dir}")
 
     scheduled_inputs: list[ScheduledAudioInput] = []
-    relative_anchor_occurrences: dict[str, int] = {}
     with timestamp_path.open("r", encoding="utf-8") as file_obj:
         for line_no, raw_line in enumerate(file_obj, start=1):
             line = raw_line.strip()
@@ -437,16 +441,6 @@ def parse_case_inputs(case_dir: Path) -> list[ScheduledAudioInput]:
             if not audio_path.exists():
                 raise ValueError(f"Missing audio file {audio_path}")
             time_spec = parse_timestamp_spec(time_text)
-            if time_spec.kind == "relative" and time_spec.anchor is not None:
-                occurrence = relative_anchor_occurrences.get(time_spec.anchor, 0) + 1
-                relative_anchor_occurrences[time_spec.anchor] = occurrence
-                time_spec = RelativeTimeSpec(
-                    kind=time_spec.kind,
-                    value=time_spec.value,
-                    anchor=time_spec.anchor,
-                    offset=time_spec.offset,
-                    occurrence=occurrence,
-                )
             scheduled_inputs.append(
                 ScheduledAudioInput(
                     time_spec=time_spec,
@@ -950,10 +944,30 @@ class AnchorClock:
             )
             return self._history[name][occurrence - 1]
 
+    async def get_occurrence(self, name: str, occurrence: int) -> float | None:
+        """Return one anchor occurrence if it is already available."""
+        if occurrence <= 0:
+            raise ValueError("occurrence must be a positive integer")
+        async with self._condition:
+            history = self._history.get(name, [])
+            if len(history) < occurrence:
+                return None
+            return history[occurrence - 1]
+
     async def get(self, name: str) -> float | None:
         """Return an anchor value if it already exists."""
         async with self._condition:
             return self._values.get(name)
+
+    async def get_first_at_or_after(
+        self, name: str, minimum_value: float
+    ) -> float | None:
+        """Return the first anchor occurrence at or after ``minimum_value``."""
+        async with self._condition:
+            for value in self._history.get(name, []):
+                if value >= minimum_value:
+                    return value
+            return None
 
 
 class ClientVADController:
@@ -1382,32 +1396,53 @@ class CaseRunner:
         websocket: websockets.WebSocketClientProtocol,
         scheduled_inputs: list[ScheduledAudioInput],
     ) -> None:
+        previous_input_start: float | None = None
+        previous_input_end: float | None = None
         for scheduled_input in scheduled_inputs:
-            target_time = await self._resolve_target_time(scheduled_input.time_spec)
-            await self._send_silence_until(websocket, target_time)
-            await self._stream_audio_file(websocket, scheduled_input.audio_path)
+            await self._send_silence_until(
+                websocket,
+                scheduled_input.time_spec,
+                previous_input_start=previous_input_start,
+                previous_input_end=previous_input_end,
+            )
+            (
+                previous_input_start,
+                previous_input_end,
+            ) = await self._stream_audio_file(websocket, scheduled_input.audio_path)
             if self._error is not None:
                 raise self._error
 
-    async def _resolve_target_time(self, time_spec: RelativeTimeSpec) -> float:
+    async def _try_resolve_target_time(
+        self,
+        time_spec: RelativeTimeSpec,
+        *,
+        previous_input_start: float | None,
+        previous_input_end: float | None,
+    ) -> float | None:
         if self._connection_started is None:
             raise RuntimeError("Connection start time is not initialized")
         if time_spec.kind == "absolute":
             return self._connection_started + float(time_spec.value or 0.0)
         if time_spec.anchor is None:
             raise RuntimeError("Relative time spec missing anchor")
-        if time_spec.occurrence is None:
-            raise RuntimeError("Relative time spec missing anchor occurrence")
-        anchor_value = await self._anchors.wait_for_occurrence(
-            time_spec.anchor, time_spec.occurrence
+        minimum_anchor_time = self._connection_started
+        if time_spec.anchor in {"last_ai_start", "last_ai_end"}:
+            if previous_input_end is not None:
+                minimum_anchor_time = previous_input_end
+        elif previous_input_start is not None:
+            minimum_anchor_time = previous_input_start
+        anchor_value = await self._anchors.get_first_at_or_after(
+            time_spec.anchor, minimum_anchor_time
         )
+        if anchor_value is None:
+            return None
         return anchor_value + time_spec.offset
 
     async def _stream_audio_file(
         self,
         websocket: websockets.WebSocketClientProtocol,
         audio_path: Path,
-    ) -> None:
+    ) -> tuple[float, float]:
         pcm_bytes = load_audio_as_pcm16(audio_path, target_sr=16000)
         frame_bytes = ClientVADController.FRAME_BYTES
         vad_controller = (
@@ -1423,6 +1458,7 @@ class CaseRunner:
         stream_started = asyncio.get_running_loop().time()
         await self._anchors.set("last_user_start", stream_started)
         last_user_end_set = False
+        user_end_time: float | None = None
 
         for frame_index in range(total_frames):
             target_send_time = stream_started + (
@@ -1440,9 +1476,8 @@ class CaseRunner:
             await websocket.send(frame)
             await self._touch_activity()
             if not last_user_end_set and frame_index + 1 >= audio_frame_count:
-                await self._anchors.set(
-                    "last_user_end", asyncio.get_running_loop().time()
-                )
+                user_end_time = asyncio.get_running_loop().time()
+                await self._anchors.set("last_user_end", user_end_time)
                 last_user_end_set = True
             if vad_controller is not None:
                 for action in vad_controller.feed(frame):
@@ -1450,23 +1485,43 @@ class CaseRunner:
                     await self._touch_activity()
 
         if not last_user_end_set:
-            await self._anchors.set("last_user_end", asyncio.get_running_loop().time())
+            user_end_time = asyncio.get_running_loop().time()
+            await self._anchors.set("last_user_end", user_end_time)
+
+        if user_end_time is None:
+            raise RuntimeError("User end time was not recorded")
+        return stream_started, user_end_time
 
     async def _send_silence_until(
         self,
         websocket: websockets.WebSocketClientProtocol,
-        target_time: float,
+        time_spec: RelativeTimeSpec,
+        *,
+        previous_input_start: float | None,
+        previous_input_end: float | None,
     ) -> None:
-        """Continuously send silent PCM frames until the target monotonic time."""
+        """Continuously send silent PCM frames until one scheduled input is due."""
         silence_frame = b"\x00" * ClientVADController.FRAME_BYTES
         frame_duration = ClientVADController.FRAME_SAMPLES / 16000.0
         while True:
+            if self._error is not None:
+                raise self._error
+            if self._ws_closed.is_set():
+                raise RuntimeError(f"{self._case_dir.name}: websocket closed early")
             now = asyncio.get_running_loop().time()
-            remaining = target_time - now
-            if remaining <= 0.0:
+            target_time = await self._try_resolve_target_time(
+                time_spec,
+                previous_input_start=previous_input_start,
+                previous_input_end=previous_input_end,
+            )
+            if target_time is not None and target_time <= now:
                 return
             await websocket.send(silence_frame)
-            await asyncio.sleep(min(frame_duration, remaining))
+            sleep_for = frame_duration
+            if target_time is not None:
+                sleep_for = min(frame_duration, max(0.0, target_time - now))
+            if sleep_for > 0.0:
+                await asyncio.sleep(sleep_for)
 
     async def _wait_until_idle(
         self, websocket: websockets.WebSocketClientProtocol
@@ -1847,7 +1902,11 @@ def load_tts_from_config(config_path: Path):
     tts_config = raw_config.get("tts", raw_config)
     if not isinstance(tts_config, dict):
         raise ValueError(f"Invalid TTS config in {config_path}")
-    return Xtalk._init_model(tts_config, Xtalk.MODEL_REGISTRY["tts"])
+    return init_registered_model(
+        slot="tts",
+        model_config=tts_config,
+        registry=Xtalk.MODEL_REGISTRY,
+    )
 
 
 def run_create_mode(args: argparse.Namespace) -> None:
@@ -1882,6 +1941,9 @@ def run_create_mode(args: argparse.Namespace) -> None:
         lines = parse_generation_case(case_dir)
         case_output_dir = output_root / case_dir.name
         case_output_dir.mkdir(parents=True, exist_ok=True)
+        criteria_path = case_dir / "criteria.yaml"
+        if criteria_path.exists():
+            shutil.copyfile(criteria_path, case_output_dir / "criteria.yaml")
         timestamp_lines: list[str] = []
         for index, line in enumerate(lines):
             audio_name = f"audio_{index:03d}.wav"

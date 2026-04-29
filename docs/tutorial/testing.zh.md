@@ -1,81 +1,205 @@
-您可以使用 `scripts/offline_client.py` 输入音频来测试 X-Talk。
+X-Talk 提供了统一的 `scripts/test.py` 脚本，用于测试集生成和后端自动化评测。
 
-## 从文本创建测试用例
+它有两种模式：
 
-如果您还没有准备好音频文件，可以使用 `scripts/create_test_case.py` 通过 DashScope TTS API 从转录文件生成音频。
+- `--create`：从文本模板生成可运行的音频测试集
+- `--input`：启动内嵌的 X-Talk 服务并自动运行测试集
 
-首先，安装依赖并设置您的 API 密钥：
+## 准备测试模板
 
-```bash
-pip install requests
-export DASHSCOPE_API_KEY=your_api_key
-```
+先创建一个测试集根目录，包含：
 
-创建一个转录文件，每行格式为 `<时间戳>:<文本>`：
+- 根目录下一个 TTS 配置 JSON，例如 `tts_config.json`
+- 根目录下一个可选的 `test_config.json`
+- 一个或多个 case 子目录
+
+例如：
 
 ```plaintext
-# transcription.txt
-0:Hello, how are you today?
-ai_end:I have another question for you.
-ai_end+2.5:This will be sent 2.5 seconds after AI finishes.
+logs/test_templates/smoke/
+├── tts_config.json
+├── test_config.json
+└── basic_turn/
+    └── timestamp.txt
 ```
 
-其中 `<时间戳>` 可以是：
+## 编写 `tts_config.json`
 
-- 浮点数：从开始算起的绝对秒数（例如 `0`、`5.0`、`10.5`）
-- `ai_start`：上一条用户音频触发的下一轮 AI 音频开始播放时
-- `ai_end`：上一条用户音频触发的下一轮 AI 响应播放完成时
-- `user_start`：上一条用户音频开始发送时
-- `user_end`：上一条用户音频发送结束时
-- `<标签>+<偏移量>`：该对应事件发生后的秒数（例如 `ai_end+2.5`）
+在 `--create` 模式下，脚本会在根目录寻找一个 JSON 文件，例如 `tts_config.json`、`config.json` 或 `sample_local.json`。
 
-相对时间按文件顺序解析。每一行都会等待与紧前一条已调度用户音频对应的首个匹配锚点事件。
+这个文件可以使用以下两种形式之一：
 
-然后运行脚本生成音频文件：
+1. 独立的 TTS 模型配置
+2. 含有顶层 `tts` 字段的完整 X-Talk 服务配置
 
-```bash
-# 语音：Cherry（默认），语言：自动（默认）
-python scripts/create_test_case.py --input transcription.txt --output /path/to/audio_dir
+为了避免歧义，建议使用专门用于生成测试集的独立 `tts_config.json`。
 
-# 可选：指定语音和语言
-python scripts/create_test_case.py --input transcription.txt --output /path/to/audio_dir --voice Cherry --language Chinese
-```
+`IndexTTS` 的最小示例：
 
-这将创建：
-
-- 音频文件：`audio_000.wav`、`audio_001.wav` 等
-- `timestamp.txt` 文件，格式符合 `offline_client.py` 的要求
-
-## 使用离线客户端运行测试
-
-首先启动一个 X-Talk 服务器，记住端口号，例如 7634；在服务器配置文件中，添加以下代码片段以启用录音：
 ```json
-"service_config": {
-    "recording": true
+{
+  "type": "IndexTTS",
+  "params": {
+    "host": "127.0.0.1",
+    "port": 11996,
+    "voices": [
+      {
+        "name": "man",
+        "path": "/path/to/reference_voice.wav"
+      }
+    ]
+  }
 }
 ```
 
-然后为离线客户端安装依赖，并准备一个包含音频文件和 `timestamp.txt` 文件的音频目录用于测试：
+等价的完整服务配置写法：
 
-```bash
-pip install websockets soundfile numpy soxr
+```json
+{
+  "tts": {
+    "type": "IndexTTS",
+    "params": {
+      "host": "127.0.0.1",
+      "port": 11996,
+      "voices": [
+        {
+          "name": "man",
+          "path": "/path/to/reference_voice.wav"
+        }
+      ]
+    }
+  }
+}
 ```
+
+其中 `type` 应与 TTS 模型的 Python 类名一致，`params` 应与该类的初始化参数一致。可用的 TTS 后端及其可选依赖请参阅 [Supported Models](../docs/supported_models.zh.md)。
+
+对于 `IndexTTS`，`voices` 中的每一项都需要：
+
+- `name`：暴露给 X-Talk 的音色标识
+- `path`：参考音频 WAV 文件，或包含参考音频文件的目录
+
+如果您已经有一个可用的服务端配置文件，通常直接复用其中的 `tts` 段最方便。
+
+## 可选配置
+
+您可以在测试集根目录放一个可选的 `test_config.json`，它支持：
+
+- `concurrency`
+- `with_vad`
+- `vad_redemption_ms`
+- `judge_llm`
+
+示例：
+
+```json
+{
+  "concurrency": 1,
+  "with_vad": false,
+  "vad_redemption_ms": 500,
+  "judge_llm": {
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "api_key": "YOUR_API_KEY"
+  }
+}
+```
+
+每个 case 子目录中还可以放一个可选的 `criteria.yaml`：
+
+```yaml
+judge_asr: true
+```
+
+当启用 `judge_asr: true` 时，可运行测试集中的每条 `timestamp.txt` 记录都必须在第三列提供期望转录文本。由 `--create` 生成的数据集会自动满足这个格式。
+
+## 创建`timestamp.txt`
+
+每个 case 子目录都必须包含一个 `timestamp.txt`。在 `--create` 模式下，每一行使用 `<time_spec>:<text>` 格式：
+
 ```plaintext
-/path/to/audio_dir/
-├── audio1.wav
-├── audio2.wav
-└── timestamp.txt
-
-timestamp.txt 内容：
-0:audio1.wav
-ai_end:audio2.wav
-ai_end+2.5:audio3.wav
+# basic_turn/timestamp.txt
+0:Hello, how are you today?
+ai_end:Tell me more about your plan.
+ai_end+2.5:I also want to ask about pricing.
 ```
 
-然后使用服务器的 WebSocket URL 和输入音频目录运行离线客户端：
+`<time_spec>` 可以是：
+
+- 绝对秒数，例如 `0`、`5.0`、`10.5`
+- `ai_start`
+- `ai_end`
+- `user_start`
+- `user_end`
+- 上述任一锚点再加偏移量，例如 `ai_end+2.5`
+
+相对时间按文件顺序解析。`ai_*` 锚点表示由上一条用户音频触发的下一轮 AI 响应，`user_*` 锚点表示上一条用户音频本身。
+
+## 生成可运行测试集
+
+先安装脚本依赖：
 
 ```bash
-    python scripts/offline_client.py --ws ws://127.0.0.1:8000/ws --with-vad --input /path/to/audio_dir --output /path/to/recording.wav
+pip install numpy requests soundfile websockets pyyaml uvicorn fastapi
 ```
 
-您将在 `/path/to/recording.wav` 中看到结果。更多详情请参阅 `scripts/offline_client.py`。
+可选：
+
+```bash
+pip install soxr
+```
+
+此外，还需要安装所选 TTS 后端对应的 X-Talk 可选依赖。例如，`IndexTTS` 需要安装 `index-tts` extra。
+
+然后生成测试集：
+
+```bash
+python scripts/test.py --create logs/test_templates/smoke --out logs/tests
+```
+
+脚本会从根目录 JSON 配置中加载 TTS 模型，为每一行合成一个 WAV 文件，并输出可直接运行的 case 目录。生成后的 `timestamp.txt` 会使用 `<time_spec>:<audio_file>:<expected_text>` 格式。
+
+例如：
+
+```plaintext
+logs/tests/smoke/
+├── tts_config.json
+├── test_config.json
+└── basic_turn/
+    ├── audio_000.wav
+    ├── audio_001.wav
+    ├── audio_002.wav
+    └── timestamp.txt
+```
+
+## 运行自动化测试
+
+在 `--input` 模式下，脚本会自行启动一个内嵌 uvicorn 服务，因此不需要手动先启动 X-Talk。
+
+使用后端服务配置运行生成好的测试集：
+
+```bash
+python scripts/test.py --config server_configs/sample_local.json --input logs/tests/smoke --out logs/test_results/smoke
+```
+
+您也可以通过命令行覆盖运行参数：
+
+```bash
+python scripts/test.py --config server_configs/sample_local.json --input logs/tests/smoke --out logs/test_results/smoke --concurrency 2 --with-vad
+```
+
+## 输出结果
+
+测试结果目录中会包含：
+
+- `<case_name>.wav`：该 case 的完整双工录音
+- `eval.json`：整体延迟和每个 case 的通过/失败汇总
+- `logs/<case_name>.asr.json`：期望文本、实际 ASR 事件以及可选的评判结果
+- `service_config.json`：本次运行使用的实际后端配置
+- `test_config.json`：本次运行使用的实际测试配置
+
+## 注意事项
+
+- `--with-vad` 启用客户端 VAD。此时应从服务端配置中移除后端 `vad`，以避免重复 turn 事件。
+- `--without-vad` 需要服务端配置中存在后端 `vad` 模型。
+- 如果任何 case 启用了 `judge_asr`，则必须在 `test_config.json` 或命令行覆盖参数中提供 `judge_llm`。

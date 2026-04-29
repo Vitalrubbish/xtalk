@@ -76,6 +76,7 @@ let timelineSessionId = null;
 let toolCallCacheKey = '';
 let chatTimeline = [];
 let chatTimelineIndexByKey = new Map();
+let isStarting = false;
 
 const FULL_AUDIO_CHANNELS = 2;
 const FULL_AUDIO_BYTES_PER_SAMPLE = 2;
@@ -96,12 +97,20 @@ const STATE_COLORS = {
 };
 
 function setConnectionButtons(isConnected) {
-    $btnStart.disabled = isConnected;
-    $btnStop.disabled = !isConnected;
+    const isReconnecting = session.state.connectionState === 'reconnecting';
+    const startDisabled = isStarting || isConnected || isReconnecting;
+    const stopDisabled = isStarting || (!isConnected && !isReconnecting);
+
+    $btnStart.disabled = startDisabled;
+    $btnStart.textContent = isStarting ? 'Starting...' : 'Start';
+    $btnStart.classList.toggle('is-loading', isStarting);
+
+    $btnStop.disabled = stopDisabled;
 }
 
 function resetRealtimeUI() {
     stopVisualization();
+    isStarting = false;
     setConnectionButtons(false);
 }
 
@@ -576,6 +585,7 @@ session.onStateChange((state) => {
     $streamState.textContent = state.streamState;
     $sessionId.textContent = state.sessionId || '--';
     currentStreamState = state.streamState;
+    setConnectionButtons(state.connectionState === 'connected');
     renderSessions();
 
     if (state.sessionId !== timelineSessionId) {
@@ -640,6 +650,12 @@ session.onFullAudioChunk((pcmChunkInt16, sampleRate) => {
 });
 
 $btnStart.addEventListener('click', async () => {
+    if (isStarting) {
+        return;
+    }
+
+    isStarting = true;
+    setConnectionButtons(false);
     try {
         resetRecentAudioBuffer();
         await session.open();
@@ -648,6 +664,9 @@ $btnStart.addEventListener('click', async () => {
         await refreshSessions();
     } catch (e) {
         alert('Failed to start: ' + (e?.message || e));
+    } finally {
+        isStarting = false;
+        setConnectionButtons(session.state.connectionState === 'connected');
     }
 });
 

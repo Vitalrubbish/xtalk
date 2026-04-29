@@ -289,6 +289,15 @@ function appendToolCallMessage(toolCall) {
     });
 }
 
+function appendLocalInfoMessage(content) {
+    chatTimeline.push({
+        kind: 'conversation',
+        key: `local-info:${chatTimeline.length}`,
+        role: 'info',
+        content,
+    });
+}
+
 function renderChatTimeline() {
     $messages.innerHTML = '';
     for (const entry of chatTimeline) {
@@ -712,9 +721,17 @@ $btnRefreshSessions.addEventListener('click', async () => {
 
 $btnNewSession.addEventListener('click', async () => {
     try {
-        resetRecentAudioBuffer();
+        const hadActiveSession = session.state.connectionState === 'connected'
+            || session.state.connectionState === 'reconnecting';
+        if (hadActiveSession) {
+            await session.close();
+        }
         resetRealtimeUI();
         await session.switchSession(null);
+        if (hadActiveSession) {
+            appendLocalInfoMessage('Previous session stopped.');
+            renderChatTimeline();
+        }
         renderSessions();
     } catch (error) {
         alert('Failed to create draft session: ' + (error?.message || error));

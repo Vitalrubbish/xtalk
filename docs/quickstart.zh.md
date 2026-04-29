@@ -6,8 +6,7 @@
 
 安装阿里云和服务器脚本的依赖：
 ```bash
-pip install "xtalk[ali] @ git+https://github.com/xcc-zach/xtalk.git@main"
-pip install jinja2 python-multipart 'uvicorn[standard]'
+pip install "xtalk[ali,example] @ git+https://github.com/xcc-zach/xtalk.git@main"
 ```
 
 > 对于开发者，请克隆仓库、创建分支，并在仓库目录下使用 `pip install -e .`。

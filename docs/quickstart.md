@@ -6,8 +6,7 @@ We will use APIs from AliCloud to demonstrate the basic capability of **X-Talk**
 
 Install dependencies for AliCloud and server script:
 ```bash
-pip install "xtalk[ali] @ git+https://github.com/xcc-zach/xtalk.git@main"
-pip install jinja2 python-multipart 'uvicorn[standard]'
+pip install "xtalk[ali,example] @ git+https://github.com/xcc-zach/xtalk.git@main"
 ```
 
 > For developers, clone the repository, create a branch and use `pip install -e .` under the repository.

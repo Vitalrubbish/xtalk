@@ -60,7 +60,7 @@ Generate a complete response for the input.
 _Defined in `xtalk.llm_agent.interfaces`._
 
 ```python
-def generate_stream(self, input: Union[str, AgentInput]) -> Iterable[Union[str, ToolCall]]
+def generate_stream(self, input: Union[str, AgentInput]) -> Iterable[Union[str, ToolCall, dict[str, Any]]]
 ```
 
 Stream response chunks for the input.
@@ -72,9 +72,10 @@ Stream response chunks for the input.
 
 ##### Yields
 
-- `str | ToolCall`
-  Tool calls followed by text chunks. The default implementation
-  delegates to ``generate()`` and yields its result in streaming form.
+- `str | ToolCall | dict[str, Any]`
+  Tool calls, tool-result payloads, followed by text chunks. The
+  default implementation delegates to ``generate()`` and yields its
+  result in streaming form.
 
 #### async_generate
 
@@ -101,7 +102,7 @@ Asynchronously generate a complete response.
 _Defined in `xtalk.llm_agent.interfaces`._
 
 ```python
-async def async_generate_stream(self, input: Union[str, AgentInput]) -> AsyncIterator[Union[str, ToolCall]]
+async def async_generate_stream(self, input: Union[str, AgentInput]) -> AsyncIterator[Union[str, ToolCall, dict[str, Any]]]
 ```
 
 Asynchronously stream agent outputs.
@@ -113,7 +114,7 @@ Asynchronously stream agent outputs.
 
 ##### Yields
 
-- `str | ToolCall`
+- `str | ToolCall | dict[str, Any]`
   Streamed outputs from ``generate_stream()``.
 
 #### clone
@@ -131,20 +132,20 @@ Clone the agent for a new session.
 - `Agent`
   Session-safe agent instance.
 
-#### get_llm
+#### restore_history
 
 _Defined in `xtalk.llm_agent.interfaces`._
 
 ```python
-def get_llm(self) -> BaseChatModel | None
+def restore_history(self, messages: list[dict[str, Any]]) -> None
 ```
 
-Return the backing chat model when the agent exposes one.
+Restore persisted conversation messages into the agent state.
 
-##### Returns
+##### Parameters
 
-- `BaseChatModel | None`
-  Underlying chat model or ``None``.
+- `messages` (`list[dict[str, Any]]`)
+  Persisted chat messages ordered by session history.
 
 #### get_chat_history
 
@@ -265,7 +266,7 @@ Recognize a full audio buffer.
 _Defined in `xtalk.speech.interfaces`._
 
 ```python
-def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str
+def recognize_stream(self, audio: bytes, *, is_final: bool = False, chat_history: str | None = None) -> str
 ```
 
 Recognize audio incrementally in streaming mode.
@@ -277,6 +278,9 @@ Recognize audio incrementally in streaming mode.
 - `is_final` (`bool, optional`)
   Whether the caller is forcing a final decode because the user paused
   or the turn ended.
+- `chat_history` (`str | None, optional`)
+  Serialized chat history for the current session, excluding the
+  in-progress turn when unavailable.
 
 ##### Returns
 
@@ -349,7 +353,7 @@ Asynchronously recognize a full audio buffer.
 _Defined in `xtalk.speech.interfaces`._
 
 ```python
-async def async_recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str
+async def async_recognize_stream(self, audio: bytes, *, is_final: bool = False, chat_history: str | None = None) -> str
 ```
 
 Asynchronously recognize incremental audio input.
@@ -360,6 +364,9 @@ Asynchronously recognize incremental audio input.
   Incremental PCM 16-bit mono audio bytes.
 - `is_final` (`bool, optional`)
   Whether the chunk should force a final decode.
+- `chat_history` (`str | None, optional`)
+  Serialized chat history for the current session, excluding the
+  in-progress turn when unavailable.
 
 ##### Returns
 

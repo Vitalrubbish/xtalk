@@ -46,23 +46,25 @@ async def send_signal(self, message: dict) -> None
 - `message` (`dict`)
   要通过 WebSocket 发送的可 JSON 序列化载荷。
 
-#### send_session_info
+#### send_session_attached
 
 _定义于 `xtalk.serving.modules.output_gateway`。_
 
 ```python
-async def send_session_info(self) -> None
+async def send_session_attached(self) -> None
 ```
 
-向前端发送会话标识符。
+向前端发送已挂接的会话标识符。
 
 ## ASRManager
 
 _定义于 `xtalk.serving.modules.asr_manager`。_
 
 ```python
-class ASRManager(Manager)
+class ASRManager(Manager, TurnStateRestorable)
 ```
+
+支持通过 `restore_turn_state()` 恢复轮次状态。
 
 ## EmbeddingsManager
 
@@ -97,10 +99,11 @@ class LatencyManager(EventListenerMixin)
 _定义于 `xtalk.serving.modules.llm_agent_manager`。_
 
 ```python
-class LLMAgentManager(Manager)
+class LLMAgentManager(Manager, TurnStateRestorable)
 ```
 
 驱动 LLM Agent 生成并协调 TTS 流式处理。
+同样支持通过 `restore_turn_state()` 恢复轮次状态。
 
 ## SpeakerManager
 
@@ -131,6 +134,7 @@ class TTSManager(Manager)
 ```
 
 处理流式合成和控制的事件驱动 TTS 管理器。
+类字段还包括 `TTS_CHUNK_MS = 100` 与 `MAX_OUTSTANDING_MS = 300`。
 
 ## TurnTakingManager
 

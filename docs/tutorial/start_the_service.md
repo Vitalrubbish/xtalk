@@ -1,15 +1,15 @@
-> **Note**
-> See `examples/sample_app/configurable_server.py`, `examples/sample_app/templates` and `examples/sample_app/static` for details.
-   
-X-Talk keeps most models and execution on the server side. The client is mainly responsible for microphone access, audio streaming, WebSocket messaging, and lightweight logic such as voice activity detection.
+X-Talk keeps most models and execution on the server side. The client is mainly responsible for microphone access, audio streaming, WebSocket messaging, and lightweight session logic.
 
 The client API is published as [xtalk-client](https://www.npmjs.com/package/xtalk-client), and its public interface follows the implementation in `frontend/src`.
 
-For the client side, the minimal setup is:
+## Minimal client setup
 
-1. create a session with the server WebSocket URL,
-2. optionally subscribe to state changes, and
-3. call `session.open()`.
+`createSession()` takes a WebSocket URL. When you call `session.open()`, the client will:
+
+1. call the login endpoint,
+2. obtain an access token,
+3. connect to the WebSocket endpoint with that token,
+4. keep the current session state in sync.
 
 If you use a bundler, install the package first:
 
@@ -17,7 +17,7 @@ If you use a bundler, install the package first:
 npm install xtalk-client
 ```
 
-> For developers, client code is under `frontend`. Under the directroy, you may run `npm run watch` for dev build.
+> For developers, client code is under `frontend`. In that directory, you may run `npm run watch` for a dev build.
 
 Then import it in your frontend code:
 
@@ -32,7 +32,9 @@ const wsUrl =
 const session = createSession(wsUrl);
 
 session.onStateChange((state) => {
-    console.log("state:", state);
+    console.log("connection:", state.connectionState);
+    console.log("session:", state.sessionId);
+    console.log("messages:", state.messages);
 });
 
 await session.open();
@@ -54,19 +56,48 @@ If you do not want to bundle the client package yourself, you can load it direct
 </script>
 ```
 
-For the server side, the minimal setup is to create an `Xtalk` instance from a config file and connect it to a FastAPI WebSocket route:
+## Minimal server setup
+
+For the public `xtalk-client`, the recommended server setup is to create an `Xtalk` instance from a config file and mount its built-in routes on a FastAPI app:
 
 ```python
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 from xtalk import Xtalk
 
 app = FastAPI(title="Xtalk Server")
 xtalk_instance = Xtalk.from_config("path/to/config.json")
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await xtalk_instance.connect(websocket)
+xtalk_instance.mount_routes(app)
 ```
 
-This is enough to establish the basic client-server loop. For a fuller example including static files, templates, upload endpoints, and voice selection, see `examples/sample_app/configurable_server.py` and `examples/sample_app/static/js/index.js`.
+This mounts the default endpoints used by the frontend:
+
+- `POST /api/auth/login`
+- `GET /api/sessions`
+- `GET /api/sessions/{session_id}`
+- `POST /api/upload`
+- `WS /ws`
+
+With those default routes, the frontend can simply call `createSession(wsUrl)` and then `session.open()`.
+
+## Custom route setup
+
+If your backend does not use the default built-in route paths, pass explicit service URLs when creating the session:
+
+```ts
+const session = createSession(wsUrl, {
+    serviceURLs: {
+        login: "/custom/login",
+        sessions: "/custom/sessions",
+        sessionDetail: (sessionId) => `/custom/sessions/${sessionId}`,
+        upload: "/custom/upload",
+    },
+});
+```
+
+## Full example
+
+For a fuller example including static files, templates, upload UI, session switching, and voice selection, see:
+
+- `examples/sample_app/configurable_server.py`
+- `examples/sample_app/static/js/index.js`
+- `examples/sample_app/templates/index.html`

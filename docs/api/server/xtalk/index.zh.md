@@ -16,7 +16,7 @@ class Xtalk
 
 ### Class Fields
 
-- `MODEL_REGISTRY: dict[str, list[ImportSpec]]` = `{'asr': ['xtalk.speech.asr'], 'llm_agent': ['xtalk.llm_agent'], 'tts': ['xtalk.speech.tts'], 'embeddings': ['xtalk.embeddings'], 'speaker_encoder': ['xtalk.speech.speaker_encoder'], 'captioner': ['xtalk.speech.captioner'], 'caption_rewriter': ['xtalk.rewriter'], 'thought_rewriter': ['xtalk.rewriter'], 'vad': ['xtalk.speech.vad'], 'speech_enhancer': ['xtalk.speech.speech_enhancer'], 'speech_speed_controller': ['xtalk.speech.speech_speed_controller'], 'turn_detector': ['xtalk.speech.turn_detector']}`
+- `MODEL_REGISTRY: dict[str, list[ImportSpec]]` = `SHARED_MODEL_REGISTRY`
 
 ### Methods
 
@@ -149,7 +149,7 @@ def set_session_limit(self, limit: int)
 _定义于 `xtalk.api`。_
 
 ```python
-async def embed_text(self, session_id: str, text: str)
+async def embed_text(self, session_id: str, text: str, user_id: str | None = None)
 ```
 
 将文本加入会话级嵌入存储队列。
@@ -186,12 +186,22 @@ def add_agent_tools(self, tools_or_factories: list[BaseTool | Callable[[], BaseT
 - `RuntimeError`
   当至少一个服务会话已经被创建时抛出。
 
+#### mount_routes
+
+_定义于 `xtalk.api`。_
+
+```python
+def mount_routes(self, app: Any, *, login_path: str = '/api/auth/login', sessions_path: str = '/api/sessions', session_detail_path: str = '/api/sessions/{session_id}', upload_path: str = '/api/upload', ws_path: str = '/ws') -> None
+```
+
+挂载内置的登录、会话、上传和 WebSocket 路由。
+
 #### connect
 
 _定义于 `xtalk.api`。_
 
 ```python
-async def connect(self, websocket: WebSocket)
+async def connect(self, websocket: WebSocket, user_id: str | None = None)
 ```
 
 接收一个 WebSocket 会话并将其交给服务管理器。
@@ -200,6 +210,8 @@ async def connect(self, websocket: WebSocket)
 
 - `websocket` (`WebSocket`)
   来自客户端的 FastAPI WebSocket 连接。
+- `user_id` (`str | None, optional`)
+  已认证的用户标识符。省略时，会退回到旧的基于连接作用域的会话行为。
 
 ##### Notes
 

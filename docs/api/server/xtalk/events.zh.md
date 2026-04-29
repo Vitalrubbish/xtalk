@@ -137,10 +137,12 @@ TTS 语速切换事件。
 ## TTSChunkGenerated
 
 TTS 音频块生成事件。
+该事件当前也会携带 `sample_rate` 字段。
 
 ## TTSChunkPlayed
 
 前端确认某个 TTS 音频块已经播放完成。
+该事件由 `InputGateway` 在收到 `tts_chunk_played` 后发布，便于下游监听器按 FIFO 顺序观察前端播放完成情况。
 
 ## TTSPlaybackFinished
 

@@ -19,7 +19,7 @@ accepts WebSocket sessions on demand.
 
 ### Class Fields
 
-- `MODEL_REGISTRY: dict[str, list[ImportSpec]]` = `{'asr': ['xtalk.speech.asr'], 'llm_agent': ['xtalk.llm_agent'], 'tts': ['xtalk.speech.tts'], 'embeddings': ['xtalk.embeddings'], 'speaker_encoder': ['xtalk.speech.speaker_encoder'], 'captioner': ['xtalk.speech.captioner'], 'caption_rewriter': ['xtalk.rewriter'], 'thought_rewriter': ['xtalk.rewriter'], 'vad': ['xtalk.speech.vad'], 'speech_enhancer': ['xtalk.speech.speech_enhancer'], 'speech_speed_controller': ['xtalk.speech.speech_speed_controller'], 'turn_detector': ['xtalk.speech.turn_detector']}`
+- `MODEL_REGISTRY: dict[str, list[ImportSpec]]` = `SHARED_MODEL_REGISTRY`
 
 ### Methods
 
@@ -159,7 +159,7 @@ Set or replace the concurrent session limit.
 _Defined in `xtalk.api`._
 
 ```python
-async def embed_text(self, session_id: str, text: str)
+async def embed_text(self, session_id: str, text: str, user_id: str | None = None)
 ```
 
 Queue text for session-scoped embedding storage.
@@ -197,12 +197,22 @@ Attach tools to the prototype agent before sessions are created.
 - `RuntimeError`
   Raised if at least one service session has already been created.
 
+#### mount_routes
+
+_Defined in `xtalk.api`._
+
+```python
+def mount_routes(self, app: Any, *, login_path: str = '/api/auth/login', sessions_path: str = '/api/sessions', session_detail_path: str = '/api/sessions/{session_id}', upload_path: str = '/api/upload', ws_path: str = '/ws') -> None
+```
+
+Mount the built-in auth, session, upload, and websocket routes.
+
 #### connect
 
 _Defined in `xtalk.api`._
 
 ```python
-async def connect(self, websocket: WebSocket)
+async def connect(self, websocket: WebSocket, user_id: str | None = None)
 ```
 
 Accept a WebSocket session and hand it to the service manager.
@@ -211,6 +221,9 @@ Accept a WebSocket session and hand it to the service manager.
 
 - `websocket` (`WebSocket`)
   FastAPI WebSocket connection from the client.
+- `user_id` (`str | None, optional`)
+  Authenticated user identifier. When omitted, the connection falls
+  back to the legacy connection-scoped session behavior.
 
 ##### Notes
 
@@ -794,7 +807,7 @@ Orchestrate a session-scoped pipeline and manager stack.
 _Defined in `xtalk.serving.service`._
 
 ```python
-def __init__(self, *, pipeline: Pipeline, service_config: dict[str, Any] | None = None, manager_classes: list[Type[Manager]] | None = None, _websocket: WebSocket | None = None, _event_overrides: dict[Type[EventListenerMixin], EventOverrides] | None = None)
+def __init__(self, *, pipeline: Pipeline, service_config: dict[str, Any] | None = None, manager_classes: list[Type[Manager]] | None = None, _websocket: WebSocket | None = None, _session_id: str | None = None, _event_overrides: dict[Type[EventListenerMixin], EventOverrides] | None = None)
 ```
 
 #### unsubscribe_event
@@ -894,6 +907,36 @@ Run the full WebSocket message loop for a live session.
   Raised if the service instance is still a prototype without runtime
   gateways.
 
+#### restore_conversation
+
+_Defined in `xtalk.serving.service`._
+
+```python
+def restore_conversation(self, *, messages: list[dict[str, Any]]) -> None
+```
+
+Restore persisted conversation history into the session agent.
+
+#### restore_turn_state
+
+_Defined in `xtalk.serving.service`._
+
+```python
+def restore_turn_state(self, *, last_turn_id: int) -> None
+```
+
+Restore per-manager turn counters from persisted state.
+
+#### send_session_attached
+
+_Defined in `xtalk.serving.service`._
+
+```python
+async def send_session_attached(self) -> None
+```
+
+Notify the client that the session is attached.
+
 #### stop
 
 _Defined in `xtalk.serving.service`._
@@ -909,7 +952,7 @@ Stop the service and shut down all managers.
 _Defined in `xtalk.serving.service`._
 
 ```python
-def clone(self, new_websocket: WebSocket) -> 'Service'
+def clone(self, new_websocket: WebSocket, *, session_id: str | None = None, service_config_overrides: dict[str, Any] | None = None) -> 'Service'
 ```
 
 Clone the service prototype for a new WebSocket session.
@@ -950,7 +993,7 @@ register or override managers for custom behavior.
 _Defined in `xtalk.serving.service`._
 
 ```python
-def __init__(self, *, pipeline: Pipeline, service_config: dict[str, Any] | None = None, manager_classes: list[Type[Manager]] | None = None, _websocket: WebSocket | None = None, _event_overrides: dict[Type[EventListenerMixin], EventOverrides] | None = None)
+def __init__(self, *, pipeline: Pipeline, service_config: dict[str, Any] | None = None, manager_classes: list[Type[Manager]] | None = None, _websocket: WebSocket | None = None, _session_id: str | None = None, _event_overrides: dict[Type[EventListenerMixin], EventOverrides] | None = None)
 ```
 
 ## BaseEvent

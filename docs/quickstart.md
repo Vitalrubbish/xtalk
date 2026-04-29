@@ -13,7 +13,7 @@ pip install "xtalk[ali,example] @ git+https://github.com/xcc-zach/xtalk.git@main
 
 ## Step 2. Obtain an API key
 
-Obtain an API key from [AliCloud Bailian Platform](https://bailian.console.aliyun.com/?tab=model#/api-key). We will be using free-tier service from AliCloud.
+Obtain an API key from [AliCloud Bailian Platform](https://bailian.console.aliyun.com/?tab=model#/api-key). We will be using free-tier (currently) service from AliCloud.
 
 > Online service may be unstable and of high latency. We recommend using locally deployed models for better user experience. We recommend ASR models from *SherpaOnnx* ([setup tutorial](https://k2-fsa.github.io/sherpa/onnx/sense-voice/python-api.html#websocket-server-and-client-example)) and *IndexTTS* ([setup tutorial](https://github.com/Ksuriuri/index-tts-vllm)).See [server config tutorial](tutorial/config_the_service.md) and [sample config for fully local deployment](tutorial/sample_config_for_fully_local_deployment.md) for details. 
 

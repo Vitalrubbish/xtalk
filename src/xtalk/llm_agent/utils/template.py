@@ -4,15 +4,31 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from typing import Any, AsyncIterator, Callable, Coroutine, Iterable, Optional, Protocol, TypeVar, Union
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Coroutine,
+    Iterable,
+    Optional,
+    Protocol,
+    TypeVar,
+    Union,
+)
 
 from langchain.chat_models.base import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolCall
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolCall,
+)
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
-from ..log_utils import logger
-from .interfaces import Agent, AgentInput
+from ...log_utils import logger
+from .interfaces import Agent, AgentInput, AgentStreamItem
 from .runtime import (
     AgentRequest,
     AgentRuntime,
@@ -23,7 +39,7 @@ from .runtime import (
     TurnContext,
     ScenarioSpec,
 )
-from .tools.utils import build_tool_call_result_payload
+from ..tools.utils import build_tool_call_result_payload
 
 T = TypeVar("T")
 
@@ -382,69 +398,22 @@ class TemplateAgent(Agent):
 
         return ToolCall(name=event.name, args=dict(event.args), id=event.call_id)
 
-    def generate(
-        self,
-        input: Union[str, AgentInput],
-    ) -> Union[str, tuple[str, list[ToolCall]]]:
-        """Generate a complete response.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Legacy agent input.
-
-        Returns
-        -------
-        str | tuple[str, list[ToolCall]]
-            Response text, plus tool calls when any occurred.
-        """
-
-        return self._run_async_task(self.async_generate(input))
-
-    async def async_generate(
-        self,
-        input: Union[str, AgentInput],
-    ) -> Union[str, tuple[str, list[ToolCall]]]:
-        """Asynchronously generate a complete response.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Legacy agent input.
-
-        Returns
-        -------
-        str | tuple[str, list[ToolCall]]
-            Response text, plus tool calls when any occurred.
-        """
-
-        text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        async for event in self.runtime.generate_stream(self._build_request(input)):
-            if isinstance(event, TextChunkEvent):
-                text_parts.append(event.text)
-            elif isinstance(event, ToolCallEvent):
-                tool_calls.append(self._to_tool_call(event))
-        text = "".join(text_parts)
-        if tool_calls:
-            return text, tool_calls
-        return text
-
     def generate_stream(
         self,
         input: Union[str, AgentInput],
-    ) -> Iterable[Union[str, ToolCall, dict[str, Any]]]:
+    ) -> Iterable[AgentStreamItem]:
         """Synchronously stream legacy response chunks.
 
         Parameters
         ----------
         input : str | AgentInput
-            Legacy agent input.
+            Raw user text or structured agent input.
 
         Yields
         ------
-        str | ToolCall | dict[str, Any]
+        str | ToolCall | ToolCallResultPayload
             Text chunks, legacy tool-call payloads, and tool-result payloads.
+            Yields nothing when generation is skipped.
         """
 
         yield from self._sync_iter_from_async(self.async_generate_stream(input))
@@ -452,18 +421,19 @@ class TemplateAgent(Agent):
     async def async_generate_stream(
         self,
         input: Union[str, AgentInput],
-    ) -> AsyncIterator[Union[str, ToolCall, dict[str, Any]]]:
+    ) -> AsyncIterator[AgentStreamItem]:
         """Asynchronously stream legacy response chunks.
 
         Parameters
         ----------
         input : str | AgentInput
-            Legacy agent input.
+            Raw user text or structured agent input.
 
         Yields
         ------
-        str | ToolCall | dict[str, Any]
+        str | ToolCall | ToolCallResultPayload
             Text chunks, legacy tool-call payloads, and tool-result payloads.
+            Yields nothing when generation is skipped.
         """
 
         async for event in self.runtime.generate_stream(self._build_request(input)):

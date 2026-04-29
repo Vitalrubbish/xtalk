@@ -16,8 +16,8 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import BaseTool
 
-from ..log_utils import logger
-from ..pipelines.context import PipelineContext
+from ...log_utils import logger
+from ...pipelines.context import PipelineContext
 
 _SKIP_MODEL_KEY = "_agent_runtime_skip_model"
 _REGISTER_TOOL_KEY = "_agent_runtime_register_tool"

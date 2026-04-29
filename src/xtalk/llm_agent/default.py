@@ -11,7 +11,7 @@ from langchain_core.tools import BaseTool
 
 from ..log_utils import logger
 from ..pipelines.context import PipelineContext
-from .runtime import (
+from .utils.runtime import (
     _REGISTER_TOOL_KEY,
     _SKIP_MODEL_KEY,
     AgentRequest,
@@ -24,7 +24,7 @@ from .runtime import (
     TurnContext,
     TurnHook,
 )
-from .template import MutableToolProvider, TemplateAgent, _format_chat_history
+from .utils.template import MutableToolProvider, TemplateAgent, _format_chat_history
 from .tools import (
     build_set_emotion_tool,
     build_set_speed_tool,

@@ -1,13 +1,16 @@
+from typing import Iterable
+
 from xtalk.model_types import Agent
 
 
 class EchoAgent(Agent):
     """A simple agent that echoes user input."""
 
-    def generate(self, input) -> str:
+    def generate_stream(self, input) -> Iterable[str]:
         if isinstance(input, dict):
-            return input["content"]
-        return input
+            yield input["content"]
+            return
+        yield input
 
     def clone(self) -> "EchoAgent":
         return EchoAgent()

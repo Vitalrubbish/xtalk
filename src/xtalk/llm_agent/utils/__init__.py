@@ -1,14 +1,8 @@
-import sys
+"""Utility modules shared by concrete LLM agent implementations."""
 
-from .utils import interfaces as interfaces
-from .utils import runtime as runtime
-from .utils import template as template
-from .tools.utils import ToolCallResultArgs, ToolCallResultPayload
-from .utils.interfaces import Agent
-from .dummy import DummyAgent
-from .default import DefaultAgent
-from .utils.template import MutableToolProvider, TemplateAgent
-from .utils.runtime import (
+from .interfaces import Agent, AgentInput
+from ..tools.utils import ToolCallResultArgs, ToolCallResultPayload
+from .runtime import (
     AgentRequest,
     AgentRuntime,
     AgentSession,
@@ -23,16 +17,11 @@ from .utils.runtime import (
     TurnContext,
     TurnHook,
 )
-
-sys.modules[f"{__name__}.interfaces"] = interfaces
-sys.modules[f"{__name__}.runtime"] = runtime
-sys.modules[f"{__name__}.template"] = template
+from .template import MutableToolProvider, TemplateAgent
 
 __all__ = [
     "Agent",
-    "DummyAgent",
-    "DefaultAgent",
-    "TemplateAgent",
+    "AgentInput",
     "AgentRequest",
     "AgentRuntime",
     "AgentSession",
@@ -41,6 +30,7 @@ __all__ = [
     "OutputPolicy",
     "PromptBuilder",
     "ScenarioSpec",
+    "TemplateAgent",
     "TextChunkEvent",
     "ToolCallEvent",
     "ToolCallResultArgs",

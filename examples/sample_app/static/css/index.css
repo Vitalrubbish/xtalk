@@ -277,6 +277,14 @@ main {
     color: #94a3b8;
 }
 
+.chat-card-label {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-bottom: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
 #messages {
     max-height: 400px;
     overflow-y: auto;
@@ -309,6 +317,31 @@ main {
     align-self: center;
     font-style: italic;
     color: #94a3b8;
+}
+
+.message-tool {
+    background: #111827;
+    border: 1px solid #475569;
+    align-self: flex-start;
+    max-width: 100%;
+}
+
+.message-tool-label {
+    font-size: 0.75rem;
+    color: #fbbf24;
+    margin-bottom: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.message-tool-args {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #cbd5e1;
 }
 
 .toggle-bar {

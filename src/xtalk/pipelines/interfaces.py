@@ -1,8 +1,6 @@
-import asyncio
 from abc import abstractmethod, ABC
-from typing import Optional, TypedDict, Iterable, AsyncIterator
+from typing import Optional, TypedDict
 from typing import Dict, Any
-import numpy as np
 from langchain_core.embeddings import Embeddings
 from ..speech.interfaces import (
     ASR,
@@ -13,6 +11,7 @@ from ..speech.interfaces import (
     SpeechEnhancer,
     SpeakerEncoder,
     SpeechSpeedController,
+    TurnDetector,
 )
 from ..rewriter.interfaces import Rewriter
 from ..llm_agent.interfaces import Agent
@@ -55,8 +54,13 @@ class PipelineOutput(PipelineOutputBase, total=False):
 
 
 class Pipeline(ABC):
-    """
-    Abstract base class for the pipeline.
+    """Define the model accessors expected by Xtalk services.
+
+    Notes
+    -----
+    Concrete pipelines expose the models and helpers consumed by service
+    managers. Sample applications commonly subclass ``DefaultPipeline`` to add
+    extra components while retaining this interface.
     """
 
     # Context dict shared across modules for runtime state (thought/caption/etc.)
@@ -64,11 +68,18 @@ class Pipeline(ABC):
 
     @property
     def context(self) -> "PipelineContext":
-        """Get pipeline context, creating default values when absent.
+        """Return the runtime context shared across managers.
 
-        - Lazily initializes with default keys (thought/caption/etc.)
-        - Returns dict reference; callers should treat as read-only unless
-          updating via the setter with merged fields.
+        Returns
+        -------
+        PipelineContext
+            Mutable context dictionary initialized with the standard Xtalk
+            runtime keys on first access.
+
+        Notes
+        -----
+        Callers typically read from the returned dictionary directly. Replacing
+        the entire context should be done via the setter.
         """
         if not hasattr(self, "_context"):
             # Initialize default context (fields default to None)
@@ -83,78 +94,153 @@ class Pipeline(ABC):
 
     @context.setter
     def context(self, value: "PipelineContext") -> None:
-        """Overwrite pipeline context."""
+        """Replace the shared runtime context.
+
+        Parameters
+        ----------
+        value : PipelineContext
+            Context dictionary to store on the pipeline instance.
+        """
         self._context = value
 
     @abstractmethod
     def clone(self) -> "Pipeline":
-        """
-        Clone the pipeline.
+        """Clone the pipeline for a new session.
+
+        Returns
+        -------
+        Pipeline
+            Session-safe pipeline instance.
         """
         pass
 
     def get_asr_model(self) -> ASR | None:
-        """
-        Get the ASR model. If the pipeline does not have an ASR model, return None.
+        """Return the configured ASR model, if available.
+
+        Returns
+        -------
+        ASR | None
+            ASR implementation or ``None`` when the pipeline omits speech
+            recognition.
         """
         return None
 
     def get_tts_model(self) -> TTS | None:
-        """
-        Get the TTS model. If the pipeline does not have a TTS model, return None.
+        """Return the configured TTS model, if available.
+
+        Returns
+        -------
+        TTS | None
+            TTS implementation or ``None``.
         """
         return None
 
     def get_agent(self) -> Agent | None:
-        """
-        Get the LLM agent. If the pipeline does not have a LLM agent, return None.
+        """Return the configured agent, if available.
+
+        Returns
+        -------
+        Agent | None
+            Agent implementation or ``None``.
         """
         return None
 
     def get_captioner_model(self) -> Captioner | None:
-        """
-        Get the Captioner model. If the pipeline does not have a Captioner model, return None.
+        """Return the configured captioner, if available.
+
+        Returns
+        -------
+        Captioner | None
+            Captioner implementation or ``None``.
         """
         return None
 
     def get_punt_restorer_model(self) -> PuntRestorer | None:
-        """
-        Get the PuntRestorer model. If the pipeline does not have a PuntRestorer model, return None.
+        """Return the configured punctuation restorer, if available.
+
+        Returns
+        -------
+        PuntRestorer | None
+            Punctuation restoration model or ``None``.
         """
         return None
 
     def get_caption_rewriter_model(self) -> Rewriter | None:
-        """
-        Get the Caption Rewriter model. If the pipeline does not have a Caption Rewriter model
-        , return None.
+        """Return the caption rewriter used by caption-related managers.
+
+        Returns
+        -------
+        Rewriter | None
+            Caption rewriter or ``None``.
         """
         return None
 
     def get_thought_rewriter_model(self) -> Rewriter | None:
-        """Get the Thought Rewriter model (for ThoughtManager)."""
+        """Return the thought rewriter used by ``ThoughtManager``.
+
+        Returns
+        -------
+        Rewriter | None
+            Thought rewriter or ``None``.
+        """
         return None
 
     def get_vad_model(self) -> VAD:
-        """
-        Get the VAD model. If the pipeline does not have a VAD model, return None.
+        """Return the configured voice activity detector, if available.
+
+        Returns
+        -------
+        VAD | None
+            VAD implementation or ``None``.
         """
         return None
 
     def get_enhancer_model(self) -> SpeechEnhancer | None:
-        """
-        Get the SpeechEnhancer model. If the pipeline does not have a SpeechEnhancer model, return None.
+        """Return the configured speech enhancer, if available.
+
+        Returns
+        -------
+        SpeechEnhancer | None
+            Speech enhancement model or ``None``.
         """
         return None
 
     def get_speaker_encoder(self) -> SpeakerEncoder | None:
-        """
-        Get the Speaker Encoder model. If the pipeline does not have a Speaker Encoder model, return None.
+        """Return the configured speaker encoder, if available.
+
+        Returns
+        -------
+        SpeakerEncoder | None
+            Speaker encoder or ``None``.
         """
         return None
 
     def get_speed_controller(self) -> SpeechSpeedController | None:
-        """Return the optional TTS speed controller if available."""
+        """Return the optional TTS speed controller.
+
+        Returns
+        -------
+        SpeechSpeedController | None
+            Speed controller or ``None``.
+        """
         return None
 
     def get_embeddings_model(self) -> Embeddings | None:
+        """Return the embeddings model used for retrieval features.
+
+        Returns
+        -------
+        Embeddings | None
+            Embeddings model or ``None``.
+        """
+        return None
+
+    def get_turn_detector_model(self) -> TurnDetector | None:
+        """Return the configured turn detector, if available.
+
+        Returns
+        -------
+        TurnDetector | None
+            Turn detector or ``None``.
+        """
         return None

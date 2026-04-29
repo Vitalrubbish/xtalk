@@ -4,6 +4,14 @@ from datetime import datetime
 
 
 def mute_other_logging():
+    """Reduce noise from third-party loggers used by Xtalk.
+
+    Notes
+    -----
+    This helper raises the root logger level to ``WARNING`` and applies the
+    same threshold to common network and SDK loggers so sample applications
+    can keep terminal output focused on Xtalk events.
+    """
     logging.getLogger().setLevel(logging.WARNING)
     for name in [
         "httpx",
@@ -19,7 +27,17 @@ def mute_other_logging():
 
 
 def setup_logging():
-    """Configure logging and create a new log file for each run."""
+    """Configure the process-wide Xtalk logger.
+
+    Returns
+    -------
+    logging.Logger
+        The configured ``xtalk`` logger instance.
+
+    Notes
+    -----
+    A timestamped log file is created under ``logs/`` for every process start.
+    """
     # Ensure logs directory exists
     logs_dir = "logs"
     if not os.path.exists(logs_dir):

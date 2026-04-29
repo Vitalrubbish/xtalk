@@ -31,7 +31,7 @@ class EmbeddingsManager(Manager):
     @Manager.event_handler(TextForEmbeddingReady, priority=70)
     async def _on_text_for_embedding_ready(self, event: TextForEmbeddingReady) -> None:
         """Handle text that needs to be embedded."""
-        text = getattr(event, "text", "") or ""
+        text = event.text or ""
         if not text.strip():
             return
         # Update pipeline context so agent knows embedding is needed
@@ -45,7 +45,8 @@ class EmbeddingsManager(Manager):
             TurnLLMAgentStopRequested(
                 session_id=self.session_id,
                 reason="started_embedding",
-            )
+            ),
+            wait_for_completion=True,
         )
 
         db = await self._run_embedding_job(text)
@@ -55,10 +56,12 @@ class EmbeddingsManager(Manager):
         ctx["vector_store_instance"] = db
         self.pipeline.context = ctx
 
+        context_snapshot = dict(ctx)
         await self.event_bus.publish(
             TurnLLMAgentStartRequested(
                 session_id=self.session_id,
                 text="",
+                context_snapshot=context_snapshot,
             ),
             wait_for_completion=True,
         )

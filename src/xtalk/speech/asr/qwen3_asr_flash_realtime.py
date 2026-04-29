@@ -156,7 +156,14 @@ class Qwen3ASRFlashRealtime(ASR):
         finally:
             self._safe_close_if_connected(conv, connect_ok)
 
-    def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str:
+    def recognize_stream(
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+    ) -> str:
+        del chat_history
         self._ensure_session()
 
         assert self._conv is not None

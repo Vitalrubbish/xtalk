@@ -1,0 +1,83 @@
+You can input audios to test X-Talk with `scripts/offline_client.py`.
+
+## Creating Test Cases from Text
+
+If you don't have audio files ready, you can use `scripts/create_test_case.py` to generate them from a transcription file using DashScope TTS API.
+
+First, install the dependency and set your API key:
+
+```bash
+pip install requests
+export DASHSCOPE_API_KEY=your_api_key
+```
+
+Create a transcription file with the format `<timestamp>:<text>` per line:
+
+```plaintext
+# transcription.txt
+0:Hello, how are you today?
+ai_end:I have another question for you.
+ai_end+2.5:This will be sent 2.5 seconds after AI finishes.
+```
+
+Where `<timestamp>` is:
+
+- A float number: absolute seconds from start (e.g., `0`, `5.0`, `10.5`)
+- `ai_start`: when the next AI response after the previous user clip starts playing
+- `ai_end`: when the next AI response after the previous user clip finishes playing
+- `user_start`: when the previous user clip starts sending
+- `user_end`: when the previous user clip finishes sending
+- `<label>+<offset>`: seconds after that matching event (e.g., `ai_end+2.5`)
+
+Relative timestamps are resolved in file order. Each line waits for the first
+matching anchor event associated with the immediately preceding scheduled user
+clip.
+
+Then run the script to generate audio files:
+
+```bash
+# Voice: Cherry (default), Language: Auto (default)
+python scripts/create_test_case.py --input transcription.txt --output /path/to/audio_dir
+
+# Optional: specify voice and language
+python scripts/create_test_case.py --input transcription.txt --output /path/to/audio_dir --voice Cherry --language Chinese
+```
+
+This will create:
+
+- Audio files: `audio_000.wav`, `audio_001.wav`, etc.
+- `timestamp.txt` in the format expected by `offline_client.py`
+
+## Running Tests with Offline Client
+
+First start an X-Talk server, remember the port, like 7634; in the server config file, add the snippet below to enable recording:
+```json
+"service_config": {
+    "recording": true
+}
+```
+
+Then install dependencies for the offline client and prepare an audio directory with audio files and a `timestamp.txt` file for testing:
+
+```bash
+pip install websockets soundfile numpy soxr
+```
+```plaintext
+/path/to/audio_dir/
+├── audio1.wav
+├── audio2.wav
+└── timestamp.txt
+
+timestamp.txt content:
+0:audio1.wav
+ai_end:audio2.wav
+ai_end+2.5:audio3.wav
+```
+
+Then run the offline client with the WebSocket URL of the server and the input audio directory:
+
+```bash
+    python scripts/offline_client.py --ws ws://127.0.0.1:8000/ws --with-vad --input /path/to/audio_dir --output /path/to/recording.wav
+```
+
+You will see result in `/path/to/recording.wav`. See `scripts/offline_client.py` for more details.

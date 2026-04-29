@@ -6,9 +6,9 @@
 
 # Interface: Session
 
-Defined in: [core.ts:42](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L42)
+Defined in: [session/types.ts:90](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L90)
 
-Public API returned by [createSession](../functions/createSession.md).
+Public session controller exposed by the frontend entrypoint.
 
 ## Properties
 
@@ -16,9 +16,9 @@ Public API returned by [createSession](../functions/createSession.md).
 
 > **muted**: `boolean`
 
-Defined in: [core.ts:152](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L152)
+Defined in: [session/types.ts:130](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L130)
 
-Whether the microphone capture path is muted.
+Whether microphone capture is currently muted.
 
 ***
 
@@ -26,13 +26,17 @@ Whether the microphone capture path is muted.
 
 > `readonly` **state**: `object`
 
-Defined in: [core.ts:94](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L94)
+Defined in: [session/types.ts:108](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L108)
 
-The latest conversation state snapshot.
+Current conversation state snapshot.
 
 #### caption
 
 > **caption**: `string`
+
+#### connectionState
+
+> **connectionState**: `"connected"` \| `"reconnecting"` \| `"disconnected"`
 
 #### latency
 
@@ -60,7 +64,7 @@ The latest conversation state snapshot.
 
 #### messages
 
-> **messages**: `Message`[]
+> **messages**: `ConversationMessage`[]
 
 #### retrieval
 
@@ -78,15 +82,19 @@ The latest conversation state snapshot.
 
 > **thought**: `string`
 
+#### user
+
+> **user**: `ConversationUser` \| `null`
+
 ## Methods
 
 ### changeVoice()
 
 > **changeVoice**(`voiceName`): `Promise`&lt;`void`&gt;
 
-Defined in: [core.ts:167](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L167)
+Defined in: [session/types.ts:136](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L136)
 
-Requests that the server switch to another voice.
+Requests a voice change for subsequent assistant synthesis.
 
 #### Parameters
 
@@ -94,23 +102,11 @@ Requests that the server switch to another voice.
 
 `string`
 
-The server-side voice identifier to activate.
+Target voice identifier.
 
 #### Returns
 
 `Promise`&lt;`void`&gt;
-
-A promise that resolves after the request has been dispatched.
-
-#### Remarks
-
-The provided voice name must match a voice supported by the connected server.
-
-#### Example
-
-```ts
-await session.changeVoice("alloy");
-```
 
 ***
 
@@ -118,25 +114,27 @@ await session.changeVoice("alloy");
 
 > **close**(): `Promise`&lt;`void`&gt;
 
-Defined in: [core.ts:72](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L72)
+Defined in: [session/types.ts:98](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L98)
 
-Closes the audio sessions and websocket connection.
+Closes the active runtime connection and audio resources.
 
 #### Returns
 
 `Promise`&lt;`void`&gt;
 
-A promise that resolves after the session is fully shut down.
+***
 
-#### Remarks
+### getSessions()
 
-After closing, the current session instance should be treated as inactive.
+> **getSessions**(): `Promise`&lt;`SessionSummary`[]&gt;
 
-#### Example
+Defined in: [session/types.ts:147](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L147)
 
-```ts
-await session.close();
-```
+Fetches available persisted sessions for the current user.
+
+#### Returns
+
+`Promise`&lt;`SessionSummary`[]&gt;
 
 ***
 
@@ -144,35 +142,21 @@ await session.close();
 
 > **onFullAudioChunk**(`callback`): `void`
 
-Defined in: [core.ts:148](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L148)
+Defined in: [session/types.ts:126](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L126)
 
-Subscribes to merged assistant audio chunks after playback assembly.
+Registers a callback for merged full-duplex PCM chunks.
 
 #### Parameters
 
 ##### callback
 
-(`pcmChunkInt16`, `sampleRate`) => `void`
+`AudioChunkCallback`
 
-Receives each completed audio chunk and its sample rate.
+Full audio listener.
 
 #### Returns
 
 `void`
-
-Nothing.
-
-#### Remarks
-
-This callback receives the reconstructed full audio chunk emitted by the conversation layer.
-
-#### Example
-
-```ts
-session.onFullAudioChunk((chunk, sampleRate) => {
-  console.log(chunk.byteLength, sampleRate);
-});
-```
 
 ***
 
@@ -180,35 +164,21 @@ session.onFullAudioChunk((chunk, sampleRate) => {
 
 > **onInputAudioChunk**(`callback`): `void`
 
-Defined in: [core.ts:112](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L112)
+Defined in: [session/types.ts:114](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L114)
 
-Subscribes to microphone PCM frames before they are sent to the server.
+Registers a callback for microphone input PCM chunks.
 
 #### Parameters
 
 ##### callback
 
-(`pcmChunkInt16`, `sampleRate`) => `void`
+`AudioChunkCallback`
 
-Receives each outbound audio chunk and its sample rate.
+Input audio listener.
 
 #### Returns
 
 `void`
-
-Nothing.
-
-#### Remarks
-
-Use this to inspect or duplicate outgoing audio captured from the local input device.
-
-#### Example
-
-```ts
-session.onInputAudioChunk((chunk, sampleRate) => {
-  console.log(chunk.byteLength, sampleRate);
-});
-```
 
 ***
 
@@ -216,35 +186,21 @@ session.onInputAudioChunk((chunk, sampleRate) => {
 
 > **onOutputAudioChunk**(`callback`): `void`
 
-Defined in: [core.ts:130](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L130)
+Defined in: [session/types.ts:120](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L120)
 
-Subscribes to synthesized PCM frames before playback.
+Registers a callback for speaker output PCM chunks.
 
 #### Parameters
 
 ##### callback
 
-(`pcmChunkInt16`, `sampleRate`) => `void`
+`AudioChunkCallback`
 
-Receives each inbound audio chunk and its sample rate.
+Output audio listener.
 
 #### Returns
 
 `void`
-
-Nothing.
-
-#### Remarks
-
-Use this to inspect audio returned by the server before it is played locally.
-
-#### Example
-
-```ts
-session.onOutputAudioChunk((chunk, sampleRate) => {
-  console.log(chunk.byteLength, sampleRate);
-});
-```
 
 ***
 
@@ -252,9 +208,9 @@ session.onOutputAudioChunk((chunk, sampleRate) => {
 
 > **onStateChange**(`callback`): `void`
 
-Defined in: [core.ts:90](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L90)
+Defined in: [session/types.ts:104](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L104)
 
-Subscribes to conversation state updates.
+Registers a callback that runs whenever the conversation state changes.
 
 #### Parameters
 
@@ -262,25 +218,11 @@ Subscribes to conversation state updates.
 
 (`state`) => `void`
 
-Receives the full session state whenever it changes.
+State change listener.
 
 #### Returns
 
 `void`
-
-Nothing.
-
-#### Remarks
-
-The callback is invoked whenever the internal conversation state changes.
-
-#### Example
-
-```ts
-session.onStateChange((state) => {
-  console.log(state.streamState, state.messages);
-});
-```
 
 ***
 
@@ -288,27 +230,35 @@ session.onStateChange((state) => {
 
 > **open**(): `Promise`&lt;`void`&gt;
 
-Defined in: [core.ts:58](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L58)
+Defined in: [session/types.ts:94](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L94)
 
-Opens the websocket connection and prepares audio input/output resources.
+Opens the session runtime and performs authentication if needed.
 
 #### Returns
 
 `Promise`&lt;`void`&gt;
 
-A promise that resolves once the local audio sessions are ready.
+***
 
-#### Remarks
+### switchSession()
 
-Call this before reading live state updates, toggling mute, switching voices,
-or uploading files through the session.
+> **switchSession**(`sessionId`): `Promise`&lt;`void`&gt;
 
-#### Example
+Defined in: [session/types.ts:153](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L153)
 
-```ts
-const session = createSession("ws://localhost:8000/ws");
-await session.open();
-```
+Switches the active conversation to a persisted session or starts a new one.
+
+#### Parameters
+
+##### sessionId
+
+`string` \| `null`
+
+Target session identifier, or `null` to start a new session.
+
+#### Returns
+
+`Promise`&lt;`void`&gt;
 
 ***
 
@@ -316,9 +266,9 @@ await session.open();
 
 > **uploadFile**(`file`, `endpoint?`): `Promise`&lt;`void`&gt;
 
-Defined in: [core.ts:184](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L184)
+Defined in: [session/types.ts:143](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L143)
 
-Uploads a file for use by the session.
+Uploads a file into the current session context.
 
 #### Parameters
 
@@ -326,27 +276,14 @@ Uploads a file for use by the session.
 
 `Blob`
 
-The file blob to upload.
+File blob to upload.
 
 ##### endpoint?
 
 `string` \| `URL`
 
-The upload endpoint. Defaults to `./api/upload`.
+Optional upload endpoint override.
 
 #### Returns
 
 `Promise`&lt;`void`&gt;
-
-A promise that resolves after the upload action has been dispatched.
-
-#### Remarks
-
-This forwards the file and endpoint to the server-side upload action.
-
-#### Example
-
-```ts
-const file = new Blob(["hello"], { type: "text/plain" });
-await session.uploadFile(file);
-```

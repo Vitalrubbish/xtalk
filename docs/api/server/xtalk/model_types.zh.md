@@ -57,7 +57,7 @@ def generate(self, input: Union[str, AgentInput]) -> Union[str, tuple[str, List[
 _定义于 `xtalk.llm_agent.interfaces`。_
 
 ```python
-def generate_stream(self, input: Union[str, AgentInput]) -> Iterable[Union[str, ToolCall]]
+def generate_stream(self, input: Union[str, AgentInput]) -> Iterable[Union[str, ToolCall, dict[str, Any]]]
 ```
 
 为输入流式输出响应片段。
@@ -69,8 +69,8 @@ def generate_stream(self, input: Union[str, AgentInput]) -> Iterable[Union[str, 
 
 ##### Yields
 
-- `str | ToolCall`
-  工具调用以及文本片段。默认实现会委托给 ``generate()``，并以流式形式产出其结果。
+- `str | ToolCall | dict[str, Any]`
+  先产出工具调用和工具结果负载，再产出文本片段。默认实现会委托给 ``generate()``，并以流式形式产出其结果。
 
 #### async_generate
 
@@ -97,7 +97,7 @@ async def async_generate(self, input: Union[str, AgentInput]) -> Union[str, tupl
 _定义于 `xtalk.llm_agent.interfaces`。_
 
 ```python
-async def async_generate_stream(self, input: Union[str, AgentInput]) -> AsyncIterator[Union[str, ToolCall]]
+async def async_generate_stream(self, input: Union[str, AgentInput]) -> AsyncIterator[Union[str, ToolCall, dict[str, Any]]]
 ```
 
 异步流式输出 Agent 结果。
@@ -109,7 +109,7 @@ async def async_generate_stream(self, input: Union[str, AgentInput]) -> AsyncIte
 
 ##### Yields
 
-- `str | ToolCall`
+- `str | ToolCall | dict[str, Any]`
   来自 ``generate_stream()`` 的流式输出。
 
 #### clone
@@ -127,20 +127,20 @@ def clone(self) -> 'Agent'
 - `Agent`
   适用于会话的 Agent 实例。
 
-#### get_llm
+#### restore_history
 
 _定义于 `xtalk.llm_agent.interfaces`。_
 
 ```python
-def get_llm(self) -> BaseChatModel | None
+def restore_history(self, messages: list[dict[str, Any]]) -> None
 ```
 
-当 Agent 暴露聊天模型时，返回其底层聊天模型。
+将持久化的对话消息恢复到 Agent 状态中。
 
-##### Returns
+##### Parameters
 
-- `BaseChatModel | None`
-  底层聊天模型；如果没有则为 ``None``。
+- `messages` (`list[dict[str, Any]]`)
+  按会话历史顺序排列的持久化聊天消息。
 
 #### get_chat_history
 
@@ -261,7 +261,7 @@ def recognize(self, audio: bytes) -> str
 _定义于 `xtalk.speech.interfaces`。_
 
 ```python
-def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str
+def recognize_stream(self, audio: bytes, *, is_final: bool = False, chat_history: str | None = None) -> str
 ```
 
 以流式模式增量识别音频。
@@ -272,6 +272,8 @@ def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str
   增量 PCM 16-bit 单声道音频字节。
 - `is_final` (`bool, optional`)
   调用方是否因为用户停顿或轮次结束而强制进行最终解码。
+- `chat_history` (`str | None, optional`)
+  当前会话的序列化聊天历史；在不可用时不包含进行中的轮次。
 
 ##### Returns
 
@@ -343,7 +345,7 @@ async def async_recognize(self, audio: bytes) -> str
 _定义于 `xtalk.speech.interfaces`。_
 
 ```python
-async def async_recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str
+async def async_recognize_stream(self, audio: bytes, *, is_final: bool = False, chat_history: str | None = None) -> str
 ```
 
 异步识别增量音频输入。
@@ -354,6 +356,8 @@ async def async_recognize_stream(self, audio: bytes, *, is_final: bool = False) 
   增量 PCM 16-bit 单声道音频字节。
 - `is_final` (`bool, optional`)
   该分块是否应触发最终解码。
+- `chat_history` (`str | None, optional`)
+  当前会话的序列化聊天历史；在不可用时不包含进行中的轮次。
 
 ##### Returns
 

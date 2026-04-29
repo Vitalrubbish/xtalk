@@ -47,22 +47,22 @@ Send a JSON payload to the frontend.
 - `message` (`dict`)
   JSON-serializable payload to send over the WebSocket.
 
-#### send_session_info
+#### send_session_attached
 
 _Defined in `xtalk.serving.modules.output_gateway`._
 
 ```python
-async def send_session_info(self) -> None
+async def send_session_attached(self) -> None
 ```
 
-Send the session identifier to the frontend.
+Send the attached session identifier to the frontend.
 
 ## ASRManager
 
 _Defined in `xtalk.serving.modules.asr_manager`._
 
 ```python
-class ASRManager(Manager)
+class ASRManager(Manager, TurnStateRestorable)
 ```
 
 ### Methods
@@ -81,6 +81,14 @@ _Defined in `xtalk.serving.modules.asr_manager`._
 
 ```python
 async def shutdown(self)
+```
+
+#### restore_turn_state
+
+_Defined in `xtalk.serving.modules.asr_manager`._
+
+```python
+def restore_turn_state(self, *, last_turn_id: int) -> None
 ```
 
 ## EmbeddingsManager
@@ -187,7 +195,7 @@ async def shutdown(self)
 _Defined in `xtalk.serving.modules.llm_agent_manager`._
 
 ```python
-class LLMAgentManager(Manager)
+class LLMAgentManager(Manager, TurnStateRestorable)
 ```
 
 Drive LLM agent generation and coordinate TTS streaming.
@@ -208,6 +216,14 @@ _Defined in `xtalk.serving.modules.llm_agent_manager`._
 
 ```python
 async def shutdown(self) -> None
+```
+
+#### restore_turn_state
+
+_Defined in `xtalk.serving.modules.llm_agent_manager`._
+
+```python
+def restore_turn_state(self, *, last_turn_id: int) -> None
 ```
 
 ## SpeakerManager
@@ -302,6 +318,8 @@ Event-driven TTS manager handling streaming synthesis and control.
 ### Class Fields
 
 - `SENTENCE_DELIMITERS` = `{'。', '，', '！', '!', '？', '?', '.', ',', '：', ':'}`
+- `TTS_CHUNK_MS` = `100`
+- `MAX_OUTSTANDING_MS` = `300`
 
 ### Methods
 

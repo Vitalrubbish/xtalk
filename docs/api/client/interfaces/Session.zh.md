@@ -6,9 +6,9 @@
 
 # 接口: Session
 
-定义于: [core.ts:42](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L42)
+定义于: [session/types.ts:90](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L90)
 
-由 [createSession](../functions/createSession.zh.md) 返回的公开 API。
+前端入口暴露的公开会话控制器。
 
 ## 属性
 
@@ -16,7 +16,7 @@
 
 > **muted**: `boolean`
 
-定义于: [core.ts:152](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L152)
+定义于: [session/types.ts:130](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L130)
 
 麦克风采集链路当前是否静音。
 
@@ -26,13 +26,17 @@
 
 > `readonly` **state**: `object`
 
-定义于: [core.ts:94](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L94)
+定义于: [session/types.ts:108](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L108)
 
-最新的会话状态快照。
+当前的会话状态快照。
 
 #### caption
 
 > **caption**: `string`
+
+#### connectionState
+
+> **connectionState**: `"connected"` \| `"reconnecting"` \| `"disconnected"`
 
 #### latency
 
@@ -60,7 +64,7 @@
 
 #### messages
 
-> **messages**: `Message`[]
+> **messages**: `ConversationMessage`[]
 
 #### retrieval
 
@@ -78,15 +82,19 @@
 
 > **thought**: `string`
 
+#### user
+
+> **user**: `ConversationUser` \| `null`
+
 ## 方法
 
 ### changeVoice()
 
 > **changeVoice**(`voiceName`): `Promise`&lt;`void`&gt;
 
-定义于: [core.ts:167](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L167)
+定义于: [session/types.ts:136](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L136)
 
-请求服务端切换到另一种语音。
+请求为后续助手语音合成切换语音。
 
 #### 参数
 
@@ -94,23 +102,11 @@
 
 `string`
 
-要激活的服务端语音标识符。
+目标语音标识符。
 
 #### 返回
 
 `Promise`&lt;`void`&gt;
-
-请求发出后解析的 Promise。
-
-#### 备注
-
-提供的语音名称必须与当前连接服务端支持的语音一致。
-
-#### 示例
-
-```ts
-await session.changeVoice("alloy");
-```
 
 ***
 
@@ -118,25 +114,27 @@ await session.changeVoice("alloy");
 
 > **close**(): `Promise`&lt;`void`&gt;
 
-定义于: [core.ts:72](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L72)
+定义于: [session/types.ts:98](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L98)
 
-关闭音频会话和 websocket 连接。
+关闭当前运行时连接和音频资源。
 
 #### 返回
 
 `Promise`&lt;`void`&gt;
 
-会话完全关闭后解析的 Promise。
+***
 
-#### 备注
+### getSessions()
 
-关闭后，当前会话实例应视为不再可用。
+> **getSessions**(): `Promise`&lt;`SessionSummary`[]&gt;
 
-#### 示例
+定义于: [session/types.ts:147](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L147)
 
-```ts
-await session.close();
-```
+获取当前用户可用的持久化会话。
+
+#### 返回
+
+`Promise`&lt;`SessionSummary`[]&gt;
 
 ***
 
@@ -144,35 +142,21 @@ await session.close();
 
 > **onFullAudioChunk**(`callback`): `void`
 
-定义于: [core.ts:148](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L148)
+定义于: [session/types.ts:126](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L126)
 
-订阅播放拼装完成后的合并助手音频块。
+注册一个用于接收合并后的全双工 PCM 音频块的回调。
 
 #### 参数
 
 ##### callback
 
-(`pcmChunkInt16`, `sampleRate`) => `void`
+`AudioChunkCallback`
 
-接收每个完整音频块及其采样率。
+完整音频监听器。
 
 #### 返回
 
 `void`
-
-无返回值。
-
-#### 备注
-
-该回调会收到由会话层输出的重建后的完整音频块。
-
-#### 示例
-
-```ts
-session.onFullAudioChunk((chunk, sampleRate) => {
-  console.log(chunk.byteLength, sampleRate);
-});
-```
 
 ***
 
@@ -180,35 +164,21 @@ session.onFullAudioChunk((chunk, sampleRate) => {
 
 > **onInputAudioChunk**(`callback`): `void`
 
-定义于: [core.ts:112](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L112)
+定义于: [session/types.ts:114](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L114)
 
-订阅发送到服务端之前的麦克风 PCM 帧。
+注册一个用于接收麦克风输入 PCM 音频块的回调。
 
 #### 参数
 
 ##### callback
 
-(`pcmChunkInt16`, `sampleRate`) => `void`
+`AudioChunkCallback`
 
-接收每个外发音频块及其采样率。
+输入音频监听器。
 
 #### 返回
 
 `void`
-
-无返回值。
-
-#### 备注
-
-可用于检查或复制从本地输入设备采集的外发音频。
-
-#### 示例
-
-```ts
-session.onInputAudioChunk((chunk, sampleRate) => {
-  console.log(chunk.byteLength, sampleRate);
-});
-```
 
 ***
 
@@ -216,35 +186,21 @@ session.onInputAudioChunk((chunk, sampleRate) => {
 
 > **onOutputAudioChunk**(`callback`): `void`
 
-定义于: [core.ts:130](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L130)
+定义于: [session/types.ts:120](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L120)
 
-订阅播放前的合成 PCM 帧。
+注册一个用于接收扬声器输出 PCM 音频块的回调。
 
 #### 参数
 
 ##### callback
 
-(`pcmChunkInt16`, `sampleRate`) => `void`
+`AudioChunkCallback`
 
-接收每个入站音频块及其采样率。
+输出音频监听器。
 
 #### 返回
 
 `void`
-
-无返回值。
-
-#### 备注
-
-可用于在本地播放前检查服务端返回的音频。
-
-#### 示例
-
-```ts
-session.onOutputAudioChunk((chunk, sampleRate) => {
-  console.log(chunk.byteLength, sampleRate);
-});
-```
 
 ***
 
@@ -252,9 +208,9 @@ session.onOutputAudioChunk((chunk, sampleRate) => {
 
 > **onStateChange**(`callback`): `void`
 
-定义于: [core.ts:90](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L90)
+定义于: [session/types.ts:104](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L104)
 
-订阅会话状态更新。
+注册一个在会话状态变化时触发的回调。
 
 #### 参数
 
@@ -262,25 +218,11 @@ session.onOutputAudioChunk((chunk, sampleRate) => {
 
 (`state`) => `void`
 
-每当状态变化时接收完整的会话状态。
+状态变化监听器。
 
 #### 返回
 
 `void`
-
-无返回值。
-
-#### 备注
-
-每当内部会话状态发生变化时，都会调用该回调。
-
-#### 示例
-
-```ts
-session.onStateChange((state) => {
-  console.log(state.streamState, state.messages);
-});
-```
 
 ***
 
@@ -288,26 +230,35 @@ session.onStateChange((state) => {
 
 > **open**(): `Promise`&lt;`void`&gt;
 
-定义于: [core.ts:58](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L58)
+定义于: [session/types.ts:94](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L94)
 
-打开 websocket 连接，并准备音频输入/输出资源。
+打开会话运行时，并在需要时执行鉴权。
 
 #### 返回
 
 `Promise`&lt;`void`&gt;
 
-本地音频会话准备完成后解析的 Promise。
+***
 
-#### 备注
+### switchSession()
 
-在读取实时状态更新、切换静音、切换语音或通过会话上传文件之前，应先调用此方法。
+> **switchSession**(`sessionId`): `Promise`&lt;`void`&gt;
 
-#### 示例
+定义于: [session/types.ts:153](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L153)
 
-```ts
-const session = createSession("ws://localhost:8000/ws");
-await session.open();
-```
+将当前会话切换到一个已持久化会话，或启动一个新会话。
+
+#### 参数
+
+##### sessionId
+
+`string` \| `null`
+
+目标会话标识符；传入 `null` 时启动新会话。
+
+#### 返回
+
+`Promise`&lt;`void`&gt;
 
 ***
 
@@ -315,9 +266,9 @@ await session.open();
 
 > **uploadFile**(`file`, `endpoint?`): `Promise`&lt;`void`&gt;
 
-定义于: [core.ts:184](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L184)
+定义于: [session/types.ts:143](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L143)
 
-上传供会话使用的文件。
+将文件上传到当前会话上下文中。
 
 #### 参数
 
@@ -331,21 +282,8 @@ await session.open();
 
 `string` \| `URL`
 
-上传端点，默认为 `./api/upload`。
+可选的上传端点覆盖值。
 
 #### 返回
 
 `Promise`&lt;`void`&gt;
-
-上传动作发出后解析的 Promise。
-
-#### 备注
-
-该方法会将文件和端点转发给服务端上传逻辑。
-
-#### 示例
-
-```ts
-const file = new Blob(["hello"], { type: "text/plain" });
-await session.uploadFile(file);
-```

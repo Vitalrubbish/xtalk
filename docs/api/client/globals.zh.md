@@ -1,4 +1,4 @@
-[**xtalk-client**](globals.zh.md)
+**xtalk-client**
 
 ***
 

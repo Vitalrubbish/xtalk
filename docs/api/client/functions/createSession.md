@@ -8,10 +8,12 @@
 
 > **createSession**(`websocketURL`, `config?`): [`Session`](../interfaces/Session.md)
 
-Defined in: [core.ts:221](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L221)
+Defined in: [session/create.ts:31](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/create.ts#L31)
 
-Creates a browser session that streams audio to an X-Talk server and exposes
-session lifecycle, state, and audio event hooks.
+Creates a session client bound to the provided websocket endpoint.
+
+The returned session coordinates authentication, runtime audio streaming,
+message state synchronization, and persisted conversation restoration.
 
 ## Parameters
 
@@ -19,44 +21,16 @@ session lifecycle, state, and audio event hooks.
 
 `string` \| `URL`
 
-The websocket endpoint used to connect to the X-Talk server.
+Websocket endpoint used to establish the realtime session.
 
 ### config?
 
 [`SessionConfig`](../interfaces/SessionConfig.md) = `{}`
 
-Optional audio session overrides for input and output handling.
+Optional session configuration overrides.
 
 ## Returns
 
 [`Session`](../interfaces/Session.md)
 
-A session controller for managing the connection and subscribing to client events.
-
-## Remarks
-
-`createSession` prepares the client-side wiring between websocket transport,
-microphone capture, audio playback, and conversation state management.
-Input audio defaults to `16000` Hz and output audio defaults to `48000` Hz
-unless overridden through [SessionConfig](../interfaces/SessionConfig.md).
-
-Call [Session.open](../interfaces/Session.md#open) before interacting with the session. Once opened,
-you can observe state changes, inspect the latest state snapshot, toggle
-microphone muting, switch voices, or upload files.
-
-## Example
-
-```ts
-import { createSession } from "xtalk-client";
-
-const session = createSession("ws://localhost:8000/ws", {
-  inputConfig: { sampleRate: 16000 },
-  outputConfig: { sampleRate: 48000 },
-});
-
-session.onStateChange((state) => {
-  console.log(state.streamState, state.messages);
-});
-
-await session.open();
-```
+A session controller for opening, closing, and interacting with X-Talk.

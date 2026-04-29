@@ -3,6 +3,7 @@
 
 - [`xtalk`](xtalk/index.md)
 - [`xtalk.events`](xtalk/events.md)
+- [`xtalk.llm_agent`](xtalk/llm_agent.md)
 - [`xtalk.log_utils`](xtalk/log_utils.md)
 - [`xtalk.model_types`](xtalk/model_types.md)
 - [`xtalk.serving.module_types`](xtalk/serving/module_types.md)

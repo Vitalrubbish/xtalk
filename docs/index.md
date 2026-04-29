@@ -2,4 +2,4 @@
 
 [Demo Link](https://xtalk.sjtuxlance.com/)
 
-[Github](https://github.com/xcczach/xtalk)
+[Github](https://github.com/xcc-zach/xtalk)

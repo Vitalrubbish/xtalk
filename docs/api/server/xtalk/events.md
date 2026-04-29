@@ -104,7 +104,6 @@ class AudioFrameReceived(BaseEvent)
 - `TYPE: ClassVar[str]` = `'audio.frame_received'`
 - `audio_data: bytes`
 - `sample_rate: int` = `16000`
-- `is_final: bool` = `False`
 
 ## EnhancedAudioFrameReceived
 
@@ -374,6 +373,7 @@ class TTSChunkGenerated(BaseEvent)
 
 - `TYPE: ClassVar[str]` = `'tts.chunk_generated'`
 - `audio_chunk: bytes` = `b''`
+- `sample_rate: int` = `48000`
 
 ## TTSChunkPlayed
 
@@ -386,9 +386,8 @@ class TTSChunkPlayed(BaseEvent)
 
 Frontend confirmed playback completion for a TTS audio chunk.
 
-InputGateway publishes this after receiving tts_chunk_played.
-RecordingManager subscribes and writes the chunk into right-channel buffer.
-Chunks are processed in FIFO order (no index needed).
+InputGateway publishes this after receiving tts_chunk_played so downstream
+listeners can observe frontend playback completion in FIFO order.
 
 ### Class Fields
 
@@ -715,7 +714,6 @@ Request to append text into ongoing TTS stream (sim-trans).
 
 - `TYPE: ClassVar[str]` = `'turn.tts_text_append_requested'`
 - `text: str` = `''`
-- `reason: str` = `'asr_partial'`
 
 ## SpeakerRecognized
 
@@ -818,7 +816,6 @@ Turn detector determined ai should stop speaking.
 ### Class Fields
 
 - `TYPE: ClassVar[str]` = `'turn_detector.stop_speaking'`
-- `semantic: str` = `''`
 
 ## TurnDetectorStartGeneration
 
@@ -834,4 +831,3 @@ Turn detector determined ai should start generation.
 ### Class Fields
 
 - `TYPE: ClassVar[str]` = `'turn_detector.start_generation'`
-- `semantic: str` = `''`

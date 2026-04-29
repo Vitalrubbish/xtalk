@@ -72,6 +72,11 @@ let previousSessionId = null;
 let previousMessageCount = 0;
 let isSessionListLoading = false;
 let refreshSessionsTimer = null;
+let timelineSessionId = null;
+let toolCallCacheKey = '';
+let chatTimeline = [];
+let chatTimelineIndexByKey = new Map();
+let isStarting = false;
 
 const FULL_AUDIO_CHANNELS = 2;
 const FULL_AUDIO_BYTES_PER_SAMPLE = 2;
@@ -92,12 +97,20 @@ const STATE_COLORS = {
 };
 
 function setConnectionButtons(isConnected) {
-    $btnStart.disabled = isConnected;
-    $btnStop.disabled = !isConnected;
+    const isReconnecting = session.state.connectionState === 'reconnecting';
+    const startDisabled = isStarting || isConnected || isReconnecting;
+    const stopDisabled = isStarting || (!isConnected && !isReconnecting);
+
+    $btnStart.disabled = startDisabled;
+    $btnStart.textContent = isStarting ? 'Starting...' : 'Start';
+    $btnStart.classList.toggle('is-loading', isStarting);
+
+    $btnStop.disabled = stopDisabled;
 }
 
 function resetRealtimeUI() {
     stopVisualization();
+    isStarting = false;
     setConnectionButtons(false);
 }
 
@@ -198,6 +211,117 @@ function ensureAudioContext() {
         audioCtx = new AC();
     }
     return audioCtx;
+}
+
+function resetChatTimeline(sessionId) {
+    timelineSessionId = sessionId;
+    toolCallCacheKey = '';
+    chatTimeline = [];
+    chatTimelineIndexByKey = new Map();
+}
+
+function getConversationMessageKey(message, index) {
+    if (message.role === 'info') {
+        return `info:${index}`;
+    }
+    if (message.turnId != null) {
+        return `${message.role}:${message.turnId}`;
+    }
+    return `${message.role}:index:${index}`;
+}
+
+function syncConversationMessages(messages) {
+    messages.forEach((message, index) => {
+        const key = getConversationMessageKey(message, index);
+        const timelineIndex = chatTimelineIndexByKey.get(key);
+        if (timelineIndex != null) {
+            chatTimeline[timelineIndex] = {
+                ...chatTimeline[timelineIndex],
+                role: message.role,
+                content: message.content,
+                turnId: message.turnId,
+            };
+            return;
+        }
+
+        chatTimelineIndexByKey.set(key, chatTimeline.length);
+        chatTimeline.push({
+            kind: 'conversation',
+            key,
+            role: message.role,
+            content: message.content,
+            turnId: message.turnId,
+        });
+    });
+}
+
+function normalizeToolCall(toolCall) {
+    return {
+        name: typeof toolCall?.name === 'string' ? toolCall.name : '',
+        args: toolCall && typeof toolCall.args === 'object' && toolCall.args !== null
+            ? toolCall.args
+            : {},
+    };
+}
+
+function formatToolCallArgs(args) {
+    try {
+        return JSON.stringify(args ?? {}, null, 2);
+    } catch {
+        return String(args ?? '{}');
+    }
+}
+
+function buildToolCallCacheKey(toolCall) {
+    if (!toolCall.name) {
+        return '';
+    }
+    return `${toolCall.name}\n${formatToolCallArgs(toolCall.args)}`;
+}
+
+function appendToolCallMessage(toolCall) {
+    const argsText = formatToolCallArgs(toolCall.args);
+    chatTimeline.push({
+        kind: 'tool',
+        key: `tool:${chatTimeline.length}:${toolCall.name}`,
+        name: toolCall.name,
+        argsText,
+    });
+}
+
+function appendLocalInfoMessage(content) {
+    chatTimeline.push({
+        kind: 'conversation',
+        key: `local-info:${chatTimeline.length}`,
+        role: 'info',
+        content,
+    });
+}
+
+function renderChatTimeline() {
+    $messages.innerHTML = '';
+    for (const entry of chatTimeline) {
+        const el = document.createElement('div');
+        if (entry.kind === 'tool') {
+            el.className = 'message message-tool';
+
+            const label = document.createElement('div');
+            label.className = 'message-tool-label';
+            label.textContent = `Tool Call: ${entry.name}`;
+
+            const args = document.createElement('pre');
+            args.className = 'message-tool-args';
+            args.textContent = entry.argsText;
+
+            el.appendChild(label);
+            el.appendChild(args);
+        } else {
+            el.className = 'message message-' + entry.role;
+            el.textContent = entry.content;
+        }
+        $messages.appendChild(el);
+    }
+    $messages.scrollTop = $messages.scrollHeight;
 }
 
 function ensureInputAnalyser() {
@@ -470,16 +594,20 @@ session.onStateChange((state) => {
     $streamState.textContent = state.streamState;
     $sessionId.textContent = state.sessionId || '--';
     currentStreamState = state.streamState;
+    setConnectionButtons(state.connectionState === 'connected');
     renderSessions();
 
-    $messages.innerHTML = '';
-    for (const msg of state.messages) {
-        const el = document.createElement('div');
-        el.className = 'message message-' + msg.role;
-        el.textContent = msg.content;
-        $messages.appendChild(el);
+    if (state.sessionId !== timelineSessionId) {
+        resetChatTimeline(state.sessionId);
     }
-    $messages.scrollTop = $messages.scrollHeight;
+    syncConversationMessages(state.messages);
+    const nextToolCall = normalizeToolCall(state.tool_call);
+    const nextToolCallKey = buildToolCallCacheKey(nextToolCall);
+    if (nextToolCallKey && nextToolCallKey !== toolCallCacheKey) {
+        appendToolCallMessage(nextToolCall);
+    }
+    toolCallCacheKey = nextToolCallKey;
+    renderChatTimeline();
 
     $thoughtContent.textContent = state.thought || '';
     $captionContent.textContent = state.caption || '';
@@ -531,6 +659,12 @@ session.onFullAudioChunk((pcmChunkInt16, sampleRate) => {
 });
 
 $btnStart.addEventListener('click', async () => {
+    if (isStarting) {
+        return;
+    }
+
+    isStarting = true;
+    setConnectionButtons(false);
     try {
         resetRecentAudioBuffer();
         await session.open();
@@ -539,6 +673,9 @@ $btnStart.addEventListener('click', async () => {
         await refreshSessions();
     } catch (e) {
         alert('Failed to start: ' + (e?.message || e));
+    } finally {
+        isStarting = false;
+        setConnectionButtons(session.state.connectionState === 'connected');
     }
 });
 
@@ -584,9 +721,17 @@ $btnRefreshSessions.addEventListener('click', async () => {
 
 $btnNewSession.addEventListener('click', async () => {
     try {
-        resetRecentAudioBuffer();
+        const hadActiveSession = session.state.connectionState === 'connected'
+            || session.state.connectionState === 'reconnecting';
+        if (hadActiveSession) {
+            await session.close();
+        }
         resetRealtimeUI();
         await session.switchSession(null);
+        if (hadActiveSession) {
+            appendLocalInfoMessage('Previous session stopped.');
+            renderChatTimeline();
+        }
         renderSessions();
     } catch (error) {
         alert('Failed to create draft session: ' + (error?.message || error));

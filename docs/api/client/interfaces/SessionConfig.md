@@ -6,9 +6,9 @@
 
 # Interface: SessionConfig
 
-Defined in: [core.ts:22](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L22)
+Defined in: [session/types.ts:72](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L72)
 
-Configures how a session captures microphone input and plays synthesized output.
+Configuration overrides used when creating a session.
 
 ## Properties
 
@@ -16,13 +16,9 @@ Configures how a session captures microphone input and plays synthesized output.
 
 > `optional` **inputConfig?**: `Partial`&lt;`InputAudioSessionConfig`&gt;
 
-Defined in: [core.ts:29](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L29)
+Defined in: [session/types.ts:76](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L76)
 
-Overrides for the input audio session.
-
-#### Remarks
-
-The default input sample rate is `16000`.
+Input audio session overrides such as capture sample rate.
 
 ***
 
@@ -30,10 +26,16 @@ The default input sample rate is `16000`.
 
 > `optional` **outputConfig?**: `Partial`&lt;`OutputAudioSessionConfig`&gt;
 
-Defined in: [core.ts:36](https://github.com/xcc-zach/xtalk/blob/1ab4d6236f175a0f8859ae9c1357c84b771261e6/frontend/src/core.ts#L36)
+Defined in: [session/types.ts:80](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L80)
 
-Overrides for the output audio session.
+Output audio session overrides such as playback sample rate.
 
-#### Remarks
+***
 
-The default output sample rate is `48000`.
+### serviceURLs?
+
+> `optional` **serviceURLs?**: `Partial`&lt;\{ `login`: `ResolvableURL`; `sessionDetail`: `ResolvableURL` \| ((`sessionId`) => `ResolvableURL`); `sessions`: `ResolvableURL`; `upload`: `ResolvableURL`; \}&gt;
+
+Defined in: [session/types.ts:84](https://github.com/xcc-zach/xtalk/blob/d18912ac9c64b26c4423d8c46cb97496eb709649/frontend/src/session/types.ts#L84)
+
+Optional overrides for auxiliary HTTP service endpoints.

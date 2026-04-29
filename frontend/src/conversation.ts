@@ -27,6 +27,10 @@ function defaultConversation(): {
     thought: string;
     caption: string;
     retrieval: string;
+    tool_call: {
+        name: string,
+        args: Record<string, any>
+    }
 } {
     return {
         connectionState: "disconnected",
@@ -38,6 +42,10 @@ function defaultConversation(): {
         thought: "",
         caption: "",
         retrieval: "",
+        tool_call: {
+            name: "",
+            args: {}
+        }
     };
 }
 
@@ -90,6 +98,10 @@ class Conversation {
         this._state.thought = "";
         this._state.caption = "";
         this._state.retrieval = "";
+        this._state.tool_call = {
+            name: "",
+            args: {}
+        };
         this._state.latency = {};
         this.notifyStateChange();
     }

@@ -9,6 +9,12 @@ const metaMap: ActionToFunctionMap = {
     "retrieval_updated": async (data, websocket, conversation, outputAudioSession) => {
         conversation.state.retrieval = data.text;
     },
+    "tool_called": async (data, websocket, conversation, outputAudioSession) => {
+        conversation.state.tool_call = {
+            name: data.name,
+            args: data.args || {}
+        };
+    }
 };
 
 export default metaMap;

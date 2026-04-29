@@ -28,7 +28,7 @@ from ...pipelines.context import PipelineContext
 from ...llm_agent import Agent
 
 
-class LLMAgentManager(Manager, TurnStateRestorable):
+class LLMAgentGenerationManager(Manager, TurnStateRestorable):
     """Drive LLM agent generation and coordinate TTS streaming."""
 
     def __init__(

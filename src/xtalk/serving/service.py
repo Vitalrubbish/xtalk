@@ -12,7 +12,7 @@ from .modules.asr_manager import ASRManager
 from .modules.tts_manager import TTSManager
 from .modules.output_gateway import OutputGateway
 from .modules.input_gateway import InputGateway
-from .modules.llm_agent_manager import LLMAgentManager
+from .modules.llm_agent_generation_manager import LLMAgentGenerationManager
 from .modules.captioner_manager import CaptionerManager
 from .modules.retrieval_manager import RetrievalManager
 from .modules.turn_taking_manager import TurnTakingManager
@@ -356,7 +356,9 @@ class Service:
     def _should_enable_persistence_manager(self) -> bool:
         persistence_store = self.service_config.get("persistence_store")
         user_id = self.service_config.get("user_id")
-        return persistence_store is not None and isinstance(user_id, str) and bool(user_id)
+        return (
+            persistence_store is not None and isinstance(user_id, str) and bool(user_id)
+        )
 
     @staticmethod
     def _clone_event_overrides(
@@ -387,7 +389,7 @@ class DefaultService(Service):
 
     MANAGER_CLASSES: list[Type[Manager]] = [
         ASRManager,
-        LLMAgentManager,
+        LLMAgentGenerationManager,
         TTSManager,
         CaptionerManager,
         ThoughtManager,

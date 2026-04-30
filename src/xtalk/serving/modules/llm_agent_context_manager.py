@@ -14,6 +14,7 @@ from ..events import (
     BaseEvent,
     CaptionUpdated,
     EmbeddingStatusUpdated,
+    LLMAgentLoop,
     SpeakerRecognized,
     ThoughtUpdated,
     TurnLLMAgentStartRequested,
@@ -77,6 +78,12 @@ class LLMAgentContextManager(Manager):
         """Forward ``EmbeddingStatusUpdated`` into the agent."""
 
         await self._accept_event_context(event, context_type="embedding")
+
+    @Manager.event_handler(LLMAgentLoop, priority=20)
+    async def _handle_llm_agent_loop(self, event: LLMAgentLoop) -> None:
+        """Forward ``LLMAgentLoop`` into the agent."""
+
+        await self._accept_event_context(event, context_type="loop")
 
     async def _accept_event_context(
         self,

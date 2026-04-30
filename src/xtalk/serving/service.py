@@ -26,7 +26,7 @@ from .modules.embeddings_manager import EmbeddingsManager
 from .modules.recording_manager import RecordingManager
 from .modules.turn_detector_manager import TurnDetectorManager
 from .modules.persistence_manager import PersistenceManager
-from .events import BaseEvent
+from .events import BaseEvent, LLMAgentLoop
 from ..pipelines import Pipeline
 from .interfaces import EventListenerMixin, EventOverrides, TurnStateRestorable
 
@@ -285,6 +285,10 @@ class Service:
                 "This Service instance is a prototype and cannot handle messages."
             )
         await self.input_gateway.handle_connection(already_accepted=already_accepted)
+        await self.event_bus.publish(
+            LLMAgentLoop(session_id=self.session_id),
+            wait_for_completion=True,
+        )
         await self.input_gateway.handle_message_loop()
 
     def restore_conversation(self, *, messages: list[dict[str, Any]]) -> None:

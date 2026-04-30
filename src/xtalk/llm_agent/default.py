@@ -11,7 +11,6 @@ from langchain_core.tools import BaseTool
 
 from ..log_utils import logger
 from .utils.runtime import (
-    AgentRequest,
     AgentSession,
     ContextAdapter,
     OutputPolicy,
@@ -53,7 +52,7 @@ class DefaultContextAdapter(ContextAdapter):
     def adapt(
         self,
         session: AgentSession,
-        request: AgentRequest,
+        request: AgentInput,
     ) -> TurnContext:
         """Adapt the current session-scoped agent context.
 
@@ -61,7 +60,7 @@ class DefaultContextAdapter(ContextAdapter):
         ----------
         session : AgentSession
             Mutable runtime session state.
-        request : AgentRequest
+        request : AgentInput
             Current turn input. Unused by the default adapter.
 
         Returns
@@ -248,14 +247,14 @@ Caption and thought:
 
     def build_user_message(
         self,
-        request: AgentRequest,
+        request: AgentInput,
         turn_context: TurnContext,
     ) -> str:
         """Build the user message content.
 
         Parameters
         ----------
-        request : AgentRequest
+        request : AgentInput
             Turn input.
         turn_context : TurnContext
             Structured turn context.
@@ -266,9 +265,10 @@ Caption and thought:
             User message content passed to the model.
         """
 
+        content = str(request.get("content", ""))
         if turn_context.speaker_id:
-            return f"The current speaker is {turn_context.speaker_id}, saying: {request.content}"
-        return request.content
+            return f"The current speaker is {turn_context.speaker_id}, saying: {content}"
+        return content
 
 
 class TTSOutputPolicy(OutputPolicy):

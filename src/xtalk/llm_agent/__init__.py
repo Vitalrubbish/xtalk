@@ -9,7 +9,6 @@ from .dummy import DummyAgent
 from .default import DefaultAgent
 from .utils.template import MutableToolProvider, TemplateAgent
 from .utils.runtime import (
-    AgentRequest,
     AgentRuntime,
     AgentSession,
     ContextAdapter,
@@ -35,7 +34,6 @@ __all__ = [
     "DummyAgent",
     "DefaultAgent",
     "TemplateAgent",
-    "AgentRequest",
     "AgentRuntime",
     "AgentSession",
     "ContextAdapter",

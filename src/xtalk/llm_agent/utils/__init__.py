@@ -3,7 +3,6 @@
 from .interfaces import Agent, AgentContext, AgentInput
 from ..tools.utils import ToolCallResultArgs, ToolCallResultPayload
 from .runtime import (
-    AgentRequest,
     AgentRuntime,
     AgentSession,
     ContextAdapter,
@@ -23,7 +22,6 @@ __all__ = [
     "Agent",
     "AgentContext",
     "AgentInput",
-    "AgentRequest",
     "AgentRuntime",
     "AgentSession",
     "ContextAdapter",

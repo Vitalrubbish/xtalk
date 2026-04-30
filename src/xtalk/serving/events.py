@@ -293,6 +293,13 @@ class EmbeddingStatusUpdated(BaseEvent):
 
 
 @dataclass
+class LLMAgentLoop(BaseEvent):
+    """Request one agent-context accept loop iteration for the session."""
+
+    TYPE: ClassVar[str] = "llm.agent_loop"
+
+
+@dataclass
 class TextForEmbeddingReady(BaseEvent):
     TYPE: ClassVar[str] = "embeddings.text_ready"
     text: str = ""

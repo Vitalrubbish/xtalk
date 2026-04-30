@@ -11,7 +11,7 @@ from langchain.tools import tool
 from langchain_core.tools import BaseTool
 
 from xtalk.llm_agent import (
-    AgentRequest,
+    AgentInput,
     AgentSession,
     ContextAdapter,
     MutableToolProvider,
@@ -21,6 +21,7 @@ from xtalk.llm_agent import (
     TemplateAgent,
     TurnContext,
 )
+from xtalk.llm_agent.runtime import get_context_data
 
 
 MENTAL_CONSULTANT_PROMPT = """
@@ -271,15 +272,21 @@ def build_mental_questionnaire_tool() -> BaseTool:
 
 
 class MentalConsultantContextAdapter(ContextAdapter):
-    """Adapt pipeline context for the mental consultant scenario."""
+    """Adapt accepted agent context updates for the mental consultant scenario."""
 
-    def adapt(self, context) -> TurnContext:
-        """Convert pipeline context into a stable turn context.
+    def adapt(
+        self,
+        session: AgentSession,
+        request: AgentInput,
+    ) -> TurnContext:
+        """Convert session-scoped context into a stable turn context.
 
         Parameters
         ----------
-        context : dict | None
-            Raw pipeline context snapshot.
+        session : AgentSession
+            Runtime session state containing accepted context updates.
+        request : AgentInput
+            Current turn input. Unused by this adapter.
 
         Returns
         -------
@@ -287,16 +294,14 @@ class MentalConsultantContextAdapter(ContextAdapter):
             Structured context for the runtime.
         """
 
-        context_dict = context or {}
+        del request
+        speaker_context = get_context_data(session, "speaker")
+        caption_context = get_context_data(session, "caption")
+        thought_context = get_context_data(session, "thought")
         return TurnContext(
-            speaker_id=context_dict.get("speaker_id") or None,
-            caption=context_dict.get("caption") or None,
-            thought=context_dict.get("thought") or None,
-            extras={
-                key: value
-                for key, value in context_dict.items()
-                if key not in {"speaker_id", "caption", "thought"}
-            },
+            speaker_id=speaker_context.get("speaker_id") or None,
+            caption=caption_context.get("text") or None,
+            thought=thought_context.get("text") or None,
         )
 
 
@@ -341,14 +346,14 @@ class MentalConsultantPromptBuilder(PromptBuilder):
 
     def build_user_message(
         self,
-        request: AgentRequest,
+        request: AgentInput,
         turn_context: TurnContext,
     ) -> str:
         """Build the user message content.
 
         Parameters
         ----------
-        request : AgentRequest
+        request : AgentInput
             Current turn request.
         turn_context : TurnContext
             Structured turn context.
@@ -360,7 +365,7 @@ class MentalConsultantPromptBuilder(PromptBuilder):
         """
 
         del turn_context
-        return request.content
+        return str(request.get("content", ""))
 
 
 class MentalConsultantOutputPolicy(OutputPolicy):

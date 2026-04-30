@@ -30,7 +30,6 @@ from langchain_openai import ChatOpenAI
 from ...log_utils import logger
 from .interfaces import Agent, AgentContext, AgentInput, AgentStreamItem
 from .runtime import (
-    AgentRequest,
     AgentRuntime,
     TextChunkEvent,
     ToolCallEvent,
@@ -359,8 +358,8 @@ class TemplateAgent(Agent):
                         pass
 
     @staticmethod
-    def _build_request(input: Union[str, AgentInput]) -> AgentRequest:
-        """Normalize legacy agent input into ``AgentRequest``.
+    def _normalize_input(input: Union[str, AgentInput]) -> AgentInput:
+        """Normalize legacy agent input into ``AgentInput``.
 
         Parameters
         ----------
@@ -369,19 +368,17 @@ class TemplateAgent(Agent):
 
         Returns
         -------
-        AgentRequest
-            Structured runtime request.
+        AgentInput
+            Normalized turn-local agent input.
         """
 
         if isinstance(input, dict):
+            normalized: AgentInput = {"content": str(input.get("content", ""))}
             direct_output = input.get("direct_output")
-            return AgentRequest(
-                content=str(input.get("content", "")),
-                direct_output=(
-                    str(direct_output) if direct_output is not None else None
-                ),
-            )
-        return AgentRequest(content=str(input))
+            if direct_output is not None:
+                normalized["direct_output"] = str(direct_output)
+            return normalized
+        return {"content": str(input)}
 
     @staticmethod
     def _to_tool_call(event: ToolCallEvent) -> ToolCall:
@@ -438,7 +435,7 @@ class TemplateAgent(Agent):
             Yields nothing when generation is skipped.
         """
 
-        async for event in self.runtime.generate_stream(self._build_request(input)):
+        async for event in self.runtime.generate_stream(self._normalize_input(input)):
             if isinstance(event, TextChunkEvent):
                 yield event.text
             elif isinstance(event, ToolCallEvent):

@@ -25,23 +25,6 @@ _AGENT_CONTEXTS_KEY = "_agent_runtime_contexts"
 
 
 @dataclass
-class AgentRequest:
-    """Single-turn request passed into the agent runtime.
-
-    Parameters
-    ----------
-    content : str
-        Raw user utterance for the current turn.
-    direct_output : str | None, optional
-        Precomputed assistant text that should be emitted without invoking the
-        chat model.
-    """
-
-    content: str = ""
-    direct_output: str | None = None
-
-
-@dataclass
 class TurnContext:
     """Scenario-facing structured context derived from accepted agent updates.
 
@@ -86,7 +69,7 @@ class ContextAdapter(Protocol):
     def adapt(
         self,
         session: AgentSession,
-        request: AgentRequest,
+        request: AgentInput,
     ) -> TurnContext:
         """Adapt session-scoped agent context for the current turn."""
 
@@ -131,7 +114,7 @@ class PromptBuilder(Protocol):
 
     def build_user_message(
         self,
-        request: AgentRequest,
+        request: AgentInput,
         turn_context: TurnContext,
     ) -> str:
         """Build the user-facing message content passed to the model."""
@@ -160,7 +143,7 @@ class TurnHook(ABC):
 
     async def before_model(
         self,
-        request: AgentRequest,
+        request: AgentInput,
         session: AgentSession,
         turn_context: TurnContext,
     ) -> AsyncIterator["AgentEvent"]:
@@ -262,14 +245,14 @@ class AgentRuntime:
 
     async def generate_stream(
         self,
-        request: AgentRequest,
+        request: AgentInput,
     ) -> AsyncIterator[AgentEvent]:
         """Run one turn and stream typed runtime events.
 
         Parameters
         ----------
-        request : AgentRequest
-            Structured turn input.
+        request : AgentInput
+            Normalized turn input.
 
         Yields
         ------
@@ -280,7 +263,7 @@ class AgentRuntime:
         turn_context = self.scenario.context_adapter.adapt(self.session, request)
         self._set_system_prompt(turn_context)
         direct_output = self.scenario.output_policy.filter_text(
-            str(request.direct_output or "")
+            str(request.get("direct_output") or "")
         )
         if direct_output:
             response_message = AIMessage(content=direct_output)

@@ -28,7 +28,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
 from ...log_utils import logger
-from .interfaces import Agent, AgentInput, AgentStreamItem
+from .interfaces import Agent, AgentContext, AgentInput, AgentStreamItem
 from .runtime import (
     AgentRequest,
     AgentRuntime,
@@ -374,10 +374,12 @@ class TemplateAgent(Agent):
         """
 
         if isinstance(input, dict):
-            context = input.get("context")
+            direct_output = input.get("direct_output")
             return AgentRequest(
                 content=str(input.get("content", "")),
-                context=context if isinstance(context, dict) else None,
+                direct_output=(
+                    str(direct_output) if direct_output is not None else None
+                ),
             )
         return AgentRequest(content=str(input))
 
@@ -447,6 +449,32 @@ class TemplateAgent(Agent):
                     args=event.args,
                     content=event.content,
                 )
+
+    def accept(self, context: AgentContext) -> Iterable[AgentInput]:
+        """Accept an incremental context update for the current session.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Event-derived context update.
+        """
+
+        return self.runtime.accept(context)
+
+    async def async_accept(
+        self,
+        context: AgentContext,
+    ) -> AsyncIterator[AgentInput]:
+        """Asynchronously accept an incremental context update.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Event-derived context update.
+        """
+
+        for agent_input in self.accept(context):
+            yield agent_input
 
     def restore_history(self, messages: list[dict[str, Any]]) -> None:
         """Restore persisted conversation history into the runtime session.

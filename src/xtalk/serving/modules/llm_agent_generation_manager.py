@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
 from typing import Any, Optional
-from langchain_core.messages import ToolCall
 from ...log_utils import logger
 from ..event_bus import EventBus
 from ..events import (
@@ -24,8 +23,7 @@ from ..events import (
 )
 from ..interfaces import Manager, TurnStateRestorable
 from ...pipelines import Pipeline
-from ...pipelines.context import PipelineContext
-from ...llm_agent import Agent
+from ...llm_agent import Agent, AgentInput
 
 
 class LLMAgentGenerationManager(Manager, TurnStateRestorable):
@@ -45,6 +43,7 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
         self.llm_agent = pipeline.get_agent()
 
         self._llm_task: Optional[asyncio.Task] = None
+        self._llm_task_lock = asyncio.Lock()
         self._resume_event = asyncio.Event()
         self._resume_event.set()
 
@@ -78,14 +77,12 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
         self, event: TurnLLMAgentStartRequested
     ) -> None:
         """Start generation for a new turn."""
-        text = event.text
-        context_snapshot = event.context_snapshot
+        agent_input = dict(event.agent_input or {})
 
-        await self._cancel_running_task()
-        self._llm_task = asyncio.create_task(
-            self._generate_response(text, context_snapshot=context_snapshot)
-        )
-        self._turn_id += 1
+        async with self._llm_task_lock:
+            await self._cancel_running_task()
+            self._llm_task = asyncio.create_task(self._generate_response(agent_input))
+            self._turn_id += 1
 
     @Manager.event_handler(TurnLLMAgentResumeRequested, priority=95)
     async def _handle_generation_resume(
@@ -127,7 +124,8 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
     async def _handle_generation_stop(self, event: TurnLLMAgentStopRequested) -> None:
         """Stop the running generation task and flush downstream components."""
         reason = event.reason
-        await self._cancel_running_task()
+        async with self._llm_task_lock:
+            await self._cancel_running_task()
         await self.event_bus.publish(
             TurnTTSStopRequested(
                 session_id=self.session_id,
@@ -149,7 +147,8 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
         self._resume_event.set()
 
     async def _generate_response(
-        self, text: str, context_snapshot: PipelineContext | None = None
+        self,
+        agent_input: AgentInput,
     ) -> None:
         """Invoke the LLM agent and trigger streaming TTS."""
         agent = self.llm_agent
@@ -158,16 +157,8 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
             await self._publish_error("llm_not_configured", "LLM agent missing")
             return
 
-        llm_input = {
-            "content": text,
-            "context": (
-                context_snapshot
-                if context_snapshot is not None
-                else self.pipeline.context
-            ),
-        }
         try:
-            await self._stream_tts(agent, llm_input)
+            await self._stream_tts(agent, agent_input)
         except asyncio.CancelledError:
             return
         except Exception as e:
@@ -175,12 +166,15 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
             await self._publish_error("llm_generation_error", str(e))
             return
 
-    async def _stream_tts(self, agent: Agent, llm_input: dict[str, Any]) -> None:
+    async def _stream_tts(
+        self,
+        agent: Agent,
+        llm_input: AgentInput,
+    ) -> None:
         """Stream agent output to TTS by appending chunks and flushing at the end."""
         text_for_tts_started = False
         first_chunk_generated = False
         accumulated_text = ""
-        tool_call: Optional[ToolCall] = None
         stream = agent.async_generate_stream(llm_input)
         iterator = stream.__aiter__()
 
@@ -203,8 +197,7 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
                     # Handle tool-call payloads emitted mid-stream
                     # Verify it's actually a tool call by checking required fields
                     if "name" in chunk:
-                        tool_call = chunk
-                        await self._publish_tool_call(tool_call)
+                        await self._publish_tool_call(chunk)
                     else:
                         logger.warning(
                             "Received dict chunk without 'name' field, skipping - session: %s",
@@ -277,7 +270,7 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
             )
         )
 
-    async def _publish_tool_call(self, tool_call: ToolCall) -> None:
+    async def _publish_tool_call(self, tool_call: dict[str, Any]) -> None:
         """Forward tool-call payloads to downstream consumers."""
         name = tool_call["name"]
         args = tool_call.get("args", {})
@@ -316,7 +309,8 @@ class LLMAgentGenerationManager(Manager, TurnStateRestorable):
         )
 
     async def shutdown(self) -> None:
-        await self._cancel_running_task()
+        async with self._llm_task_lock:
+            await self._cancel_running_task()
 
     def restore_turn_state(self, *, last_turn_id: int) -> None:
         self._turn_id = last_turn_id

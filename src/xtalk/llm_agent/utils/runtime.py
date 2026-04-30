@@ -17,10 +17,11 @@ from langchain_core.messages import (
 from langchain_core.tools import BaseTool
 
 from ...log_utils import logger
-from ...pipelines.context import PipelineContext
+from .interfaces import AgentContext, AgentInput
 
 _SKIP_MODEL_KEY = "_agent_runtime_skip_model"
 _REGISTER_TOOL_KEY = "_agent_runtime_register_tool"
+_AGENT_CONTEXTS_KEY = "_agent_runtime_contexts"
 
 
 @dataclass
@@ -31,17 +32,18 @@ class AgentRequest:
     ----------
     content : str
         Raw user utterance for the current turn.
-    context : PipelineContext | None, optional
-        Current pipeline context snapshot.
+    direct_output : str | None, optional
+        Precomputed assistant text that should be emitted without invoking the
+        chat model.
     """
 
-    content: str
-    context: PipelineContext | None = None
+    content: str = ""
+    direct_output: str | None = None
 
 
 @dataclass
 class TurnContext:
-    """Scenario-facing structured context derived from ``PipelineContext``.
+    """Scenario-facing structured context derived from accepted agent updates.
 
     Parameters
     ----------
@@ -79,10 +81,42 @@ class AgentSession:
 
 
 class ContextAdapter(Protocol):
-    """Translate ``PipelineContext`` into a stable ``TurnContext``."""
+    """Translate accepted agent context state into a stable ``TurnContext``."""
 
-    def adapt(self, context: PipelineContext | None) -> TurnContext:
-        """Adapt pipeline context for the current turn."""
+    def adapt(
+        self,
+        session: AgentSession,
+        request: AgentRequest,
+    ) -> TurnContext:
+        """Adapt session-scoped agent context for the current turn."""
+
+
+def get_context_data(
+    session: AgentSession,
+    context_type: str,
+) -> dict[str, Any]:
+    """Return stored agent-context data for one logical context type.
+
+    Parameters
+    ----------
+    session : AgentSession
+        Mutable runtime session state.
+    context_type : str
+        Logical context stream name such as ``"thought"``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Stored payload for the context type, or an empty dict.
+    """
+
+    raw_contexts = session.metadata.get(_AGENT_CONTEXTS_KEY)
+    if not isinstance(raw_contexts, dict):
+        return {}
+    data = raw_contexts.get(context_type)
+    if not isinstance(data, dict):
+        return {}
+    return dict(data)
 
 
 class PromptBuilder(Protocol):
@@ -155,7 +189,7 @@ class ScenarioSpec:
     name : str
         Scenario identifier.
     context_adapter : ContextAdapter
-        Adapter that turns pipeline data into stable turn context.
+        Adapter that turns accepted context state into stable turn context.
     prompt_builder : PromptBuilder
         Scenario-specific prompt and user-message builder.
     tool_provider : ToolProvider
@@ -243,8 +277,16 @@ class AgentRuntime:
             Streamed text chunks, tool calls, and tool results.
         """
 
-        turn_context = self.scenario.context_adapter.adapt(request.context)
+        turn_context = self.scenario.context_adapter.adapt(self.session, request)
         self._set_system_prompt(turn_context)
+        direct_output = self.scenario.output_policy.filter_text(
+            str(request.direct_output or "")
+        )
+        if direct_output:
+            response_message = AIMessage(content=direct_output)
+            self.session.messages.append(response_message)
+            yield TextChunkEvent(text=direct_output)
+            return
         self.session.metadata[_SKIP_MODEL_KEY] = False
         self.session.metadata[_REGISTER_TOOL_KEY] = self._register_dynamic_tool
 
@@ -318,6 +360,36 @@ class AgentRuntime:
                     content=result_content,
                     call_id=normalized_tool_call["id"],
                 )
+
+    def accept(self, context: AgentContext) -> tuple[AgentInput, ...]:
+        """Merge an incremental context update into the session state.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Event-derived context update for the current session.
+        """
+
+        context_type = str(context.get("type", "") or "").strip()
+        if not context_type:
+            return ()
+        payload = context.get("data") or {}
+        if not isinstance(payload, dict):
+            return ()
+
+        raw_contexts = self.session.metadata.setdefault(_AGENT_CONTEXTS_KEY, {})
+        if not isinstance(raw_contexts, dict):
+            raw_contexts = {}
+            self.session.metadata[_AGENT_CONTEXTS_KEY] = raw_contexts
+
+        existing = raw_contexts.get(context_type)
+        if not isinstance(existing, dict):
+            existing = {}
+
+        merged = dict(existing)
+        merged.update(payload)
+        raw_contexts[context_type] = merged
+        return ()
 
     def _register_dynamic_tool(self, tool: BaseTool) -> None:
         """Register a session-scoped tool for future turns."""

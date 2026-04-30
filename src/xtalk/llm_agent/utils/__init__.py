@@ -1,6 +1,6 @@
 """Utility modules shared by concrete LLM agent implementations."""
 
-from .interfaces import Agent, AgentInput
+from .interfaces import Agent, AgentContext, AgentInput
 from ..tools.utils import ToolCallResultArgs, ToolCallResultPayload
 from .runtime import (
     AgentRequest,
@@ -21,6 +21,7 @@ from .template import MutableToolProvider, TemplateAgent
 
 __all__ = [
     "Agent",
+    "AgentContext",
     "AgentInput",
     "AgentRequest",
     "AgentRuntime",

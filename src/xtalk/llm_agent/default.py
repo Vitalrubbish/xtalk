@@ -3,27 +3,24 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 import re
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Iterable, Optional
 
 from langchain.chat_models.base import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 
 from ..log_utils import logger
-from ..pipelines.context import PipelineContext
 from .utils.runtime import (
-    _REGISTER_TOOL_KEY,
-    _SKIP_MODEL_KEY,
     AgentRequest,
     AgentSession,
     ContextAdapter,
     OutputPolicy,
     PromptBuilder,
     ScenarioSpec,
-    TextChunkEvent,
     TurnContext,
-    TurnHook,
+    get_context_data,
 )
+from .utils.interfaces import AgentContext, AgentInput
 from .utils.template import MutableToolProvider, TemplateAgent, _format_chat_history
 from .tools import (
     build_set_emotion_tool,
@@ -35,17 +32,37 @@ from .tools import (
 )
 from .tools.retrievers import LOCAL_SEARCH_TOOL, build_local_search_tool
 
+_EMBEDDING_PROCESSING_PROMPT = """
+You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence to indicate that you are aware of a Doc uploaded.
+You should mention that you are aware that the User uploaded a Doc, and mention that you are processing it.
+Your response should sound like friendly spoken language.
+Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
+"""
+
+_EMBEDDING_FINISHED_PROMPT = """
+You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence to indicate that you have processed a Doc user just uploaded, and user can ask about it.
+Your response should sound like friendly spoken language.
+You should mention the Doc summary.
+Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
+"""
+
 
 class DefaultContextAdapter(ContextAdapter):
-    """Adapt ``PipelineContext`` into the default ``TurnContext``."""
+    """Adapt accepted agent context updates into the default ``TurnContext``."""
 
-    def adapt(self, context: PipelineContext | None) -> TurnContext:
-        """Adapt the current pipeline context.
+    def adapt(
+        self,
+        session: AgentSession,
+        request: AgentRequest,
+    ) -> TurnContext:
+        """Adapt the current session-scoped agent context.
 
         Parameters
         ----------
-        context : PipelineContext | None
-            Raw pipeline context snapshot.
+        session : AgentSession
+            Mutable runtime session state.
+        request : AgentRequest
+            Current turn input. Unused by the default adapter.
 
         Returns
         -------
@@ -53,16 +70,17 @@ class DefaultContextAdapter(ContextAdapter):
             Stable turn context for the runtime.
         """
 
-        context_dict = context or {}
+        del request
+        # TODO: Remove the default agent's reliance on context-derived speaker,
+        # caption, and thought state once scenario-native state is introduced
+        # for these features.
+        speaker_context = get_context_data(session, "speaker")
+        caption_context = get_context_data(session, "caption")
+        thought_context = get_context_data(session, "thought")
         return TurnContext(
-            speaker_id=context_dict.get("speaker_id") or None,
-            caption=context_dict.get("caption") or None,
-            thought=context_dict.get("thought") or None,
-            extras={
-                key: value
-                for key, value in context_dict.items()
-                if key not in {"speaker_id", "caption", "thought"}
-            },
+            speaker_id=speaker_context.get("speaker_id") or None,
+            caption=caption_context.get("text") or None,
+            thought=thought_context.get("text") or None,
         )
 
 
@@ -220,6 +238,8 @@ Caption and thought:
         parts = [
             f"<current_date>{datetime.now().strftime('%Y-%m-%d %A')}</current_date>"
         ]
+        # TODO: Move caption/thought prompt decoration behind a dedicated state
+        # model instead of depending on context-derived turn fields.
         if turn_context.caption:
             parts.append(f"<caption>{turn_context.caption.strip()}</caption>")
         if turn_context.thought:
@@ -377,207 +397,69 @@ class DefaultToolProvider(MutableToolProvider):
         return factories
 
 
-class EmbeddingTurnHook(TurnHook):
-    """Handle uploaded-document status updates outside the runtime core."""
+def summarize_embedding_doc(doc: str, max_sentences: int | None = None) -> str:
+    """Build a lightweight extractive summary for uploaded text.
 
-    PROCESSING_PROMPT: str = """
-You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence to indicate that you are aware of a Doc uploaded.
-You should mention that you are aware that the User uploaded a Doc, and mention that you are processing it.
-Your response should sound like friendly spoken language.
-Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
-"""
+    Parameters
+    ----------
+    doc : str
+        Document text.
+    max_sentences : int | None, optional
+        Maximum number of summary sentences.
 
-    FINISHED_PROMPT: str = """
-You are a helpful assistant whose only task is to generate a short, natural-sounding transitional sentence to indicate that you have processed a Doc user just uploaded, and user can ask about it.
-Your response should sound like friendly spoken language.
-You should mention the Doc summary.
-Your response should be catered to the given Chat history, e.g. respond in the same language as the User.
-"""
+    Returns
+    -------
+    str
+        Extractive summary.
+    """
 
-    def __init__(
-        self,
-        *,
-        model: BaseChatModel,
-        output_policy: OutputPolicy,
-    ) -> None:
-        """Initialize the embedding hook.
+    def split_sentences(text: str) -> list[str]:
+        text = re.sub(r"[\r\n]+", "\n", text)
+        text = re.sub(r"([.!?。！？；;:])\s*", r"\1\n", text)
+        parts = [part.strip() for part in text.split("\n")]
+        return [part for part in parts if part]
 
-        Parameters
-        ----------
-        model : BaseChatModel
-            Chat model used to generate acknowledgement text.
-        output_policy : OutputPolicy
-            Text normalization policy for generated chunks.
-        """
+    def tokenize(sentence: str) -> list[str]:
+        return re.findall(r"\w+", sentence.lower())
 
-        self.model = model
-        self.output_policy = output_policy
+    if not doc:
+        return ""
 
-    async def before_model(
-        self,
-        request: AgentRequest,
-        session: AgentSession,
-        turn_context: TurnContext,
-    ) -> AsyncIterator[TextChunkEvent]:
-        """Emit document-processing acknowledgements before the model turn.
+    text = re.sub(r"\s+", " ", doc).strip()
+    if len(text) <= 80:
+        return text
 
-        Parameters
-        ----------
-        request : AgentRequest
-            Current turn request.
-        session : AgentSession
-            Runtime session state.
-        turn_context : TurnContext
-            Structured turn context.
+    sentences = split_sentences(text)
+    if len(sentences) <= 2:
+        return text
 
-        Yields
-        ------
-        TextChunkEvent
-            Transitional acknowledgement chunks.
-        """
+    tokenized = [tokenize(sentence) for sentence in sentences]
+    all_tokens = [token for sentence in tokenized for token in sentence]
+    if not all_tokens:
+        sentence_limit = max_sentences or min(3, len(sentences))
+        return " ".join(sentences[:sentence_limit])
 
-        del request
-        status = turn_context.extras.get("embedding_status")
-        if not status or status == "idle":
-            return
+    freq = Counter(all_tokens)
+    max_freq = max(freq.values())
+    scores: list[float] = []
+    total_sentences = len(sentences)
+    for idx, tokens in enumerate(tokenized):
+        if not tokens:
+            scores.append(0.0)
+            continue
+        tf_score = sum(freq[token] / max_freq for token in tokens) / len(tokens)
+        pos_norm = 1.0 - idx / (total_sentences - 1) if total_sentences > 1 else 1.0
+        pos_score = 0.2 * pos_norm + (0.05 if idx == total_sentences - 1 else 0.0)
+        scores.append(tf_score + pos_score)
 
-        if status == "processing":
-            prompt_history = [
-                SystemMessage(content=self.PROCESSING_PROMPT),
-                HumanMessage(
-                    content=f"Chat history:\n{_format_chat_history(session.messages) or ''}"
-                ),
-            ]
-            async for event in self._stream_auxiliary_response(
-                session=session,
-                prompt_history=prompt_history,
-            ):
-                yield event
-            session.metadata[_SKIP_MODEL_KEY] = True
-            return
-
-        if status == "finished":
-            register_tool = session.metadata.get(_REGISTER_TOOL_KEY)
-            if callable(register_tool):
-                vector_store = turn_context.extras.get("vector_store_instance")
-                if vector_store is not None and LOCAL_SEARCH_TOOL not in (
-                    session.metadata.get("dynamic_tools", {}) or {}
-                ):
-                    register_tool(build_local_search_tool(db=vector_store))
-
-            doc_summary = self._summarize_doc(
-                str(turn_context.extras.get("text_to_embed") or "")
-            )
-            prompt_history = [
-                SystemMessage(content=self.FINISHED_PROMPT),
-                HumanMessage(
-                    content=(
-                        f"Doc summary:\n{doc_summary}\n\n"
-                        f"Chat history:\n{_format_chat_history(session.messages) or ''}"
-                    )
-                ),
-            ]
-            async for event in self._stream_auxiliary_response(
-                session=session,
-                prompt_history=prompt_history,
-            ):
-                yield event
-            session.metadata[_SKIP_MODEL_KEY] = True
-
-    async def _stream_auxiliary_response(
-        self,
-        *,
-        session: AgentSession,
-        prompt_history: list[BaseMessage],
-    ) -> AsyncIterator[TextChunkEvent]:
-        """Generate and persist a short auxiliary assistant response.
-
-        Parameters
-        ----------
-        session : AgentSession
-            Runtime session state.
-        prompt_history : list[BaseMessage]
-            Prompt history for the auxiliary generation.
-
-        Yields
-        ------
-        TextChunkEvent
-            Generated text chunks.
-        """
-
-        response = AIMessage(content="")
-        session.messages.append(response)
-        async for chunk in self.model.astream(prompt_history):
-            text = self.output_policy.filter_text(str(chunk.content or ""))
-            if not text:
-                continue
-            response.content += text
-            yield TextChunkEvent(text=text)
-
-    @staticmethod
-    def _summarize_doc(doc: str, max_sentences: int | None = None) -> str:
-        """Build a lightweight extractive summary for uploaded text.
-
-        Parameters
-        ----------
-        doc : str
-            Document text.
-        max_sentences : int | None, optional
-            Maximum number of summary sentences.
-
-        Returns
-        -------
-        str
-            Extractive summary.
-        """
-
-        def split_sentences(text: str) -> list[str]:
-            text = re.sub(r"[\r\n]+", "\n", text)
-            text = re.sub(r"([.!?。！？；;:])\s*", r"\1\n", text)
-            parts = [part.strip() for part in text.split("\n")]
-            return [part for part in parts if part]
-
-        def tokenize(sentence: str) -> list[str]:
-            return re.findall(r"\w+", sentence.lower())
-
-        if not doc:
-            return ""
-
-        text = re.sub(r"\s+", " ", doc).strip()
-        if len(text) <= 80:
-            return text
-
-        sentences = split_sentences(text)
-        if len(sentences) <= 2:
-            return text
-
-        tokenized = [tokenize(sentence) for sentence in sentences]
-        all_tokens = [token for sentence in tokenized for token in sentence]
-        if not all_tokens:
-            sentence_limit = max_sentences or min(3, len(sentences))
-            return " ".join(sentences[:sentence_limit])
-
-        freq = Counter(all_tokens)
-        max_freq = max(freq.values())
-        scores: list[float] = []
-        total_sentences = len(sentences)
-        for idx, tokens in enumerate(tokenized):
-            if not tokens:
-                scores.append(0.0)
-                continue
-            tf_score = sum(freq[token] / max_freq for token in tokens) / len(tokens)
-            pos_norm = 1.0 - idx / (total_sentences - 1) if total_sentences > 1 else 1.0
-            pos_score = 0.2 * pos_norm + (0.05 if idx == total_sentences - 1 else 0.0)
-            scores.append(tf_score + pos_score)
-
-        sentence_limit = max_sentences or min(6, max(1, total_sentences // 3))
-        selected = sorted(
-            range(total_sentences),
-            key=lambda idx: scores[idx],
-            reverse=True,
-        )[:sentence_limit]
-        selected.sort()
-        return " ".join(sentences[idx] for idx in selected)
+    sentence_limit = max_sentences or min(6, max(1, total_sentences // 3))
+    selected = sorted(
+        range(total_sentences),
+        key=lambda idx: scores[idx],
+        reverse=True,
+    )[:sentence_limit]
+    selected.sort()
+    return " ".join(sentences[idx] for idx in selected)
 
 
 def build_default_scenario(
@@ -622,7 +504,7 @@ def build_default_scenario(
         prompt_builder=prompt_builder,
         tool_provider=tool_provider,
         output_policy=output_policy,
-        hooks=[EmbeddingTurnHook(model=model, output_policy=output_policy)],
+        hooks=[],
     )
     return scenario, prompt_builder, tool_provider
 
@@ -675,4 +557,133 @@ class DefaultAgent(TemplateAgent):
                 "emotions": normalized_emotions,
             },
             tool_provider=tool_provider,
+        )
+
+    def accept(self, context: AgentContext) -> Iterable[AgentInput]:
+        """Accept a context update and return any triggered follow-up inputs.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Incremental session context update.
+
+        Returns
+        -------
+        Iterable[AgentInput]
+            Follow-up agent inputs triggered by the update.
+        """
+
+        yield from self._sync_iter_from_async(self.async_accept(context))
+
+    async def async_accept(self, context: AgentContext) -> AsyncIterator[AgentInput]:
+        """Asynchronously accept a context update.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Incremental session context update.
+
+        Yields
+        ------
+        AgentInput
+            Follow-up agent inputs triggered by the update.
+        """
+
+        for agent_input in self.runtime.accept(context):
+            yield agent_input
+
+        context_type = str(context.get("type", "") or "")
+        if context_type != "embedding":
+            return
+
+        payload = context.get("data") or {}
+        if not isinstance(payload, dict):
+            return
+
+        status = str(payload.get("status") or "")
+        if status not in {"processing", "finished"}:
+            return
+
+        if status == "finished":
+            self._register_embedding_search_tool(payload.get("vector_store_instance"))
+
+        text = await self._build_embedding_direct_output(
+            status=status,
+            doc_text=str(payload.get("text") or ""),
+        )
+        if text:
+            yield {"content": "", "direct_output": text}
+
+    def _register_embedding_search_tool(self, vector_store_instance: Any) -> None:
+        """Register the local-search tool for uploaded documents when ready."""
+
+        if vector_store_instance is None:
+            return
+        dynamic_tools = self.runtime.session.metadata.setdefault("dynamic_tools", {})
+        if not isinstance(dynamic_tools, dict):
+            dynamic_tools = {}
+            self.runtime.session.metadata["dynamic_tools"] = dynamic_tools
+        if LOCAL_SEARCH_TOOL in dynamic_tools:
+            return
+        try:
+            dynamic_tools[LOCAL_SEARCH_TOOL] = build_local_search_tool(
+                db=vector_store_instance
+            )
+        except Exception as exc:
+            logger.warning("Failed to register local search tool: %s", exc)
+
+    async def _build_embedding_direct_output(
+        self,
+        *,
+        status: str,
+        doc_text: str,
+    ) -> str | None:
+        """Build one direct-output utterance for embedding lifecycle updates."""
+
+        history = _format_chat_history(self.runtime.session.messages) or ""
+        if status == "processing":
+            prompt_history = [
+                SystemMessage(content=_EMBEDDING_PROCESSING_PROMPT),
+                HumanMessage(content=f"Chat history:\n{history}"),
+            ]
+        else:
+            doc_summary = summarize_embedding_doc(doc_text)
+            prompt_history = [
+                SystemMessage(content=_EMBEDDING_FINISHED_PROMPT),
+                HumanMessage(
+                    content=f"Doc summary:\n{doc_summary}\n\nChat history:\n{history}"
+                ),
+            ]
+
+        try:
+            response = await self.model.ainvoke(prompt_history)
+            content = getattr(response, "content", "")
+            text = self.runtime.scenario.output_policy.filter_text(str(content or ""))
+            if text:
+                return text
+        except Exception as exc:
+            logger.warning("Failed to build embedding direct output: %s", exc)
+
+        return self._fallback_embedding_direct_output(status=status, doc_text=doc_text)
+
+    def _fallback_embedding_direct_output(
+        self,
+        *,
+        status: str,
+        doc_text: str,
+    ) -> str:
+        """Return a deterministic fallback embedding utterance."""
+
+        history = _format_chat_history(self.runtime.session.messages) or ""
+        prefers_chinese = bool(re.search(r"[\u4e00-\u9fff]", history + doc_text))
+        if status == "processing":
+            return (
+                "我知道你上传了一份文档，我正在处理它。"
+                if prefers_chinese
+                else "I know you uploaded a document. I am processing it now."
+            )
+        return (
+            "文档已经处理好了，你可以继续问我相关内容。"
+            if prefers_chinese
+            else "The document is ready. You can ask me about it now."
         )

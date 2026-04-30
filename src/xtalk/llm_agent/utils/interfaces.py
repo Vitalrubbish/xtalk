@@ -3,21 +3,34 @@ from abc import ABC, abstractmethod
 from typing import Iterable, Union, TypedDict, AsyncIterator, Callable, Any
 from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
-from ...pipelines.context import PipelineContext
 from ..tools.utils import ToolCallResultPayload
 
 
-class AgentInput(TypedDict):
+class AgentInput(TypedDict, total=False):
     """Structured payload for agent generation input.
 
     Notes
     -----
-    ``content`` stores the raw user text and ``context`` carries the current
-    ``PipelineContext``.
+    ``content`` stores the raw user text for the current turn. When
+    ``direct_output`` is provided, generation should bypass the model and emit
+    that text directly.
     """
 
     content: str
-    context: PipelineContext
+    direct_output: str
+
+
+class AgentContext(TypedDict):
+    """Incremental context update accepted by an agent.
+
+    Notes
+    -----
+    ``type`` identifies the logical context stream, while ``data`` carries the
+    event-derived payload for that stream.
+    """
+
+    type: str
+    data: dict[str, Any]
 
 AgentStreamItem = Union[str, ToolCall, ToolCallResultPayload]
 
@@ -63,6 +76,62 @@ class Agent(ABC):
 
         loop = asyncio.get_running_loop()
         iterator = iter(self.generate_stream(input))
+        sentinel = object()
+
+        try:
+            while True:
+
+                def _next_item():
+                    try:
+                        return next(iterator)
+                    except StopIteration:
+                        return sentinel
+
+                item = await loop.run_in_executor(None, _next_item)
+                if item is sentinel:
+                    break
+                yield item
+        finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
+    @abstractmethod
+    def accept(self, context: AgentContext) -> Iterable[AgentInput]:
+        """Accept an incremental context update.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Context payload forwarded from serving-layer events.
+
+        Returns
+        -------
+        Iterable[AgentInput]
+            Zero or more follow-up agent inputs triggered by the context
+            update.
+        """
+        pass
+
+    async def async_accept(self, context: AgentContext) -> AsyncIterator[AgentInput]:
+        """Asynchronously accept an incremental context update.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Context payload forwarded from serving-layer events.
+
+        Yields
+        ------
+        AgentInput
+            Follow-up agent inputs triggered by the context update.
+        """
+
+        loop = asyncio.get_running_loop()
+        iterator = iter(self.accept(context))
         sentinel = object()
 
         try:

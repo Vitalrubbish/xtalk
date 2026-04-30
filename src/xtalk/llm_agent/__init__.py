@@ -4,7 +4,7 @@ from .utils import interfaces as interfaces
 from .utils import runtime as runtime
 from .utils import template as template
 from .tools.utils import ToolCallResultArgs, ToolCallResultPayload
-from .utils.interfaces import Agent
+from .utils.interfaces import Agent, AgentContext, AgentInput
 from .dummy import DummyAgent
 from .default import DefaultAgent
 from .utils.template import MutableToolProvider, TemplateAgent
@@ -30,6 +30,8 @@ sys.modules[f"{__name__}.template"] = template
 
 __all__ = [
     "Agent",
+    "AgentContext",
+    "AgentInput",
     "DummyAgent",
     "DefaultAgent",
     "TemplateAgent",

@@ -3,6 +3,7 @@ from .modules.asr_manager import ASRManager
 from .modules.embeddings_manager import EmbeddingsManager
 from .modules.enhancer_manager import EnhancerManager
 from .modules.latency_manager import LatencyManager
+from .modules.llm_agent_context_manager import LLMAgentContextManager
 from .modules.llm_agent_generation_manager import LLMAgentGenerationManager
 from .modules.speaker_manager import SpeakerManager
 from .modules.thought_manager import ThoughtManager
@@ -16,6 +17,7 @@ __all__ = [
     "EmbeddingsManager",
     "EnhancerManager",
     "LatencyManager",
+    "LLMAgentContextManager",
     "LLMAgentGenerationManager",
     "SpeakerManager",
     "ThoughtManager",

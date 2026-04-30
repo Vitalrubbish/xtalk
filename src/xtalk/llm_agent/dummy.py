@@ -2,7 +2,7 @@
 
 from typing import Any, Iterable, Union
 
-from .utils.interfaces import Agent, AgentInput, AgentStreamItem
+from .utils.interfaces import Agent, AgentContext, AgentInput, AgentStreamItem
 
 
 class DummyAgent(Agent):
@@ -37,7 +37,11 @@ class DummyAgent(Agent):
             The configured response text as a single chunk.
         """
 
-        del input
+        if isinstance(input, dict):
+            direct_output = input.get("direct_output")
+            if isinstance(direct_output, str) and direct_output:
+                yield direct_output
+                return
         yield self.default_response
 
     def restore_history(self, messages: list[dict[str, Any]]) -> None:
@@ -51,6 +55,18 @@ class DummyAgent(Agent):
 
         del messages
         return None
+
+    def accept(self, context: AgentContext) -> Iterable[AgentInput]:
+        """Ignore incremental context updates for the stateless dummy agent.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Context payload. Ignored by this implementation.
+        """
+
+        del context
+        return ()
 
     def clone(self) -> "Agent":
         """Create a fresh dummy agent with the same canned response.

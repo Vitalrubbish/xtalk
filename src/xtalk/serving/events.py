@@ -2,7 +2,7 @@
 import time
 from dataclasses import dataclass, field, make_dataclass
 from typing import ClassVar, Dict, Any, Type
-from ..pipelines.context import PipelineContext
+from ..llm_agent.utils.interfaces import AgentInput
 
 
 @dataclass
@@ -283,6 +283,16 @@ class RetrievalUpdated(BaseEvent):
 
 
 @dataclass
+class EmbeddingStatusUpdated(BaseEvent):
+    """Embedding lifecycle update consumed by the LLM agent context manager."""
+
+    TYPE: ClassVar[str] = "embedding.status_updated"
+    status: str = ""
+    text: str | None = None
+    vector_store_instance: Any = None
+
+
+@dataclass
 class TextForEmbeddingReady(BaseEvent):
     TYPE: ClassVar[str] = "embeddings.text_ready"
     text: str = ""
@@ -335,8 +345,7 @@ class TurnTTSFlushRequested(BaseEvent):
 @dataclass
 class TurnLLMAgentStartRequested(BaseEvent):
     TYPE: ClassVar[str] = "turn.llm_agent_start_requested"
-    text: str = ""
-    context_snapshot: PipelineContext | None = None
+    agent_input: AgentInput = field(default_factory=dict)
 
 
 @dataclass

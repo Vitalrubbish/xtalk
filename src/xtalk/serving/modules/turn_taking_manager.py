@@ -75,7 +75,7 @@ class TurnTakingManager(Manager):
         await self.event_bus.publish(
             TurnLLMAgentStartRequested(
                 session_id=self.session_id,
-                text=event.text,
+                agent_input={"content": event.text},
             )
         )
 

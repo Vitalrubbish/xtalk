@@ -11,7 +11,6 @@ from langchain.tools import tool
 from langchain_core.tools import BaseTool
 
 from xtalk.llm_agent import (
-    AgentInput,
     AgentSession,
     ContextAdapter,
     MutableToolProvider,
@@ -21,7 +20,7 @@ from xtalk.llm_agent import (
     TemplateAgent,
     TurnContext,
 )
-from xtalk.llm_agent.runtime import get_context_data
+from xtalk.llm_agent.utils.runtime import get_context_data
 
 
 MENTAL_CONSULTANT_PROMPT = """
@@ -277,7 +276,7 @@ class MentalConsultantContextAdapter(ContextAdapter):
     def adapt(
         self,
         session: AgentSession,
-        request: AgentInput,
+        request: dict[str, Any],
     ) -> TurnContext:
         """Convert session-scoped context into a stable turn context.
 
@@ -285,7 +284,7 @@ class MentalConsultantContextAdapter(ContextAdapter):
         ----------
         session : AgentSession
             Runtime session state containing accepted context updates.
-        request : AgentInput
+        request : dict[str, Any]
             Current turn input. Unused by this adapter.
 
         Returns
@@ -346,14 +345,14 @@ class MentalConsultantPromptBuilder(PromptBuilder):
 
     def build_user_message(
         self,
-        request: AgentInput,
+        request: dict[str, Any],
         turn_context: TurnContext,
     ) -> str:
         """Build the user message content.
 
         Parameters
         ----------
-        request : AgentInput
+        request : dict[str, Any]
             Current turn request.
         turn_context : TurnContext
             Structured turn context.

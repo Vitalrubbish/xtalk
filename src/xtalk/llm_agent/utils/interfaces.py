@@ -1,23 +1,9 @@
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Iterable, Union, TypedDict, AsyncIterator, Callable, Any
+from typing import Iterable, TypedDict, AsyncIterator, Callable, Any, Union
 from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
 from ..tools.utils import ToolCallResultPayload
-
-
-class AgentInput(TypedDict, total=False):
-    """Structured payload for agent generation input.
-
-    Notes
-    -----
-    ``content`` stores the raw user text for the current turn. When
-    ``direct_output`` is provided, generation should bypass the model and emit
-    that text directly.
-    """
-
-    content: str
-    direct_output: str
 
 
 class AgentContext(TypedDict):
@@ -32,75 +18,15 @@ class AgentContext(TypedDict):
     type: str
     data: dict[str, Any]
 
-AgentStreamItem = Union[str, ToolCall, ToolCallResultPayload]
+
+AgentOutput = Union[str, ToolCall, ToolCallResultPayload]
 
 
 class Agent(ABC):
     """Abstract interface for conversational agents used by Xtalk."""
 
     @abstractmethod
-    def generate_stream(
-        self, input: Union[str, AgentInput]
-    ) -> Iterable[AgentStreamItem]:
-        """Stream response chunks for the input.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Raw user text or structured agent input.
-
-        Yields
-        ------
-        str | ToolCall | ToolCallResultPayload
-            Tool calls, tool-result payloads, and text chunks. Yield nothing
-            when the turn should be skipped.
-        """
-        pass
-
-    async def async_generate_stream(
-        self, input: Union[str, AgentInput]
-    ) -> AsyncIterator[AgentStreamItem]:
-        """Asynchronously stream agent outputs.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Raw user text or structured agent input.
-
-        Yields
-        ------
-        str | ToolCall | ToolCallResultPayload
-            Streamed outputs from ``generate_stream()``. No items are yielded
-            when the turn is explicitly skipped.
-        """
-
-        loop = asyncio.get_running_loop()
-        iterator = iter(self.generate_stream(input))
-        sentinel = object()
-
-        try:
-            while True:
-
-                def _next_item():
-                    try:
-                        return next(iterator)
-                    except StopIteration:
-                        return sentinel
-
-                item = await loop.run_in_executor(None, _next_item)
-                if item is sentinel:
-                    break
-                yield item
-        finally:
-            close = getattr(iterator, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:
-                    pass
-
-    @abstractmethod
-    def accept(self, context: AgentContext) -> Iterable[AgentInput]:
+    def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
         """Accept an incremental context update.
 
         Parameters
@@ -108,15 +34,15 @@ class Agent(ABC):
         context : AgentContext
             Context payload forwarded from serving-layer events.
 
-        Returns
-        -------
-        Iterable[AgentInput]
-            Zero or more follow-up agent inputs triggered by the context
+        Yields
+        ------
+        AgentStreamItem
+            Zero or more streamed response items triggered by the context
             update.
         """
         pass
 
-    async def async_accept(self, context: AgentContext) -> AsyncIterator[AgentInput]:
+    async def async_accept(self, context: AgentContext) -> AsyncIterator[AgentOutput]:
         """Asynchronously accept an incremental context update.
 
         Parameters
@@ -126,8 +52,8 @@ class Agent(ABC):
 
         Yields
         ------
-        AgentInput
-            Follow-up agent inputs triggered by the context update.
+        AgentStreamItem
+            Streamed response items triggered by the context update.
         """
 
         loop = asyncio.get_running_loop()

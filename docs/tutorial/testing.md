@@ -192,7 +192,7 @@ python scripts/test.py --config server_configs/sample_local.json --input logs/te
 
 The test result folder contains:
 
-- `<case_name>.wav`: the recorded full-duplex output for that case
+- `<case_name>.mp3`: the final mono recording for that case, compressed from the analyzed stereo session audio with high-quality MP3 encoding to save space
 - `eval.json`: overall latency and per-case pass/fail summary
 - `logs/<case_name>.asr.json`: expected transcripts, observed ASR events, and optional judge results
 - `service_config.json`: the effective backend config used for the run

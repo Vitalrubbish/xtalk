@@ -13,7 +13,6 @@ from typing import (
     Optional,
     Protocol,
     TypeVar,
-    Union,
 )
 
 from langchain.chat_models.base import BaseChatModel
@@ -28,7 +27,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
 from ...log_utils import logger
-from .interfaces import Agent, AgentContext, AgentInput, AgentStreamItem
+from .interfaces import Agent, AgentContext, AgentOutput
 from .runtime import (
     AgentRuntime,
     TextChunkEvent,
@@ -358,29 +357,6 @@ class TemplateAgent(Agent):
                         pass
 
     @staticmethod
-    def _normalize_input(input: Union[str, AgentInput]) -> AgentInput:
-        """Normalize legacy agent input into ``AgentInput``.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Legacy agent input.
-
-        Returns
-        -------
-        AgentInput
-            Normalized turn-local agent input.
-        """
-
-        if isinstance(input, dict):
-            normalized: AgentInput = {"content": str(input.get("content", ""))}
-            direct_output = input.get("direct_output")
-            if direct_output is not None:
-                normalized["direct_output"] = str(direct_output)
-            return normalized
-        return {"content": str(input)}
-
-    @staticmethod
     def _to_tool_call(event: ToolCallEvent) -> ToolCall:
         """Convert a typed tool-call event into the legacy payload.
 
@@ -397,45 +373,51 @@ class TemplateAgent(Agent):
 
         return ToolCall(name=event.name, args=dict(event.args), id=event.call_id)
 
-    def generate_stream(
+    def _build_runtime_request(
         self,
-        input: Union[str, AgentInput],
-    ) -> Iterable[AgentStreamItem]:
-        """Synchronously stream legacy response chunks.
+        context: AgentContext,
+    ) -> dict[str, Any] | None:
+        """Build an internal runtime request from one accepted context update.
 
         Parameters
         ----------
-        input : str | AgentInput
-            Raw user text or structured agent input.
+        context : AgentContext
+            Accepted agent context update.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Internal runtime request, or ``None`` when the context update
+            should not trigger generation.
+        """
+
+        context_type = str(context.get("type", "") or "")
+        if context_type != "asr_final":
+            return None
+
+        payload = context.get("data") or {}
+        if not isinstance(payload, dict):
+            return None
+        return {"content": str(payload.get("text", ""))}
+
+    async def _stream_request(
+        self,
+        request: dict[str, Any],
+    ) -> AsyncIterator[AgentOutput]:
+        """Asynchronously stream legacy response chunks for one runtime request.
+
+        Parameters
+        ----------
+        request : dict[str, Any]
+            Internal runtime request.
 
         Yields
         ------
         str | ToolCall | ToolCallResultPayload
             Text chunks, legacy tool-call payloads, and tool-result payloads.
-            Yields nothing when generation is skipped.
         """
 
-        yield from self._sync_iter_from_async(self.async_generate_stream(input))
-
-    async def async_generate_stream(
-        self,
-        input: Union[str, AgentInput],
-    ) -> AsyncIterator[AgentStreamItem]:
-        """Asynchronously stream legacy response chunks.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Raw user text or structured agent input.
-
-        Yields
-        ------
-        str | ToolCall | ToolCallResultPayload
-            Text chunks, legacy tool-call payloads, and tool-result payloads.
-            Yields nothing when generation is skipped.
-        """
-
-        async for event in self.runtime.generate_stream(self._normalize_input(input)):
+        async for event in self.runtime.generate_stream(request):
             if isinstance(event, TextChunkEvent):
                 yield event.text
             elif isinstance(event, ToolCallEvent):
@@ -447,31 +429,45 @@ class TemplateAgent(Agent):
                     content=event.content,
                 )
 
-    def accept(self, context: AgentContext) -> Iterable[AgentInput]:
+    def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
         """Accept an incremental context update for the current session.
 
         Parameters
         ----------
         context : AgentContext
             Event-derived context update.
+
+        Yields
+        ------
+        AgentStreamItem
+            Streamed response items triggered by the accepted context update.
         """
 
-        return self.runtime.accept(context)
+        yield from self._sync_iter_from_async(self.async_accept(context))
 
     async def async_accept(
         self,
         context: AgentContext,
-    ) -> AsyncIterator[AgentInput]:
+    ) -> AsyncIterator[AgentOutput]:
         """Asynchronously accept an incremental context update.
 
         Parameters
         ----------
         context : AgentContext
             Event-derived context update.
+
+        Yields
+        ------
+        AgentStreamItem
+            Streamed response items triggered by the accepted context update.
         """
 
-        for agent_input in self.accept(context):
-            yield agent_input
+        self.runtime.accept(context)
+        request = self._build_runtime_request(context)
+        if request is None:
+            return
+        async for item in self._stream_request(request):
+            yield item
 
     def restore_history(self, messages: list[dict[str, Any]]) -> None:
         """Restore persisted conversation history into the runtime session.

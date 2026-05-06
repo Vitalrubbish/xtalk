@@ -13,7 +13,7 @@ from .modules.tts_manager import TTSManager
 from .modules.output_gateway import OutputGateway
 from .modules.input_gateway import InputGateway
 from .modules.llm_agent_context_manager import LLMAgentContextManager
-from .modules.llm_agent_generation_manager import LLMAgentGenerationManager
+from .modules.llm_agent_generation_manager import LLMAgentConsumptionManager
 from .modules.captioner_manager import CaptionerManager
 from .modules.retrieval_manager import RetrievalManager
 from .modules.turn_taking_manager import TurnTakingManager
@@ -395,7 +395,7 @@ class DefaultService(Service):
     MANAGER_CLASSES: list[Type[Manager]] = [
         ASRManager,
         LLMAgentContextManager,
-        LLMAgentGenerationManager,
+        LLMAgentConsumptionManager,
         TTSManager,
         CaptionerManager,
         ThoughtManager,

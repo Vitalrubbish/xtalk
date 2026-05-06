@@ -14,7 +14,7 @@ from ..speech.interfaces import (
     TurnDetector,
 )
 from ..rewriter.interfaces import Rewriter
-from ..llm_agent.interfaces import Agent
+from ..llm_agent.utils.interfaces import Agent
 
 
 class PipelineOutputBase(TypedDict):

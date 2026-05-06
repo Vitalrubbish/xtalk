@@ -1,8 +1,9 @@
 """Lightweight dummy agent implementation for tests and sample wiring."""
 
-from typing import Any, Iterable, Union
+import asyncio
+from typing import Any, AsyncIterator, Iterable
 
-from .utils.interfaces import Agent, AgentContext, AgentInput, AgentStreamItem
+from .utils.interfaces import Agent, AgentContext, AgentOutput
 
 
 class DummyAgent(Agent):
@@ -21,29 +22,6 @@ class DummyAgent(Agent):
         """Initialize the dummy agent."""
         self.default_response = default_response
 
-    def generate_stream(
-        self, input: Union[str, AgentInput]
-    ) -> Iterable[AgentStreamItem]:
-        """Yield the predefined response for the input turn.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Input text or structured payload. Ignored by this implementation.
-
-        Yields
-        ------
-        AgentStreamItem
-            The configured response text as a single chunk.
-        """
-
-        if isinstance(input, dict):
-            direct_output = input.get("direct_output")
-            if isinstance(direct_output, str) and direct_output:
-                yield direct_output
-                return
-        yield self.default_response
-
     def restore_history(self, messages: list[dict[str, Any]]) -> None:
         """Ignore persisted history for the stateless dummy agent.
 
@@ -56,17 +34,60 @@ class DummyAgent(Agent):
         del messages
         return None
 
-    def accept(self, context: AgentContext) -> Iterable[AgentInput]:
-        """Ignore incremental context updates for the stateless dummy agent.
+    def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
+        """Synchronously bridge ``async_accept()`` for the stateless agent.
 
         Parameters
         ----------
         context : AgentContext
-            Context payload. Ignored by this implementation.
+            Context payload forwarded from serving events.
         """
 
-        del context
-        return ()
+        yield from self._sync_iter_from_async(self.async_accept(context))
+
+    async def async_accept(
+        self,
+        context: AgentContext,
+    ) -> AsyncIterator[AgentOutput]:
+        """Yield a canned response for generation-triggering contexts.
+
+        Parameters
+        ----------
+        context : AgentContext
+            Context payload forwarded from serving events.
+        """
+
+        context_type = str(context.get("type", "") or "")
+        if context_type not in {"asr_final", "embedding"}:
+            return
+        yield self.default_response
+
+    def _sync_iter_from_async(
+        self,
+        async_iter: AsyncIterator[AgentOutput],
+    ) -> Iterable[AgentOutput]:
+        """Convert an async iterator into a synchronous generator."""
+
+        loop = asyncio.new_event_loop()
+        try:
+            while True:
+                try:
+                    item = loop.run_until_complete(async_iter.__anext__())
+                except StopAsyncIteration:
+                    break
+                yield item
+        finally:
+            aclose = getattr(async_iter, "aclose", None)
+            if callable(aclose):
+                try:
+                    loop.run_until_complete(aclose())
+                except Exception:
+                    pass
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            loop.close()
 
     def clone(self) -> "Agent":
         """Create a fresh dummy agent with the same canned response.

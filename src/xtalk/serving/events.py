@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import time
 from dataclasses import dataclass, field, make_dataclass
-from typing import ClassVar, Dict, Any, Type
-from ..llm_agent.utils.interfaces import AgentInput
+from typing import AsyncIterator, ClassVar, Dict, Any, Type
+from ..llm_agent.utils.interfaces import AgentOutput
 
 
 @dataclass
@@ -350,9 +350,11 @@ class TurnTTSFlushRequested(BaseEvent):
 
 
 @dataclass
-class TurnLLMAgentStartRequested(BaseEvent):
-    TYPE: ClassVar[str] = "turn.llm_agent_start_requested"
-    agent_input: AgentInput = field(default_factory=dict)
+class ConsumeLLMAgentGenerationRequested(BaseEvent):
+    """Request consumption of one LLM-agent output stream."""
+
+    TYPE: ClassVar[str] = "llm_agent.consume_generation_requested"
+    stream: AsyncIterator[AgentOutput]
 
 
 @dataclass

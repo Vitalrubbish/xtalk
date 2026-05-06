@@ -1,10 +1,5 @@
-import sys
-
-from .utils import interfaces as interfaces
-from .utils import runtime as runtime
-from .utils import template as template
 from .tools.utils import ToolCallResultArgs, ToolCallResultPayload
-from .utils.interfaces import Agent, AgentContext, AgentInput
+from .utils.interfaces import Agent, AgentContext, AgentOutput
 from .dummy import DummyAgent
 from .default import DefaultAgent
 from .utils.template import MutableToolProvider, TemplateAgent
@@ -23,14 +18,10 @@ from .utils.runtime import (
     TurnHook,
 )
 
-sys.modules[f"{__name__}.interfaces"] = interfaces
-sys.modules[f"{__name__}.runtime"] = runtime
-sys.modules[f"{__name__}.template"] = template
-
 __all__ = [
     "Agent",
     "AgentContext",
-    "AgentInput",
+    "AgentOutput",
     "DummyAgent",
     "DefaultAgent",
     "TemplateAgent",

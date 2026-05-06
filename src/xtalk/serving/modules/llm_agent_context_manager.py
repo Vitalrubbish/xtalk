@@ -11,13 +11,14 @@ from ...log_utils import logger
 from ...pipelines import Pipeline
 from ..event_bus import EventBus
 from ..events import (
+    ASRResultFinal,
     BaseEvent,
     CaptionUpdated,
+    ConsumeLLMAgentGenerationRequested,
     EmbeddingStatusUpdated,
     LLMAgentLoop,
     SpeakerRecognized,
     ThoughtUpdated,
-    TurnLLMAgentStartRequested,
 )
 from ..interfaces import Manager
 
@@ -57,6 +58,12 @@ class LLMAgentContextManager(Manager):
         """Forward ``ThoughtUpdated`` into the agent."""
 
         await self._accept_event_context(event, context_type="thought")
+
+    @Manager.event_handler(ASRResultFinal, priority=20)
+    async def _handle_asr_result_final(self, event: ASRResultFinal) -> None:
+        """Forward ``ASRResultFinal`` into the agent."""
+
+        await self._accept_event_context(event, context_type="asr_final")
 
     @Manager.event_handler(CaptionUpdated, priority=20)
     async def _handle_caption_updated(self, event: CaptionUpdated) -> None:
@@ -113,14 +120,13 @@ class LLMAgentContextManager(Manager):
             },
         }
         try:
-            async for agent_input in self.llm_agent.async_accept(context):
-                await self.event_bus.publish(
-                    TurnLLMAgentStartRequested(
-                        session_id=self.session_id,
-                        agent_input=dict(agent_input),
-                    ),
-                    wait_for_completion=True,
-                )
+            await self.event_bus.publish(
+                ConsumeLLMAgentGenerationRequested(
+                    session_id=self.session_id,
+                    stream=self.llm_agent.async_accept(context),
+                ),
+                wait_for_completion=True,
+            )
         except Exception as e:
             logger.warning(
                 "Failed to forward %s context to LLM agent - session: %s, error: %s",

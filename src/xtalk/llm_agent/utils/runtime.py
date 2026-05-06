@@ -17,7 +17,7 @@ from langchain_core.messages import (
 from langchain_core.tools import BaseTool
 
 from ...log_utils import logger
-from .interfaces import AgentContext, AgentInput
+from .interfaces import AgentContext
 
 _SKIP_MODEL_KEY = "_agent_runtime_skip_model"
 _REGISTER_TOOL_KEY = "_agent_runtime_register_tool"
@@ -69,7 +69,7 @@ class ContextAdapter(Protocol):
     def adapt(
         self,
         session: AgentSession,
-        request: AgentInput,
+        request: dict[str, Any],
     ) -> TurnContext:
         """Adapt session-scoped agent context for the current turn."""
 
@@ -114,7 +114,7 @@ class PromptBuilder(Protocol):
 
     def build_user_message(
         self,
-        request: AgentInput,
+        request: dict[str, Any],
         turn_context: TurnContext,
     ) -> str:
         """Build the user-facing message content passed to the model."""
@@ -143,7 +143,7 @@ class TurnHook(ABC):
 
     async def before_model(
         self,
-        request: AgentInput,
+        request: dict[str, Any],
         session: AgentSession,
         turn_context: TurnContext,
     ) -> AsyncIterator["AgentEvent"]:
@@ -245,14 +245,14 @@ class AgentRuntime:
 
     async def generate_stream(
         self,
-        request: AgentInput,
+        request: dict[str, Any],
     ) -> AsyncIterator[AgentEvent]:
         """Run one turn and stream typed runtime events.
 
         Parameters
         ----------
-        request : AgentInput
-            Normalized turn input.
+        request : dict[str, Any]
+            Internal turn request.
 
         Yields
         ------
@@ -262,14 +262,6 @@ class AgentRuntime:
 
         turn_context = self.scenario.context_adapter.adapt(self.session, request)
         self._set_system_prompt(turn_context)
-        direct_output = self.scenario.output_policy.filter_text(
-            str(request.get("direct_output") or "")
-        )
-        if direct_output:
-            response_message = AIMessage(content=direct_output)
-            self.session.messages.append(response_message)
-            yield TextChunkEvent(text=direct_output)
-            return
         self.session.metadata[_SKIP_MODEL_KEY] = False
         self.session.metadata[_REGISTER_TOOL_KEY] = self._register_dynamic_tool
 
@@ -344,7 +336,7 @@ class AgentRuntime:
                     call_id=normalized_tool_call["id"],
                 )
 
-    def accept(self, context: AgentContext) -> tuple[AgentInput, ...]:
+    def accept(self, context: AgentContext) -> None:
         """Merge an incremental context update into the session state.
 
         Parameters
@@ -355,10 +347,10 @@ class AgentRuntime:
 
         context_type = str(context.get("type", "") or "").strip()
         if not context_type:
-            return ()
+            return None
         payload = context.get("data") or {}
         if not isinstance(payload, dict):
-            return ()
+            return None
 
         raw_contexts = self.session.metadata.setdefault(_AGENT_CONTEXTS_KEY, {})
         if not isinstance(raw_contexts, dict):
@@ -372,7 +364,7 @@ class AgentRuntime:
         merged = dict(existing)
         merged.update(payload)
         raw_contexts[context_type] = merged
-        return ()
+        return None
 
     def _register_dynamic_tool(self, tool: BaseTool) -> None:
         """Register a session-scoped tool for future turns."""

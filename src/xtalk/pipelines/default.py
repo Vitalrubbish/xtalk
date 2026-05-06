@@ -6,7 +6,7 @@ from typing import Optional, Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
 
-from ..llm_agent.interfaces import Agent
+from ..llm_agent import Agent
 from ..rewriter.interfaces import Rewriter
 from ..rewriter.simple import DefaultCaptionRewriter, DefaultThoughtRewriter
 from ..speech.interfaces import (

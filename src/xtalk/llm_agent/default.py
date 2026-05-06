@@ -19,7 +19,7 @@ from .utils.runtime import (
     TurnContext,
     get_context_data,
 )
-from .utils.interfaces import AgentContext, AgentInput
+from .utils.interfaces import AgentContext, AgentOutput
 from .utils.template import MutableToolProvider, TemplateAgent, _format_chat_history
 from .tools import (
     build_set_emotion_tool,
@@ -52,7 +52,7 @@ class DefaultContextAdapter(ContextAdapter):
     def adapt(
         self,
         session: AgentSession,
-        request: AgentInput,
+        request: dict[str, Any],
     ) -> TurnContext:
         """Adapt the current session-scoped agent context.
 
@@ -60,7 +60,7 @@ class DefaultContextAdapter(ContextAdapter):
         ----------
         session : AgentSession
             Mutable runtime session state.
-        request : AgentInput
+        request : dict[str, Any]
             Current turn input. Unused by the default adapter.
 
         Returns
@@ -247,14 +247,14 @@ Caption and thought:
 
     def build_user_message(
         self,
-        request: AgentInput,
+        request: dict[str, Any],
         turn_context: TurnContext,
     ) -> str:
         """Build the user message content.
 
         Parameters
         ----------
-        request : AgentInput
+        request : dict[str, Any]
             Turn input.
         turn_context : TurnContext
             Structured turn context.
@@ -267,7 +267,9 @@ Caption and thought:
 
         content = str(request.get("content", ""))
         if turn_context.speaker_id:
-            return f"The current speaker is {turn_context.speaker_id}, saying: {content}"
+            return (
+                f"The current speaker is {turn_context.speaker_id}, saying: {content}"
+            )
         return content
 
 
@@ -559,8 +561,8 @@ class DefaultAgent(TemplateAgent):
             tool_provider=tool_provider,
         )
 
-    def accept(self, context: AgentContext) -> Iterable[AgentInput]:
-        """Accept a context update and return any triggered follow-up inputs.
+    def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
+        """Accept a context update and return any triggered stream items.
 
         Parameters
         ----------
@@ -569,13 +571,16 @@ class DefaultAgent(TemplateAgent):
 
         Returns
         -------
-        Iterable[AgentInput]
-            Follow-up agent inputs triggered by the update.
+        Iterable[AgentStreamItem]
+            Streamed response items triggered by the update.
         """
 
         yield from self._sync_iter_from_async(self.async_accept(context))
 
-    async def async_accept(self, context: AgentContext) -> AsyncIterator[AgentInput]:
+    async def async_accept(
+        self,
+        context: AgentContext,
+    ) -> AsyncIterator[AgentOutput]:
         """Asynchronously accept a context update.
 
         Parameters
@@ -585,34 +590,39 @@ class DefaultAgent(TemplateAgent):
 
         Yields
         ------
-        AgentInput
-            Follow-up agent inputs triggered by the update.
+        AgentStreamItem
+            Streamed response items triggered by the update.
         """
 
-        for agent_input in self.runtime.accept(context):
-            yield agent_input
-
+        self.runtime.accept(context)
         context_type = str(context.get("type", "") or "")
-        if context_type != "embedding":
+        if context_type == "embedding":
+            payload = context.get("data") or {}
+            if not isinstance(payload, dict):
+                return
+
+            status = str(payload.get("status") or "")
+            if status not in {"processing", "finished"}:
+                return
+
+            if status == "finished":
+                self._register_embedding_search_tool(
+                    payload.get("vector_store_instance")
+                )
+
+            text = await self._build_embedding_direct_output(
+                status=status,
+                doc_text=str(payload.get("text") or ""),
+            )
+            if text:
+                yield text
             return
 
-        payload = context.get("data") or {}
-        if not isinstance(payload, dict):
+        request = self._build_runtime_request(context)
+        if request is None:
             return
-
-        status = str(payload.get("status") or "")
-        if status not in {"processing", "finished"}:
-            return
-
-        if status == "finished":
-            self._register_embedding_search_tool(payload.get("vector_store_instance"))
-
-        text = await self._build_embedding_direct_output(
-            status=status,
-            doc_text=str(payload.get("text") or ""),
-        )
-        if text:
-            yield {"content": "", "direct_output": text}
+        async for item in self._stream_request(request):
+            yield item
 
     def _register_embedding_search_tool(self, vector_store_instance: Any) -> None:
         """Register the local-search tool for uploaded documents when ready."""

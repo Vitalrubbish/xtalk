@@ -18,7 +18,6 @@ from ..events import (
     EmbeddingStatusUpdated,
     LLMAgentLoop,
     SpeakerRecognized,
-    ThoughtUpdated,
 )
 from ..interfaces import Manager
 
@@ -52,12 +51,6 @@ class LLMAgentContextManager(Manager):
         self.pipeline = pipeline
         self.config: dict[str, Any] = config or {}
         self.llm_agent = pipeline.get_agent()
-
-    @Manager.event_handler(ThoughtUpdated, priority=20)
-    async def _handle_thought_updated(self, event: ThoughtUpdated) -> None:
-        """Forward ``ThoughtUpdated`` into the agent."""
-
-        await self._accept_event_context(event, context_type="thought")
 
     @Manager.event_handler(ASRResultFinal, priority=20)
     async def _handle_asr_result_final(self, event: ASRResultFinal) -> None:

@@ -14,7 +14,7 @@ from ..speech.interfaces import (
     TurnDetector,
 )
 from ..rewriter.interfaces import Rewriter
-from ..llm_agent.utils.interfaces import Agent
+from ..llm_agent.interfaces import Agent
 
 
 class PipelineOutputBase(TypedDict):
@@ -131,16 +131,6 @@ class Pipeline(ABC):
         -------
         Rewriter | None
             Caption rewriter or ``None``.
-        """
-        return None
-
-    def get_thought_rewriter_model(self) -> Rewriter | None:
-        """Return the thought rewriter used by ``ThoughtManager``.
-
-        Returns
-        -------
-        Rewriter | None
-            Thought rewriter or ``None``.
         """
         return None
 

@@ -2,7 +2,7 @@
 import time
 from dataclasses import dataclass, field, make_dataclass
 from typing import AsyncIterator, ClassVar, Dict, Any, Type
-from ..llm_agent.utils.interfaces import AgentOutput
+from ..llm_agent.interfaces import AgentOutput
 
 
 @dataclass
@@ -257,13 +257,6 @@ class CaptionUpdated(BaseEvent):
     text: str = ""
     is_final: bool = False
     reason: str = ""  # optional: refresh|final|error
-
-
-@dataclass
-class ThoughtUpdated(BaseEvent):
-    TYPE: ClassVar[str] = "thought.updated"
-    text: str = ""
-    is_final: bool = False
 
 
 @dataclass

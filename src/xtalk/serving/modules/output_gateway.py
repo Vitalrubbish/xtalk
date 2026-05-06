@@ -23,7 +23,6 @@ from ..events import (
     TTSChunkGenerated,
     TTSVoiceChange,
     TTSEmotionChange,
-    ThoughtUpdated,
     CaptionUpdated,
     LatencyMetricsUpdated,
     ToolCallOccurred,
@@ -222,16 +221,6 @@ class OutputGateway(EventListenerMixin):
             {
                 "speaker_id": event.speaker_id,
                 "reason": event.reason,
-            },
-        )
-
-    @EventListenerMixin.event_handler(ThoughtUpdated, priority=5)
-    async def _send_thought_updated(self, event: ThoughtUpdated) -> None:
-        await self._forward(
-            "thought_updated",
-            {
-                "text": event.text or "",
-                "is_final": bool(event.is_final),
             },
         )
 

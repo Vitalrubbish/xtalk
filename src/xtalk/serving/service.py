@@ -17,7 +17,6 @@ from .modules.llm_agent_generation_manager import LLMAgentConsumptionManager
 from .modules.captioner_manager import CaptionerManager
 from .modules.retrieval_manager import RetrievalManager
 from .modules.turn_taking_manager import TurnTakingManager
-from .modules.thought_manager import ThoughtManager
 from .modules.latency_manager import LatencyManager
 from .modules.vad_manager import VADManager
 from .modules.enhancer_manager import EnhancerManager
@@ -398,7 +397,6 @@ class DefaultService(Service):
         LLMAgentConsumptionManager,
         TTSManager,
         CaptionerManager,
-        ThoughtManager,
         RetrievalManager,
         TurnTakingManager,
         LatencyManager,

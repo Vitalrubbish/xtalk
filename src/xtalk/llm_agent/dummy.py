@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any, AsyncIterator, Iterable
 
-from .utils.interfaces import Agent, AgentContext, AgentOutput
+from .interfaces import Agent, AgentContext, AgentOutput
 
 
 class DummyAgent(Agent):

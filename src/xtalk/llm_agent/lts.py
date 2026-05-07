@@ -7,16 +7,21 @@ Implementation plan
 - Each partial-path inference uses the slow model and must produce structured
   output with three fields: reasoning content, whether the agent should start
   replying early, and the reply content itself.
-- Partial-path inference takes the current partial ASR text, the dialogue
-  history, and the latest completed assistant reply as input.
+- Partial-path inference treats the current partial ASR text as if it were
+  complete and takes the dialogue history, the latest completed partial ASR
+  text, and the latest completed partial-draft reply as input.
 - When ``ASRResultFinal`` arrives, aggregate partial-path results to generate
   the final reply. The current strategy is to use the latest completed partial
   result for the same turn.
 - Final-path generation uses the fast model and takes the dialogue history, the
-  final ASR text, and the selected partial reply draft as input.
+  final ASR text, and the selected partial reply draft as input. When no
+  partial draft is available, the fast model falls back to direct chat-history
+  messages plus the final ASR text.
 - A partial-path inference may decide to start replying early. When that
-  happens, emit the partial reply content immediately and discard the next
-  ``ASRResultFinal`` for the same turn.
+  happens on enough consecutive completed partials, emit the partial reply
+  content immediately and discard the next ``ASRResultFinal`` for the same
+  turn. The current threshold is two consecutive ``should_start_reply = true``
+  results.
 - Every committed final reply, including early-start replies, must be injected
   into ``messages`` so later turns can see the updated conversation history.
 - All generation paths use streaming generation internally.
@@ -125,11 +130,13 @@ class LTSAgent(Agent):
     """
 
     BASE_PROMPT: str = ""
+    EARLY_REPLY_CONSECUTIVE_THRESHOLD: int = 2
     PARTIAL_INFERENCE_PROMPT_TEMPLATE: str = (
         "You are assisting a streaming speech agent.\n"
         "Given the dialogue history, the newest partial ASR text, "
         "and the latest completed partial-draft reply, decide whether the agent should start "
         "replying early to the partial ASR text, and create reply to the dialogue history and partial ASR text regardless of the reply decision.\n"
+        "Reply should be generated as if the current partial ASR text is complete."
         "Return exactly one JSON object and nothing else.\n"
         'The JSON object must contain keys "reasoning_content", '
         '"should_start_reply", and "reply_content".\n'
@@ -138,7 +145,8 @@ class LTSAgent(Agent):
         '"reply_content" must be a string.\n\n'
         "Dialogue history:\n{history}\n\n"
         "Current partial ASR:\n{partial_text}\n\n"
-        "Latest completed partial-draft reply:\n{latest_partial_reply}\n"
+        "Latest completed partial-draft reply to {last_partial_text}: "
+        "{latest_partial_reply}\n"
     )
     FINAL_RESPONSE_PROMPT_TEMPLATE: str = (
         "You are assisting a streaming speech agent.\n"
@@ -255,8 +263,8 @@ class LTSAgent(Agent):
             return messages
         return [SystemMessage(content=self.system_prompt), *messages]
 
-    def _get_latest_completed_partial_reply(self) -> str | None:
-        """Return the latest completed partial-draft reply content."""
+    def _get_latest_completed_partial_context(self) -> tuple[str, str] | None:
+        """Return the latest completed partial input text and reply content."""
 
         completed = [
             state
@@ -269,21 +277,24 @@ class LTSAgent(Agent):
         result = latest_state.result
         if result is None:
             return None
-        return result.reply_content
+        return latest_state.text, result.reply_content
 
     def _build_partial_prompt(
         self,
         *,
         history_text: str | None,
+        last_partial_text: str | None,
         latest_partial_reply: str | None,
         partial_text: str,
     ) -> str:
         """Build the slow-model prompt for one partial ASR update."""
 
         history = history_text or "<empty>"
+        last_partial = last_partial_text or "<none>"
         latest_partial_reply_text = latest_partial_reply or "<none>"
         return self.PARTIAL_INFERENCE_PROMPT_TEMPLATE.format(
             history=history,
+            last_partial_text=last_partial,
             latest_partial_reply=latest_partial_reply_text,
             partial_text=partial_text,
         )
@@ -292,6 +303,7 @@ class LTSAgent(Agent):
         self,
         *,
         history_text: str | None,
+        last_partial_text: str | None,
         latest_partial_reply: str | None,
         partial_text: str,
     ) -> list[BaseMessage]:
@@ -301,6 +313,8 @@ class LTSAgent(Agent):
         ----------
         history_text : str | None
             Serialized chat history without the current partial text.
+        last_partial_text : str | None
+            Input ASR text corresponding to the latest completed partial draft.
         latest_partial_reply : str | None
             Latest completed partial-draft reply, if any.
         partial_text : str
@@ -314,6 +328,7 @@ class LTSAgent(Agent):
 
         prompt = self._build_partial_prompt(
             history_text=history_text,
+            last_partial_text=last_partial_text,
             latest_partial_reply=latest_partial_reply,
             partial_text=partial_text,
         )
@@ -436,10 +451,47 @@ class LTSAgent(Agent):
             if state.turn_id != turn_id
         }
 
+    def _count_consecutive_ready_partials(
+        self,
+        *,
+        turn_id: int,
+        latest_partial_id: int,
+    ) -> int:
+        """Count consecutive ready-to-reply partials ending at one partial.
+
+        Parameters
+        ----------
+        turn_id : int
+            Turn identifier to constrain the scan.
+        latest_partial_id : int
+            Partial identifier where the consecutive scan should end.
+
+        Returns
+        -------
+        int
+            Number of consecutive completed partials for the same turn whose
+            ``should_start_reply`` is true, scanning backward from
+            ``latest_partial_id``.
+        """
+
+        consecutive_count = 0
+        current_partial_id = latest_partial_id
+        while current_partial_id > 0:
+            state = self._runtime.partials.get(current_partial_id)
+            if state is None or state.turn_id != turn_id:
+                break
+            result = state.result
+            if result is None or not result.should_start_reply:
+                break
+            consecutive_count += 1
+            current_partial_id -= 1
+        return consecutive_count
+
     async def _run_partial_inference(
         self,
         *,
         history_text: str | None,
+        last_partial_text: str | None,
         latest_partial_reply: str | None,
         partial_text: str,
     ) -> PartialInferenceResult:
@@ -447,6 +499,7 @@ class LTSAgent(Agent):
 
         messages = self._build_partial_messages(
             history_text=history_text,
+            last_partial_text=last_partial_text,
             latest_partial_reply=latest_partial_reply,
             partial_text=partial_text,
         )
@@ -489,7 +542,11 @@ class LTSAgent(Agent):
         history_text = self.get_chat_history(with_system=False)
 
         async with self._state_lock:
-            latest_partial_reply = self._get_latest_completed_partial_reply()
+            latest_partial_context = self._get_latest_completed_partial_context()
+            last_partial_text = None
+            latest_partial_reply = None
+            if latest_partial_context is not None:
+                last_partial_text, latest_partial_reply = latest_partial_context
             partial_id = self._runtime.next_partial_id
             self._runtime.next_partial_id += 1
             state = PartialInferenceState(
@@ -500,6 +557,7 @@ class LTSAgent(Agent):
             state.task = asyncio.create_task(
                 self._run_partial_inference(
                     history_text=history_text,
+                    last_partial_text=last_partial_text,
                     latest_partial_reply=latest_partial_reply,
                     partial_text=partial_text,
                 )
@@ -517,8 +575,12 @@ class LTSAgent(Agent):
             if current_state is None:
                 return
             current_state.result = result
+            ready_count = self._count_consecutive_ready_partials(
+                turn_id=turn_id,
+                latest_partial_id=partial_id,
+            )
             if (
-                result.should_start_reply
+                ready_count >= self.EARLY_REPLY_CONSECUTIVE_THRESHOLD
                 and turn_id not in self._runtime.discard_final_turn_ids
             ):
                 current_state.emitted_early = True

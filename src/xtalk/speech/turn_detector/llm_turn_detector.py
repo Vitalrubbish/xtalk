@@ -63,16 +63,21 @@ If you find the input abnormal, for example containing ASR misrecognized charact
         self,
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
+        speech_start: bool = False,
         speech_pause: Optional[bool] = None,
     ) -> TurnDetectionResult | list[TurnDetectionResult]:
-        return asyncio.run(self.async_detect(audio, text, speech_pause))
+        return asyncio.run(self.async_detect(audio, text, speech_start, speech_pause))
 
     async def async_detect(
         self,
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
+        speech_start: bool = False,
         speech_pause: Optional[bool] = None,
     ) -> TurnDetectionResult | list[TurnDetectionResult]:
+        del audio
+        if speech_start:
+            self._reset_incomplete_state()
         if text == None:
             # Avoid infinite incomplete first
             if self._incomplete_started_at != None:

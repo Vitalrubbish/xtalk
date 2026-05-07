@@ -750,6 +750,7 @@ class TurnDetector(ABC):
         self,
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
+        speech_start: bool = False,
         speech_pause: Optional[bool] = None,
     ) -> TurnDetectionResult | list[TurnDetectionResult]:
         """Detect conversational turn state from audio and/or text.
@@ -760,6 +761,9 @@ class TurnDetector(ABC):
             Current PCM 16-bit mono audio frame at 16 kHz.
         text : str | None, optional
             ASR text for the current turn.
+        speech_start : bool, optional
+            Whether VAD has just detected the start of speech. This may be
+            provided without ``audio`` or ``text``.
         speech_pause : bool | None, optional
             Whether the user appears to have paused speaking. This is typically
             provided together with ``text``.
@@ -777,6 +781,7 @@ class TurnDetector(ABC):
         self,
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
+        speech_start: bool = False,
         speech_pause: Optional[bool] = None,
     ) -> TurnDetectionResult | list[TurnDetectionResult]:
         """Asynchronously detect conversational turn state.
@@ -787,6 +792,9 @@ class TurnDetector(ABC):
             Current PCM 16-bit mono audio frame at 16 kHz.
         text : str | None, optional
             ASR text for the current turn.
+        speech_start : bool, optional
+            Whether VAD has just detected the start of speech. This may be
+            provided without ``audio`` or ``text``.
         speech_pause : bool | None, optional
             Whether the user appears to have paused speaking.
 
@@ -796,7 +804,13 @@ class TurnDetector(ABC):
             One or more turn-detection decisions.
         """
         loop = asyncio.get_running_loop()
-        func = partial(self.detect, audio=audio, text=text, speech_pause=speech_pause)
+        func = partial(
+            self.detect,
+            audio=audio,
+            text=text,
+            speech_start=speech_start,
+            speech_pause=speech_pause,
+        )
         result: TurnDetectionResult | list[TurnDetectionResult] = (
             await loop.run_in_executor(None, func)
         )

@@ -262,16 +262,21 @@ class SoulxDuplug(TurnDetector):
         self,
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
+        speech_start: bool = False,
         speech_pause: Optional[bool] = None,
     ) -> TurnDetectionResult | list[TurnDetectionResult]:
-        return asyncio.run(self.async_detect(audio, text, speech_pause))
+        return asyncio.run(
+            self.async_detect(audio, text, speech_start, speech_pause)
+        )
 
     async def async_detect(
         self,
         audio: Optional[bytes] = None,
         text: Optional[str] = None,
+        speech_start: bool = False,
         speech_pause: Optional[bool] = None,
     ) -> TurnDetectionResult | list[TurnDetectionResult]:
+        del speech_start
         if text is not None:
             return await self._handle_text_fallback(text, speech_pause)
 

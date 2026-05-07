@@ -1,15 +1,15 @@
 """Long-term-state agent scaffold.
 
-Implementation plan
--------------------
-- Start one LLM inference task for every ``ASRPartial`` event. The design may
-  later be extended to other event types.
-- Each partial-path inference uses the slow model and must produce structured
-  output with three fields: reasoning content, whether the agent should start
-  replying early, and the reply content itself.
+Implementation overview
+-----------------------
+- Start one LLM inference task for every ``ASRPartial`` event.
+- Each partial-path inference uses the slow model and produces structured
+  output with two fields: reasoning content and a partial-draft reply.
 - Partial-path inference treats the current partial ASR text as if it were
   complete and takes the dialogue history, the latest completed partial ASR
   text, and the latest completed partial-draft reply as input.
+- Partial-path inference never emits user-visible output directly in this
+  version. It only prepares draft state for the final path.
 - When ``ASRResultFinal`` arrives, aggregate partial-path results to generate
   the final reply. The current strategy is to use the latest completed partial
   result for the same turn.
@@ -17,16 +17,10 @@ Implementation plan
   final ASR text, and the selected partial reply draft as input. When no
   partial draft is available, the fast model falls back to direct chat-history
   messages plus the final ASR text.
-- A partial-path inference may decide to start replying early. When that
-  happens on enough consecutive completed partials, emit the partial reply
-  content immediately and discard the next ``ASRResultFinal`` for the same
-  turn. The current threshold is two consecutive ``should_start_reply = true``
-  results.
-- Every committed final reply, including early-start replies, must be injected
-  into ``messages`` so later turns can see the updated conversation history.
+- Every committed final reply must be injected into ``messages`` so later turns
+  can see the updated conversation history.
 - All generation paths use streaming generation internally.
 - This version does not support tools.
-- Logging and tests are intentionally deferred for now.
 """
 
 from __future__ import annotations
@@ -55,7 +49,6 @@ class PartialInferenceResult:
     """Structured output returned by the slow-model partial inference."""
 
     reasoning_content: str
-    should_start_reply: bool
     reply_content: str
 
 
@@ -68,7 +61,6 @@ class PartialInferenceState:
     text: str
     task: asyncio.Task[PartialInferenceResult] | None = None
     result: PartialInferenceResult | None = None
-    emitted_early: bool = False
 
 
 @dataclass
@@ -77,7 +69,6 @@ class LTSRuntimeState:
 
     next_partial_id: int = 1
     partials: dict[int, PartialInferenceState] = field(default_factory=dict)
-    discard_final_turn_ids: set[int] = field(default_factory=set)
 
 
 def _format_chat_history(
@@ -130,18 +121,16 @@ class LTSAgent(Agent):
     """
 
     BASE_PROMPT: str = ""
-    EARLY_REPLY_CONSECUTIVE_THRESHOLD: int = 999
     PARTIAL_INFERENCE_PROMPT_TEMPLATE: str = (
         "You are assisting a streaming speech agent.\n"
         "Given the dialogue history, the newest partial ASR text, "
-        "and the latest completed partial-draft reply, decide whether the agent should start "
-        "replying early to the partial ASR text, and create reply to the dialogue history and partial ASR text regardless of the reply decision.\n"
+        "and the latest completed partial-draft reply, create a draft reply to "
+        "the dialogue history and partial ASR text.\n"
         "Reply should be generated as if the current partial ASR text is complete."
         "Return exactly one JSON object and nothing else.\n"
-        'The JSON object must contain keys "reasoning_content", '
-        '"should_start_reply", and "reply_content".\n'
+        'The JSON object must contain keys "reasoning_content" and '
+        '"reply_content".\n'
         '"reasoning_content" must be a string.\n'
-        '"should_start_reply" must be a boolean.\n'
         '"reply_content" must be a string.\n\n'
         "Dialogue history:\n{history}\n\n"
         "Current partial ASR:\n{partial_text}\n\n"
@@ -422,17 +411,9 @@ class LTSAgent(Agent):
         if not isinstance(payload, dict):
             raise ValueError("Partial inference output must be a JSON object.")
         reasoning_content = payload.get("reasoning_content", "")
-        should_start_reply = payload.get("should_start_reply", False)
         reply_content = payload.get("reply_content", "")
-        if isinstance(should_start_reply, str):
-            should_start_reply = should_start_reply.strip().lower() in {
-                "1",
-                "true",
-                "yes",
-            }
         return PartialInferenceResult(
             reasoning_content=str(reasoning_content),
-            should_start_reply=bool(should_start_reply),
             reply_content=str(reply_content),
         )
 
@@ -459,42 +440,6 @@ class LTSAgent(Agent):
             for partial_id, state in self._runtime.partials.items()
             if state.turn_id != turn_id
         }
-
-    def _count_consecutive_ready_partials(
-        self,
-        *,
-        turn_id: int,
-        latest_partial_id: int,
-    ) -> int:
-        """Count consecutive ready-to-reply partials ending at one partial.
-
-        Parameters
-        ----------
-        turn_id : int
-            Turn identifier to constrain the scan.
-        latest_partial_id : int
-            Partial identifier where the consecutive scan should end.
-
-        Returns
-        -------
-        int
-            Number of consecutive completed partials for the same turn whose
-            ``should_start_reply`` is true, scanning backward from
-            ``latest_partial_id``.
-        """
-
-        consecutive_count = 0
-        current_partial_id = latest_partial_id
-        while current_partial_id > 0:
-            state = self._runtime.partials.get(current_partial_id)
-            if state is None or state.turn_id != turn_id:
-                break
-            result = state.result
-            if result is None or not result.should_start_reply:
-                break
-            consecutive_count += 1
-            current_partial_id -= 1
-        return consecutive_count
 
     async def _run_partial_inference(
         self,
@@ -546,6 +491,9 @@ class LTSAgent(Agent):
     ) -> AsyncIterator[AgentOutput]:
         """Handle one partial ASR update."""
 
+        if False:
+            yield ""
+
         partial_text = str(payload.get("text", "") or "").strip()
         if not partial_text:
             return
@@ -580,27 +528,11 @@ class LTSAgent(Agent):
             return
         result = await task
 
-        emit_reply = False
         async with self._state_lock:
             current_state = self._runtime.partials.get(partial_id)
             if current_state is None:
                 return
             current_state.result = result
-            ready_count = self._count_consecutive_ready_partials(
-                turn_id=turn_id,
-                latest_partial_id=partial_id,
-            )
-            if (
-                ready_count >= self.EARLY_REPLY_CONSECUTIVE_THRESHOLD
-                and turn_id not in self._runtime.discard_final_turn_ids
-            ):
-                current_state.emitted_early = True
-                self._runtime.discard_final_turn_ids.add(turn_id)
-                self._append_final_reply(partial_text, result.reply_content)
-                emit_reply = True
-
-        if emit_reply and result.reply_content:
-            yield result.reply_content
 
     async def _handle_asr_final(
         self,
@@ -614,10 +546,6 @@ class LTSAgent(Agent):
         turn_id = int(payload.get("turn_id", 0) or 0)
 
         async with self._state_lock:
-            if turn_id in self._runtime.discard_final_turn_ids:
-                self._runtime.discard_final_turn_ids.discard(turn_id)
-                self._drop_turn_partials(turn_id)
-                return
             latest_partial = self._select_latest_completed_partial(turn_id)
 
         history_text = self.get_chat_history(with_system=False)

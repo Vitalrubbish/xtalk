@@ -14,14 +14,24 @@ import time
 
 class LLMTurnDetector(TurnDetector):
     INCOMPLETE_MAX_LAST_SECS = 7
-    STOP_SPEAKING_PROMPT = """Classify the user's input. Output `backchannel` or `interrupt`. Apply the following rules in order:
+    STOP_SPEAKING_PROMPT = """Classify the user's input. Return exactly one JSON object with keys `reason` and `judgement`.
+
+`reason` must be a short string explaining why you reached the judgement.
+`judgement` must be exactly `backchannel` or `interrupt`.
+
+Apply the following rules in order:
 
 If the user's input is a backchannel expression, such as “mm-hmm” or “okay,” or "嗯嗯" or "对对" then output `backchannel`. Backchannel can only be very short, and semantically meaningless.
 
 If the user's input is semantically complete, or the intent is to interrupt someone else's response, then output `interrupt`.
 
 """
-    START_GENERATION_PROMPT = """Classify the user's input. Output `finished` or `incomplete` or `wait`. Apply the following rules in order:
+    START_GENERATION_PROMPT = """Classify the user's input. Return exactly one JSON object with keys `reason` and `judgement`.
+
+`reason` must be a short string explaining why you reached the judgement.
+`judgement` must be exactly `finished` or `incomplete` or `wait`.
+
+Apply the following rules in order:
 
 As long as the user's input is semantically complete, output `finished`. Most inputs should fall in this category.
 

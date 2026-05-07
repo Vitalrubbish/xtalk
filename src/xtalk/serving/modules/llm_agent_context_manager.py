@@ -11,6 +11,7 @@ from ...log_utils import logger
 from ...pipelines import Pipeline
 from ..event_bus import EventBus
 from ..events import (
+    ASRResultPartial,
     ASRResultFinal,
     BaseEvent,
     CaptionUpdated,
@@ -51,6 +52,12 @@ class LLMAgentContextManager(Manager):
         self.pipeline = pipeline
         self.config: dict[str, Any] = config or {}
         self.llm_agent = pipeline.get_agent()
+
+    @Manager.event_handler(ASRResultPartial, priority=20)
+    async def _handle_asr_result_partial(self, event: ASRResultPartial) -> None:
+        """Forward ``ASRResultPartial`` into the agent."""
+
+        await self._accept_event_context(event, context_type="asr_partial")
 
     @Manager.event_handler(ASRResultFinal, priority=20)
     async def _handle_asr_result_final(self, event: ASRResultFinal) -> None:

@@ -130,7 +130,7 @@ class LTSAgent(Agent):
     """
 
     BASE_PROMPT: str = ""
-    EARLY_REPLY_CONSECUTIVE_THRESHOLD: int = 2
+    EARLY_REPLY_CONSECUTIVE_THRESHOLD: int = 999
     PARTIAL_INFERENCE_PROMPT_TEMPLATE: str = (
         "You are assisting a streaming speech agent.\n"
         "Given the dialogue history, the newest partial ASR text, "
@@ -145,7 +145,7 @@ class LTSAgent(Agent):
         '"reply_content" must be a string.\n\n'
         "Dialogue history:\n{history}\n\n"
         "Current partial ASR:\n{partial_text}\n\n"
-        "Latest completed partial-draft reply to {last_partial_text}: "
+        'Latest completed partial-draft reply to "{latest_partial_asr}": '
         "{latest_partial_reply}\n"
     )
     FINAL_RESPONSE_PROMPT_TEMPLATE: str = (
@@ -155,7 +155,8 @@ class LTSAgent(Agent):
         "draft when it is helpful.\n"
         "Return plain text only.\n\n"
         "Dialogue history:\n{history}\n\n"
-        "Latest partial reply draft:\n{partial_draft}\n\n"
+        'Latest partial reply draft for "{latest_partial_asr}":\n'
+        "{latest_partial_reply}\n\n"
         "Final ASR:\n{final_text}\n"
     )
 
@@ -283,18 +284,18 @@ class LTSAgent(Agent):
         self,
         *,
         history_text: str | None,
-        last_partial_text: str | None,
+        latest_partial_asr: str | None,
         latest_partial_reply: str | None,
         partial_text: str,
     ) -> str:
         """Build the slow-model prompt for one partial ASR update."""
 
         history = history_text or "<empty>"
-        last_partial = last_partial_text or "<none>"
+        latest_partial_asr_text = latest_partial_asr or "<none>"
         latest_partial_reply_text = latest_partial_reply or "<none>"
         return self.PARTIAL_INFERENCE_PROMPT_TEMPLATE.format(
             history=history,
-            last_partial_text=last_partial,
+            latest_partial_asr=latest_partial_asr_text,
             latest_partial_reply=latest_partial_reply_text,
             partial_text=partial_text,
         )
@@ -303,7 +304,7 @@ class LTSAgent(Agent):
         self,
         *,
         history_text: str | None,
-        last_partial_text: str | None,
+        latest_partial_asr: str | None,
         latest_partial_reply: str | None,
         partial_text: str,
     ) -> list[BaseMessage]:
@@ -313,7 +314,7 @@ class LTSAgent(Agent):
         ----------
         history_text : str | None
             Serialized chat history without the current partial text.
-        last_partial_text : str | None
+        latest_partial_asr : str | None
             Input ASR text corresponding to the latest completed partial draft.
         latest_partial_reply : str | None
             Latest completed partial-draft reply, if any.
@@ -328,7 +329,7 @@ class LTSAgent(Agent):
 
         prompt = self._build_partial_prompt(
             history_text=history_text,
-            last_partial_text=last_partial_text,
+            latest_partial_asr=latest_partial_asr,
             latest_partial_reply=latest_partial_reply,
             partial_text=partial_text,
         )
@@ -342,15 +343,18 @@ class LTSAgent(Agent):
         *,
         history_text: str | None,
         final_text: str,
-        partial_reply: str | None,
+        latest_partial_asr: str | None,
+        latest_partial_reply: str | None,
     ) -> str:
         """Build the fast-model prompt for final response generation."""
 
         history = history_text or "<empty>"
-        partial_draft = partial_reply or "<none>"
+        latest_partial_asr_text = latest_partial_asr or "<none>"
+        latest_partial_reply_text = latest_partial_reply or "<none>"
         return self.FINAL_RESPONSE_PROMPT_TEMPLATE.format(
             history=history,
-            partial_draft=partial_draft,
+            latest_partial_asr=latest_partial_asr_text,
+            latest_partial_reply=latest_partial_reply_text,
             final_text=final_text,
         )
 
@@ -359,7 +363,8 @@ class LTSAgent(Agent):
         *,
         history_text: str | None,
         final_text: str,
-        partial_reply: str | None,
+        latest_partial_asr: str | None,
+        latest_partial_reply: str | None,
     ) -> list[BaseMessage]:
         """Build the fast-model messages for one final ASR update.
 
@@ -369,7 +374,10 @@ class LTSAgent(Agent):
             Serialized chat history without the current final text.
         final_text : str
             Final ASR text for the current turn.
-        partial_reply : str | None
+        latest_partial_asr : str | None
+            Input ASR text corresponding to the latest completed partial draft
+            for the current turn.
+        latest_partial_reply : str | None
             Latest completed partial-draft reply for the current turn.
 
         Returns
@@ -378,11 +386,12 @@ class LTSAgent(Agent):
             Messages sent to the fast model.
         """
 
-        if partial_reply and partial_reply.strip():
+        if latest_partial_reply and latest_partial_reply.strip():
             prompt = self._build_final_prompt(
                 history_text=history_text,
                 final_text=final_text,
-                partial_reply=partial_reply,
+                latest_partial_asr=latest_partial_asr,
+                latest_partial_reply=latest_partial_reply,
             )
             return [
                 SystemMessage(content=self.system_prompt),
@@ -491,7 +500,7 @@ class LTSAgent(Agent):
         self,
         *,
         history_text: str | None,
-        last_partial_text: str | None,
+        latest_partial_asr: str | None,
         latest_partial_reply: str | None,
         partial_text: str,
     ) -> PartialInferenceResult:
@@ -499,7 +508,7 @@ class LTSAgent(Agent):
 
         messages = self._build_partial_messages(
             history_text=history_text,
-            last_partial_text=last_partial_text,
+            latest_partial_asr=latest_partial_asr,
             latest_partial_reply=latest_partial_reply,
             partial_text=partial_text,
         )
@@ -515,14 +524,16 @@ class LTSAgent(Agent):
         *,
         history_text: str | None,
         final_text: str,
-        partial_reply: str | None,
+        latest_partial_asr: str | None,
+        latest_partial_reply: str | None,
     ) -> AsyncIterator[str]:
         """Stream the fast-model final reply text for one final ASR."""
 
         messages = self._build_final_messages(
             history_text=history_text,
             final_text=final_text,
-            partial_reply=partial_reply,
+            latest_partial_asr=latest_partial_asr,
+            latest_partial_reply=latest_partial_reply,
         )
         async for chunk in self.fast_model.astream(messages):
             text = str(chunk.content or "")
@@ -543,10 +554,10 @@ class LTSAgent(Agent):
 
         async with self._state_lock:
             latest_partial_context = self._get_latest_completed_partial_context()
-            last_partial_text = None
+            latest_partial_asr = None
             latest_partial_reply = None
             if latest_partial_context is not None:
-                last_partial_text, latest_partial_reply = latest_partial_context
+                latest_partial_asr, latest_partial_reply = latest_partial_context
             partial_id = self._runtime.next_partial_id
             self._runtime.next_partial_id += 1
             state = PartialInferenceState(
@@ -557,7 +568,7 @@ class LTSAgent(Agent):
             state.task = asyncio.create_task(
                 self._run_partial_inference(
                     history_text=history_text,
-                    last_partial_text=last_partial_text,
+                    latest_partial_asr=latest_partial_asr,
                     latest_partial_reply=latest_partial_reply,
                     partial_text=partial_text,
                 )
@@ -610,12 +621,16 @@ class LTSAgent(Agent):
             latest_partial = self._select_latest_completed_partial(turn_id)
 
         history_text = self.get_chat_history(with_system=False)
-        partial_reply = latest_partial.result.reply_content if latest_partial else None
+        latest_partial_asr = latest_partial.text if latest_partial else None
+        latest_partial_reply = (
+            latest_partial.result.reply_content if latest_partial else None
+        )
         chunks: list[str] = []
         async for text in self._stream_final_response(
             history_text=history_text,
             final_text=final_text,
-            partial_reply=partial_reply,
+            latest_partial_asr=latest_partial_asr,
+            latest_partial_reply=latest_partial_reply,
         ):
             chunks.append(text)
             yield text

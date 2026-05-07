@@ -120,7 +120,9 @@ class LTSAgent(Agent):
         Base system prompt for future LTS interactions.
     """
 
-    BASE_PROMPT: str = ""
+    BASE_PROMPT: str = (
+        "Your reply should be conversational and concise. DO NOT include any special symbols that cannot be read aloud, but can include puntuations."
+    )
     PARTIAL_INFERENCE_PROMPT_TEMPLATE: str = (
         "You are assisting a streaming speech agent.\n"
         "Given the dialogue history, the newest partial ASR text, "
@@ -153,13 +155,13 @@ class LTSAgent(Agent):
         self,
         slow_model: BaseChatModel | dict[str, Any],
         fast_model: BaseChatModel | dict[str, Any],
-        system_prompt: str = BASE_PROMPT,
+        system_prompt: str = "",
     ) -> None:
         """Initialize the LTS agent scaffold."""
 
         self.slow_model = self._coerce_model(slow_model)
         self.fast_model = self._coerce_model(fast_model)
-        self.system_prompt = system_prompt
+        self.system_prompt = self.BASE_PROMPT + system_prompt
         self._session = AgentSession()
         self._runtime = LTSRuntimeState()
         self._state_lock = asyncio.Lock()
@@ -498,7 +500,7 @@ class LTSAgent(Agent):
         if not partial_text:
             return
         turn_id = int(payload.get("turn_id", 0) or 0)
-        history_text = self.get_chat_history(with_system=False)
+        history_text = self.get_chat_history(with_system=True)
 
         async with self._state_lock:
             latest_partial_context = self._get_latest_completed_partial_context()
@@ -548,7 +550,7 @@ class LTSAgent(Agent):
         async with self._state_lock:
             latest_partial = self._select_latest_completed_partial(turn_id)
 
-        history_text = self.get_chat_history(with_system=False)
+        history_text = self.get_chat_history(with_system=True)
         latest_partial_asr = latest_partial.text if latest_partial else None
         latest_partial_reply = (
             latest_partial.result.reply_content if latest_partial else None

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 from typing import Any, AsyncIterator, Callable, Iterable, TypeVar
@@ -238,6 +239,22 @@ class LTSAgent(Agent):
         self._session.messages.append(HumanMessage(content=user_text))
         self._session.messages.append(AIMessage(content=reply_text))
 
+    def _get_chat_messages_snapshot(self) -> list[BaseMessage]:
+        """Return one detached snapshot of the current chat messages.
+
+        Returns
+        -------
+        list[BaseMessage]
+            Chat history snapshot with the current system prompt normalized into
+            the first message.
+        """
+
+        messages = deepcopy(self._session.messages)
+        if messages and isinstance(messages[0], SystemMessage):
+            messages[0].content = self.system_prompt
+            return messages
+        return [SystemMessage(content=self.system_prompt), *messages]
+
     def _get_latest_completed_partial_reply(self) -> str | None:
         """Return the latest completed partial-draft reply content."""
 
@@ -271,6 +288,40 @@ class LTSAgent(Agent):
             partial_text=partial_text,
         )
 
+    def _build_partial_messages(
+        self,
+        *,
+        history_text: str | None,
+        latest_partial_reply: str | None,
+        partial_text: str,
+    ) -> list[BaseMessage]:
+        """Build the slow-model messages for one partial ASR update.
+
+        Parameters
+        ----------
+        history_text : str | None
+            Serialized chat history without the current partial text.
+        latest_partial_reply : str | None
+            Latest completed partial-draft reply, if any.
+        partial_text : str
+            Current partial ASR text.
+
+        Returns
+        -------
+        list[BaseMessage]
+            Messages sent to the slow model.
+        """
+
+        prompt = self._build_partial_prompt(
+            history_text=history_text,
+            latest_partial_reply=latest_partial_reply,
+            partial_text=partial_text,
+        )
+        return [
+            SystemMessage(content=self.system_prompt),
+            HumanMessage(content=prompt),
+        ]
+
     def _build_final_prompt(
         self,
         *,
@@ -287,6 +338,45 @@ class LTSAgent(Agent):
             partial_draft=partial_draft,
             final_text=final_text,
         )
+
+    def _build_final_messages(
+        self,
+        *,
+        history_text: str | None,
+        final_text: str,
+        partial_reply: str | None,
+    ) -> list[BaseMessage]:
+        """Build the fast-model messages for one final ASR update.
+
+        Parameters
+        ----------
+        history_text : str | None
+            Serialized chat history without the current final text.
+        final_text : str
+            Final ASR text for the current turn.
+        partial_reply : str | None
+            Latest completed partial-draft reply for the current turn.
+
+        Returns
+        -------
+        list[BaseMessage]
+            Messages sent to the fast model.
+        """
+
+        if partial_reply and partial_reply.strip():
+            prompt = self._build_final_prompt(
+                history_text=history_text,
+                final_text=final_text,
+                partial_reply=partial_reply,
+            )
+            return [
+                SystemMessage(content=self.system_prompt),
+                HumanMessage(content=prompt),
+            ]
+
+        messages = self._get_chat_messages_snapshot()
+        messages.append(HumanMessage(content=final_text))
+        return messages
 
     def _extract_json_text(self, text: str) -> str:
         """Extract one JSON object from model text output."""
@@ -355,18 +445,13 @@ class LTSAgent(Agent):
     ) -> PartialInferenceResult:
         """Run one slow-model partial inference to completion."""
 
-        prompt = self._build_partial_prompt(
+        messages = self._build_partial_messages(
             history_text=history_text,
             latest_partial_reply=latest_partial_reply,
             partial_text=partial_text,
         )
         chunks: list[str] = []
-        async for chunk in self.slow_model.astream(
-            [
-                SystemMessage(content=self.system_prompt),
-                HumanMessage(content=prompt),
-            ]
-        ):
+        async for chunk in self.slow_model.astream(messages):
             text = str(chunk.content or "")
             if text:
                 chunks.append(text)
@@ -381,17 +466,12 @@ class LTSAgent(Agent):
     ) -> AsyncIterator[str]:
         """Stream the fast-model final reply text for one final ASR."""
 
-        prompt = self._build_final_prompt(
+        messages = self._build_final_messages(
             history_text=history_text,
             final_text=final_text,
             partial_reply=partial_reply,
         )
-        async for chunk in self.fast_model.astream(
-            [
-                SystemMessage(content=self.system_prompt),
-                HumanMessage(content=prompt),
-            ]
-        ):
+        async for chunk in self.fast_model.astream(messages):
             text = str(chunk.content or "")
             if text:
                 yield text

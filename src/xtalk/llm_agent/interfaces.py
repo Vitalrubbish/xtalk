@@ -1,6 +1,6 @@
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Iterable, TypedDict, AsyncIterator, Callable, Any, Union
+from typing import Iterable, TypedDict, AsyncIterator, Callable, Any, Union, TypeVar
 
 from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
@@ -22,6 +22,7 @@ class AgentContext(TypedDict):
 
 
 AgentOutput = Union[str, ToolCall, ToolCallResultPayload]
+T = TypeVar("T")
 
 
 class Agent(ABC):
@@ -82,6 +83,45 @@ class Agent(ABC):
                     close()
                 except Exception:
                     pass
+
+    def sync_iter_from_async(self, async_iter: AsyncIterator[T]) -> Iterable[T]:
+        """Convert an async iterator into a synchronous generator.
+
+        Parameters
+        ----------
+        async_iter : AsyncIterator[T]
+            Async iterator to bridge into synchronous iteration.
+
+        Yields
+        ------
+        T
+            Items produced by ``async_iter``.
+        """
+
+        loop = asyncio.new_event_loop()
+        try:
+            while True:
+                try:
+                    item = loop.run_until_complete(async_iter.__anext__())
+                except StopAsyncIteration:
+                    break
+                yield item
+        finally:
+            aclose = getattr(async_iter, "aclose", None)
+            if callable(aclose):
+                try:
+                    loop.run_until_complete(aclose())
+                except Exception:
+                    pass
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            try:
+                loop.run_until_complete(loop.shutdown_default_executor())
+            except Exception:
+                pass
+            loop.close()
 
     @abstractmethod
     def clone(self) -> "Agent":

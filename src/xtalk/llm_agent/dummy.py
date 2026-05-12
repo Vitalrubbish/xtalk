@@ -1,6 +1,5 @@
 """Lightweight dummy agent implementation for tests and sample wiring."""
 
-import asyncio
 from typing import Any, AsyncIterator, Iterable
 
 from .interfaces import Agent, AgentContext, AgentOutput
@@ -43,7 +42,7 @@ class DummyAgent(Agent):
             Context payload forwarded from serving events.
         """
 
-        yield from self._sync_iter_from_async(self.async_accept(context))
+        yield from self.sync_iter_from_async(self.async_accept(context))
 
     async def async_accept(
         self,
@@ -61,33 +60,6 @@ class DummyAgent(Agent):
         if context_type not in {"asr_final", "embedding"}:
             return
         yield self.default_response
-
-    def _sync_iter_from_async(
-        self,
-        async_iter: AsyncIterator[AgentOutput],
-    ) -> Iterable[AgentOutput]:
-        """Convert an async iterator into a synchronous generator."""
-
-        loop = asyncio.new_event_loop()
-        try:
-            while True:
-                try:
-                    item = loop.run_until_complete(async_iter.__anext__())
-                except StopAsyncIteration:
-                    break
-                yield item
-        finally:
-            aclose = getattr(async_iter, "aclose", None)
-            if callable(aclose):
-                try:
-                    loop.run_until_complete(aclose())
-                except Exception:
-                    pass
-            try:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-            except Exception:
-                pass
-            loop.close()
 
     def clone(self) -> "Agent":
         """Create a fresh dummy agent with the same canned response.

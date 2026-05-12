@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 import re
-from typing import Any, AsyncIterator, Callable, Iterable, Optional, TypeVar
+from typing import Any, AsyncIterator, Callable, Iterable, Optional
 
 from langchain.chat_models.base import BaseChatModel
 from langchain_core.messages import (
@@ -48,9 +47,6 @@ Your response should be catered to the given Chat history, e.g. respond in the s
 """
 
 _AGENT_CONTEXTS_KEY = "_agent_runtime_contexts"
-T = TypeVar("T")
-
-
 @dataclass
 class AgentSession:
     """Mutable per-session state for the default LLM agent.
@@ -593,43 +589,6 @@ Caption:
 
         self._session.messages = messages
 
-    @contextmanager
-    def _temporary_event_loop(self) -> Iterable[asyncio.AbstractEventLoop]:
-        """Create a temporary event loop and clean it up on exit."""
-
-        loop = asyncio.new_event_loop()
-        try:
-            yield loop
-        finally:
-            try:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-            except Exception:
-                pass
-            try:
-                loop.run_until_complete(loop.shutdown_default_executor())
-            except Exception:
-                pass
-            loop.close()
-
-    def _sync_iter_from_async(self, async_iter: AsyncIterator[T]) -> Iterable[T]:
-        """Convert an async iterator into a synchronous generator."""
-
-        with self._temporary_event_loop() as loop:
-            try:
-                while True:
-                    try:
-                        item = loop.run_until_complete(async_iter.__anext__())
-                    except StopAsyncIteration:
-                        break
-                    yield item
-            finally:
-                aclose = getattr(async_iter, "aclose", None)
-                if callable(aclose):
-                    try:
-                        loop.run_until_complete(aclose())
-                    except Exception:
-                        pass
-
     def _filter_text(self, text: str) -> str:
         """Normalize one response fragment for TTS output."""
 
@@ -834,7 +793,7 @@ Caption:
             Streamed response items triggered by the update.
         """
 
-        yield from self._sync_iter_from_async(self.async_accept(context))
+        yield from self.sync_iter_from_async(self.async_accept(context))
 
     async def async_accept(
         self,

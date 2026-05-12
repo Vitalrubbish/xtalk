@@ -682,6 +682,7 @@ class TurnDetectionSemantic(Enum):
     COMPLETE = "complete"
     WAIT = "wait"
     BACKCHANNEL = "backchannel"
+    SHOULD_BACKCHANNEL = "should_backchannel"
 
 
 @dataclass(frozen=True)

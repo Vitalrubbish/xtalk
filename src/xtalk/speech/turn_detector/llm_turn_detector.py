@@ -33,7 +33,7 @@ If the user's input is semantically complete, or the intent is to interrupt some
 
 Apply the following rules in order:
 
-As long as the user's input is semantically complete, output `finished`. Most inputs should fall in this category.
+As long as the user's input is semantically complete or is a question, output `finished`, even if there is hesitation words in it. Most inputs should fall in this category.
 
 If the user's input explicitly indicates "wait" or "等一下", then output `wait`.
 

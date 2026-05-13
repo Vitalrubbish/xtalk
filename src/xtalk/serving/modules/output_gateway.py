@@ -315,7 +315,7 @@ class OutputGateway(EventListenerMixin):
 
     @EventListenerMixin.event_handler(ToolCallOccurred, priority=5)
     async def _send_tool_called_signal(self, event: ToolCallOccurred) -> None:
-        if event.name == "tool_call_result":
+        if event.name in {"tool_call_result", "direct_audio"}:
             return
         await self._forward(
             "tool_called",

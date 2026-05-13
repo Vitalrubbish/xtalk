@@ -9,6 +9,7 @@ import asyncio
 
 @dataclass
 class TextCollector:
+    # TODO: able to collect tool result
     parts: list[str] = field(default_factory=list)
 
     @property
@@ -39,7 +40,8 @@ class ExperimentalAgent(Agent):
             async for item in self._loop_runner():
                 yield item
         if context_type == "asr_final":
-            pass
+            async for item in self._handle_asr_final(context_data["text"]):
+                yield item
 
     def clone(self) -> "ExperimentalAgent":
         return ExperimentalAgent(
@@ -68,11 +70,12 @@ class ExperimentalAgent(Agent):
     def _append_message(self, message: BaseMessage) -> None:
         self.messages.append(message)
 
-    async def _stream_and_collect(
-        self, stream: AsyncIterator[str], collector: TextCollector
+    async def _stream_and_collect_text(
+        self, stream: AsyncIterator[AgentOutput], collector: TextCollector
     ) -> AsyncIterator[str]:
         async for chunk in stream:
-            collector.parts.append(chunk)
+            if isinstance(chunk, str):
+                collector.parts.append(chunk)
             yield chunk
 
     ###
@@ -82,7 +85,7 @@ class ExperimentalAgent(Agent):
             # greeting: AI take initiative to call user on session start
             if len(self.messages) == 1:
                 collector = TextCollector()
-                async for item in self._stream_and_collect(
+                async for item in self._stream_and_collect_text(
                     self._stream_greeting(), collector
                 ):
                     yield item
@@ -94,8 +97,22 @@ class ExperimentalAgent(Agent):
             # avoid blocking the event loop
             await asyncio.sleep(0.2)
 
+    async def _handle_asr_final(self, asr_text: str) -> AsyncIterator[AgentOutput]:
+        self._append_message(HumanMessage(content=asr_text))
+        collector = TextCollector()
+        async for item in self._stream_and_collect_text(
+            self._stream_messages(), collector
+        ):
+            yield item
+        self._append_message(AIMessage(content=collector.text))
+
     async def _stream_greeting(self) -> AsyncIterator[str]:
         prompt = self.BASE_GREETING_GEN_PROMPT + self.system_prompt
         messages = [SystemMessage(content=prompt)]
         async for chunk in self.model.astream(messages):
+            yield chunk.content
+
+    async def _stream_messages(self) -> AsyncIterator[AgentOutput]:
+        # TODO: handle tool calling and tool result
+        async for chunk in self.model.astream(self.messages):
             yield chunk.content

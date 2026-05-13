@@ -9,6 +9,7 @@ from ..log_utils import logger
 from .event_bus import EventBus
 from .interfaces import Manager
 from .modules.asr_manager import ASRManager
+from .modules.direct_audio_manager import DirectAudioManager
 from .modules.tts_manager import TTSManager
 from .modules.output_gateway import OutputGateway
 from .modules.input_gateway import InputGateway
@@ -395,6 +396,7 @@ class DefaultService(Service):
         ASRManager,
         LLMAgentContextManager,
         LLMAgentConsumptionManager,
+        DirectAudioManager,
         TTSManager,
         CaptionerManager,
         RetrievalManager,

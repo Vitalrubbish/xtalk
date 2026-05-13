@@ -201,6 +201,8 @@ class AudioConsumer:
                 is_final=is_final_chunk,
                 chat_history=self._turn_chat_history,
             )
+        if self._is_blank_text(recognized_text):
+            return
         if is_asr_end:
             self._recognized_text = recognized_text
             await self._publish_event(
@@ -224,6 +226,11 @@ class AudioConsumer:
                     speech_pause=is_final_chunk,
                 )
             )
+
+    @staticmethod
+    def _is_blank_text(text: str) -> bool:
+        """Return whether recognized text is empty after trimming whitespace."""
+        return not text.strip()
 
     async def _publish_event(self, event: BaseEvent):
         await self._event_bus.publish(event)

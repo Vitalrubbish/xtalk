@@ -280,13 +280,13 @@ class OutputGateway(EventListenerMixin):
 
     @EventListenerMixin.event_handler(VADSpeechStart, priority=5)
     async def _send_vad_start_signal(self, event: VADSpeechStart) -> None:
-        if event.origin != "server":
+        if event.origin == "client":
             return
         await self._forward("vad_speech_start", {"origin": event.origin})
 
     @EventListenerMixin.event_handler(VADSpeechEnd, priority=5)
     async def _send_vad_end_signal(self, event: VADSpeechEnd) -> None:
-        if event.origin != "server":
+        if event.origin == "client":
             return
         await self._forward("vad_speech_end", {"origin": event.origin})
 

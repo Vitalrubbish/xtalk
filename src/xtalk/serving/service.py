@@ -9,14 +9,15 @@ from ..log_utils import logger
 from .event_bus import EventBus
 from .interfaces import Manager
 from .modules.asr_manager import ASRManager
+from .modules.direct_audio_manager import DirectAudioManager
 from .modules.tts_manager import TTSManager
 from .modules.output_gateway import OutputGateway
 from .modules.input_gateway import InputGateway
-from .modules.llm_agent_manager import LLMAgentManager
+from .modules.llm_agent_context_manager import LLMAgentContextManager
+from .modules.llm_agent_generation_manager import LLMAgentConsumptionManager
 from .modules.captioner_manager import CaptionerManager
 from .modules.retrieval_manager import RetrievalManager
 from .modules.turn_taking_manager import TurnTakingManager
-from .modules.thought_manager import ThoughtManager
 from .modules.latency_manager import LatencyManager
 from .modules.vad_manager import VADManager
 from .modules.enhancer_manager import EnhancerManager
@@ -25,7 +26,7 @@ from .modules.embeddings_manager import EmbeddingsManager
 from .modules.recording_manager import RecordingManager
 from .modules.turn_detector_manager import TurnDetectorManager
 from .modules.persistence_manager import PersistenceManager
-from .events import BaseEvent
+from .events import BaseEvent, LLMAgentLoop
 from ..pipelines import Pipeline
 from .interfaces import EventListenerMixin, EventOverrides, TurnStateRestorable
 
@@ -284,6 +285,10 @@ class Service:
                 "This Service instance is a prototype and cannot handle messages."
             )
         await self.input_gateway.handle_connection(already_accepted=already_accepted)
+        await self.event_bus.publish(
+            LLMAgentLoop(session_id=self.session_id),
+            wait_for_completion=True,
+        )
         await self.input_gateway.handle_message_loop()
 
     def restore_conversation(self, *, messages: list[dict[str, Any]]) -> None:
@@ -356,7 +361,9 @@ class Service:
     def _should_enable_persistence_manager(self) -> bool:
         persistence_store = self.service_config.get("persistence_store")
         user_id = self.service_config.get("user_id")
-        return persistence_store is not None and isinstance(user_id, str) and bool(user_id)
+        return (
+            persistence_store is not None and isinstance(user_id, str) and bool(user_id)
+        )
 
     @staticmethod
     def _clone_event_overrides(
@@ -387,10 +394,11 @@ class DefaultService(Service):
 
     MANAGER_CLASSES: list[Type[Manager]] = [
         ASRManager,
-        LLMAgentManager,
+        LLMAgentContextManager,
+        LLMAgentConsumptionManager,
+        DirectAudioManager,
         TTSManager,
         CaptionerManager,
-        ThoughtManager,
         RetrievalManager,
         TurnTakingManager,
         LatencyManager,

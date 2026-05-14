@@ -16,21 +16,50 @@ Notes:
   content: textual output from the tool
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Literal, TypedDict
+
+
+class ToolCallResultArgs(TypedDict):
+    """Serialized result for one completed tool invocation.
+
+    Notes
+    -----
+    ``name`` stores the original tool name, ``args`` stores the original tool
+    arguments, and ``content`` stores the textual tool output.
+    """
+
+    name: str
+    args: dict[str, Any]
+    content: str
+
+
+class ToolCallResultPayload(TypedDict):
+    """Structured stream payload emitted after a tool finishes.
+    """
+
+    name: Literal["tool_call_result"]
+    args: ToolCallResultArgs
 
 
 def build_tool_call_result_payload(
     *, name: str, args: Dict[str, Any] | None, content: str
-) -> Dict[str, Any]:
+) -> ToolCallResultPayload:
     """Build a normalized payload for tool_call_result events.
 
-    Args:
-        name: Original tool name (e.g., "web_search")
-        args: Original tool arguments (dict or None)
-        content: Tool textual result
+    Parameters
+    ----------
+    name : str
+        Original tool name such as ``"web_search"``.
+    args : Dict[str, Any] | None
+        Original tool arguments.
+    content : str
+        Textual tool result.
 
-    Returns:
-        Dict formatted as {"name": "tool_call_result", "args": {...}}
+    Returns
+    -------
+    ToolCallResultPayload
+        Structured payload formatted as
+        ``{"name": "tool_call_result", "args": {...}}``.
     """
     return {
         "name": "tool_call_result",

@@ -26,6 +26,7 @@ from ..interfaces import Manager
 from ..events import (
     EnhancedAudioFrameReceived,
     ASRResultPartial,
+    VADSpeechStart,
     TTSChunkGenerated,
     TTSPlaybackFinished,
     TTSStopped,
@@ -90,6 +91,17 @@ class TurnDetectorManager(Manager):
 
         except Exception as e:
             logger.error("[TurnDetectorManager] ASR partial processing failed: %s", e)
+
+    @Manager.event_handler(VADSpeechStart)
+    async def _on_vad_speech_start(self, event: VADSpeechStart) -> None:
+        """Notify the turn detector that VAD has just detected speech start."""
+        try:
+            if self.turn_detector is None:
+                return
+            result = await self.turn_detector.async_detect(speech_start=True)
+            await self._handle_detection_result(result)
+        except Exception as e:
+            logger.error("[TurnDetectorManager] VAD start processing failed: %s", e)
 
     @Manager.event_handler(TTSChunkGenerated)
     async def _on_tts_chunk_generated(self, event: TTSChunkGenerated) -> None:

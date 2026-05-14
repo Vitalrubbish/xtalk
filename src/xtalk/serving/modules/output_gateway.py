@@ -23,7 +23,6 @@ from ..events import (
     TTSChunkGenerated,
     TTSVoiceChange,
     TTSEmotionChange,
-    ThoughtUpdated,
     CaptionUpdated,
     LatencyMetricsUpdated,
     ToolCallOccurred,
@@ -225,16 +224,6 @@ class OutputGateway(EventListenerMixin):
             },
         )
 
-    @EventListenerMixin.event_handler(ThoughtUpdated, priority=5)
-    async def _send_thought_updated(self, event: ThoughtUpdated) -> None:
-        await self._forward(
-            "thought_updated",
-            {
-                "text": event.text or "",
-                "is_final": bool(event.is_final),
-            },
-        )
-
     @EventListenerMixin.event_handler(CaptionUpdated, priority=5)
     async def _send_caption_updated(self, event: CaptionUpdated) -> None:
         await self._forward(
@@ -326,7 +315,7 @@ class OutputGateway(EventListenerMixin):
 
     @EventListenerMixin.event_handler(ToolCallOccurred, priority=5)
     async def _send_tool_called_signal(self, event: ToolCallOccurred) -> None:
-        if event.name == "tool_call_result":
+        if event.name in {"tool_call_result", "direct_audio"}:
             return
         await self._forward(
             "tool_called",

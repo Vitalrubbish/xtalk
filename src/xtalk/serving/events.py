@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import time
 from dataclasses import dataclass, field, make_dataclass
-from typing import ClassVar, Dict, Any, Type
-from ..pipelines.context import PipelineContext
+from typing import AsyncIterator, ClassVar, Dict, Any, Type
+from ..llm_agent.interfaces import AgentOutput
 
 
 @dataclass
@@ -260,13 +260,6 @@ class CaptionUpdated(BaseEvent):
 
 
 @dataclass
-class ThoughtUpdated(BaseEvent):
-    TYPE: ClassVar[str] = "thought.updated"
-    text: str = ""
-    is_final: bool = False
-
-
-@dataclass
 class ToolCallOccurred(BaseEvent):
     """LLM/Agent tool invocation notification."""
 
@@ -280,6 +273,23 @@ class RetrievalUpdated(BaseEvent):
     TYPE: ClassVar[str] = "retrieval.updated"
     text: str = ""
     is_final: bool = False
+
+
+@dataclass
+class EmbeddingStatusUpdated(BaseEvent):
+    """Embedding lifecycle update consumed by the LLM agent context manager."""
+
+    TYPE: ClassVar[str] = "embedding.status_updated"
+    status: str = ""
+    text: str | None = None
+    vector_store_instance: Any = None
+
+
+@dataclass
+class LLMAgentLoop(BaseEvent):
+    """Request one agent-context accept loop iteration for the session."""
+
+    TYPE: ClassVar[str] = "llm.agent_loop"
 
 
 @dataclass
@@ -333,10 +343,11 @@ class TurnTTSFlushRequested(BaseEvent):
 
 
 @dataclass
-class TurnLLMAgentStartRequested(BaseEvent):
-    TYPE: ClassVar[str] = "turn.llm_agent_start_requested"
-    text: str = ""
-    context_snapshot: PipelineContext | None = None
+class ConsumeLLMAgentGenerationRequested(BaseEvent):
+    """Request consumption of one LLM-agent output stream."""
+
+    TYPE: ClassVar[str] = "llm_agent.consume_generation_requested"
+    stream: AsyncIterator[AgentOutput]
 
 
 @dataclass

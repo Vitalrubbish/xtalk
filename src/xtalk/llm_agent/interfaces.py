@@ -1,115 +1,66 @@
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Iterable, Union, TypedDict, List, AsyncIterator, Callable, Any
-from ..pipelines.context import PipelineContext
+from typing import Iterable, TypedDict, AsyncIterator, Callable, Any, Union, TypeVar
+
 from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
 
+from .tools.utils import ToolCallResultPayload
 
-class AgentInput(TypedDict):
-    """Structured payload for agent generation input.
+
+class AgentContext(TypedDict):
+    """Incremental context update accepted by an agent.
 
     Notes
     -----
-    ``content`` stores the raw user text and ``context`` carries the current
-    ``PipelineContext``.
+    ``type`` identifies the logical context stream, while ``data`` carries the
+    event-derived payload for that stream.
     """
 
-    content: str
-    context: PipelineContext
+    type: str
+    data: dict[str, Any]
+
+
+AgentOutput = Union[str, ToolCall, ToolCallResultPayload]
+T = TypeVar("T")
 
 
 class Agent(ABC):
     """Abstract interface for conversational agents used by Xtalk."""
 
     @abstractmethod
-    def generate(
-        self, input: Union[str, AgentInput]
-    ) -> Union[str, tuple[str, List[ToolCall]]]:
-        """Generate a complete response for the input.
+    def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
+        """Accept an incremental context update.
 
         Parameters
         ----------
-        input : str | AgentInput
-            Raw user text or a structured payload containing both text and
-            pipeline context.
+        context : AgentContext
+            Context payload forwarded from serving-layer events.
 
-        Returns
-        -------
-        str | tuple[str, List[ToolCall]]
-            Plain response text, or a ``(text, tool_calls)`` tuple when tool
-            calls should be surfaced alongside the final text.
+        Yields
+        ------
+        AgentStreamItem
+            Zero or more streamed response items triggered by the context
+            update.
         """
         pass
 
-    def generate_stream(
-        self, input: Union[str, AgentInput]
-    ) -> Iterable[Union[str, ToolCall, dict[str, Any]]]:
-        """Stream response chunks for the input.
+    async def async_accept(self, context: AgentContext) -> AsyncIterator[AgentOutput]:
+        """Asynchronously accept an incremental context update.
 
         Parameters
         ----------
-        input : str | AgentInput
-            Raw user text or structured agent input.
+        context : AgentContext
+            Context payload forwarded from serving-layer events.
 
         Yields
         ------
-        str | ToolCall | dict[str, Any]
-            Tool calls, tool-result payloads, followed by text chunks. The
-            default implementation delegates to ``generate()`` and yields its
-            result in streaming form.
-        """
-        result = self.generate(input)
-        if isinstance(result, tuple):
-            text, tool_calls = result
-            # Yield tool calls first so upstream can react early
-            for tc in tool_calls:
-                yield tc
-            yield text
-        else:
-            yield result
-
-    async def async_generate(
-        self, input: Union[str, AgentInput]
-    ) -> Union[str, tuple[str, List[ToolCall]]]:
-        """Asynchronously generate a complete response.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Raw user text or structured agent input.
-
-        Returns
-        -------
-        str | tuple[str, List[ToolCall]]
-            Same result contract as ``generate()``.
+        AgentStreamItem
+            Streamed response items triggered by the context update.
         """
 
         loop = asyncio.get_running_loop()
-
-        def _invoke():
-            return self.generate(input)
-
-        return await loop.run_in_executor(None, _invoke)
-
-    async def async_generate_stream(
-        self, input: Union[str, AgentInput]
-    ) -> AsyncIterator[Union[str, ToolCall, dict[str, Any]]]:
-        """Asynchronously stream agent outputs.
-
-        Parameters
-        ----------
-        input : str | AgentInput
-            Raw user text or structured agent input.
-
-        Yields
-        ------
-        str | ToolCall | dict[str, Any]
-            Streamed outputs from ``generate_stream()``.
-        """
-
-        loop = asyncio.get_running_loop()
-        iterator = iter(self.generate_stream(input))
+        iterator = iter(self.accept(context))
         sentinel = object()
 
         try:
@@ -133,6 +84,45 @@ class Agent(ABC):
                 except Exception:
                     pass
 
+    def sync_iter_from_async(self, async_iter: AsyncIterator[T]) -> Iterable[T]:
+        """Convert an async iterator into a synchronous generator.
+
+        Parameters
+        ----------
+        async_iter : AsyncIterator[T]
+            Async iterator to bridge into synchronous iteration.
+
+        Yields
+        ------
+        T
+            Items produced by ``async_iter``.
+        """
+
+        loop = asyncio.new_event_loop()
+        try:
+            while True:
+                try:
+                    item = loop.run_until_complete(async_iter.__anext__())
+                except StopAsyncIteration:
+                    break
+                yield item
+        finally:
+            aclose = getattr(async_iter, "aclose", None)
+            if callable(aclose):
+                try:
+                    loop.run_until_complete(aclose())
+                except Exception:
+                    pass
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            try:
+                loop.run_until_complete(loop.shutdown_default_executor())
+            except Exception:
+                pass
+            loop.close()
+
     @abstractmethod
     def clone(self) -> "Agent":
         """Clone the agent for a new session.
@@ -155,8 +145,14 @@ class Agent(ABC):
         """
         pass
 
-    def get_chat_history(self) -> str | None:
+    def get_chat_history(self, with_system: bool = False) -> str | None:
         """Return the serialized conversation history when available.
+
+        Parameters
+        ----------
+        with_system : bool, optional
+            Whether to include the system prompt message when supported by the
+            concrete implementation.
 
         Returns
         -------
@@ -165,7 +161,7 @@ class Agent(ABC):
         """
         return None
 
-    def add_tools(self, tools: list[BaseTool | Callable[[], BaseTool]]):
+    def add_tools(self, tools: list[BaseTool | Callable[[], BaseTool]]) -> None:
         """Attach tools to the agent.
 
         Parameters

@@ -1059,7 +1059,7 @@ Return the lock guarding listening state changes.
 _Defined in `xtalk.speech.interfaces`._
 
 ```python
-def detect(self, audio: Optional[bytes] = None, text: Optional[str] = None, speech_pause: Optional[bool] = None) -> TurnDetectionResult | list[TurnDetectionResult]
+def detect(self, audio: Optional[bytes] = None, text: Optional[str] = None, speech_pause: Optional[bool] = None) -> TurnDetectionResult
 ```
 
 Detect conversational turn state from audio and/or text.
@@ -1076,17 +1076,15 @@ Detect conversational turn state from audio and/or text.
 
 ##### Returns
 
-- `TurnDetectionResult | list[TurnDetectionResult]`
-  One or more turn-detection decisions. When multiple results are
-  returned, ``STOP_SPEAKING`` should be processed before
-  ``START_GENERATION``.
+- `TurnDetectionResult`
+  Turn-detection decision for the current input.
 
 #### async_detect
 
 _Defined in `xtalk.speech.interfaces`._
 
 ```python
-async def async_detect(self, audio: Optional[bytes] = None, text: Optional[str] = None, speech_pause: Optional[bool] = None) -> TurnDetectionResult | list[TurnDetectionResult]
+async def async_detect(self, audio: Optional[bytes] = None, text: Optional[str] = None, speech_pause: Optional[bool] = None) -> TurnDetectionResult
 ```
 
 Asynchronously detect conversational turn state.
@@ -1102,8 +1100,8 @@ Asynchronously detect conversational turn state.
 
 ##### Returns
 
-- `TurnDetectionResult | list[TurnDetectionResult]`
-  One or more turn-detection decisions.
+- `TurnDetectionResult`
+  Turn-detection decision for the current input.
 
 #### clone
 

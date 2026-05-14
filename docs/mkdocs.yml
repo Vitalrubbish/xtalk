@@ -39,6 +39,7 @@ plugins:
             Tutorial: 教程
             Quickstart: 快速开始
             Docs: 文档
+            Developer: 开发者参考
             # Tabs under Tutorial
             'Start the Service': 启动服务
             'Config the Service': 配置服务
@@ -74,3 +75,5 @@ nav:
   - API:
       - 'Client': api/client/globals.md
       - 'Server': api/server/index.md
+  - Developer: developer.md
+

@@ -59,8 +59,8 @@ class ASR(ABC):
         audio : bytes
             Incremental PCM 16-bit mono audio bytes.
         is_final : bool, optional
-            Whether the caller is forcing a final decode because the user paused
-            or the turn ended.
+            Whether the caller is forcing a temporal final decode because the user paused
+            or the turn ended. Does not mean the ASR state must be reset, but may be used as a hint to optimize decoding.
         chat_history : str | None, optional
             Serialized chat history for the current session, excluding the
             in-progress turn when unavailable.

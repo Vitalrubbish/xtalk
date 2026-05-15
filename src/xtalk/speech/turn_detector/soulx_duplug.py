@@ -124,7 +124,7 @@ class SoulxDuplug(TurnDetector):
 
     async def _handle_text_fallback(
         self, text: str, speech_pause: Optional[bool]
-    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+    ) -> TurnDetectionResult:
         """
         Handle the text-driven fallback path.
 
@@ -162,7 +162,7 @@ class SoulxDuplug(TurnDetector):
     # ----------------------------
     async def _commit_true_speak(
         self,
-    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+    ) -> TurnDetectionResult:
         """Emit the confirmed START_GENERATION result and cancel fallback state."""
         await self._cancel_fallback()
         return TurnDetectionResult(
@@ -172,7 +172,7 @@ class SoulxDuplug(TurnDetector):
 
     def _result_for_listening_state(
         self, state_name: Literal["idle", "nonidle", "speak", "blank"]
-    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+    ) -> TurnDetectionResult:
         """
         Handle the primary listening-side audio state machine.
 
@@ -208,7 +208,7 @@ class SoulxDuplug(TurnDetector):
 
     async def _handle_audio_primary(
         self, audio: bytes
-    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+    ) -> TurnDetectionResult:
         """Handle the primary audio-driven turn detection path."""
         if self._ws is None:
             await self._connect()
@@ -264,7 +264,7 @@ class SoulxDuplug(TurnDetector):
         text: Optional[str] = None,
         speech_start: bool = False,
         speech_pause: Optional[bool] = None,
-    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+    ) -> TurnDetectionResult:
         return asyncio.run(
             self.async_detect(audio, text, speech_start, speech_pause)
         )
@@ -275,7 +275,7 @@ class SoulxDuplug(TurnDetector):
         text: Optional[str] = None,
         speech_start: bool = False,
         speech_pause: Optional[bool] = None,
-    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+    ) -> TurnDetectionResult:
         del speech_start
         if text is not None:
             return await self._handle_text_fallback(text, speech_pause)

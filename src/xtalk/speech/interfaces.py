@@ -59,8 +59,8 @@ class ASR(ABC):
         audio : bytes
             Incremental PCM 16-bit mono audio bytes.
         is_final : bool, optional
-            Whether the caller is forcing a final decode because the user paused
-            or the turn ended.
+            Whether the caller is forcing a temporal final decode because the user paused
+            or the turn ended. Does not mean the ASR state must be reset, but may be used as a hint to optimize decoding.
         chat_history : str | None, optional
             Serialized chat history for the current session, excluding the
             in-progress turn when unavailable.
@@ -685,6 +685,11 @@ class TurnDetectionSemantic(Enum):
     SHOULD_BACKCHANNEL = "should_backchannel"
 
 
+class TurnVADResult(Enum):
+    SPEECH = 1
+    SILENCE = 2
+
+
 @dataclass(frozen=True)
 class TurnDetectionResult:
     """Decision emitted by a turn detector.
@@ -695,10 +700,13 @@ class TurnDetectionResult:
         Immediate action the service should take.
     semantic : TurnDetectionSemantic
         Semantic interpretation of the current conversational state.
+    vad_result : TurnVADResult | None
+        Optional VAD result; only used when VAD is absent
     """
 
     action: TurnDetectionAction
     semantic: TurnDetectionSemantic
+    vad_result: TurnVADResult | None = None
 
 
 class TurnDetector(ABC):
@@ -753,7 +761,7 @@ class TurnDetector(ABC):
         text: Optional[str] = None,
         speech_start: bool = False,
         speech_pause: Optional[bool] = None,
-    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+    ) -> TurnDetectionResult:
         """Detect conversational turn state from audio and/or text.
 
         Parameters
@@ -771,10 +779,8 @@ class TurnDetector(ABC):
 
         Returns
         -------
-        TurnDetectionResult | list[TurnDetectionResult]
-            One or more turn-detection decisions. When multiple results are
-            returned, ``STOP_SPEAKING`` should be processed before
-            ``START_GENERATION``.
+        TurnDetectionResult
+            Turn-detection decision for the current input.
         """
         pass
 
@@ -784,7 +790,7 @@ class TurnDetector(ABC):
         text: Optional[str] = None,
         speech_start: bool = False,
         speech_pause: Optional[bool] = None,
-    ) -> TurnDetectionResult | list[TurnDetectionResult]:
+    ) -> TurnDetectionResult:
         """Asynchronously detect conversational turn state.
 
         Parameters
@@ -801,8 +807,8 @@ class TurnDetector(ABC):
 
         Returns
         -------
-        TurnDetectionResult | list[TurnDetectionResult]
-            One or more turn-detection decisions.
+        TurnDetectionResult
+            Turn-detection decision for the current input.
         """
         loop = asyncio.get_running_loop()
         func = partial(
@@ -812,9 +818,7 @@ class TurnDetector(ABC):
             speech_start=speech_start,
             speech_pause=speech_pause,
         )
-        result: TurnDetectionResult | list[TurnDetectionResult] = (
-            await loop.run_in_executor(None, func)
-        )
+        result: TurnDetectionResult = await loop.run_in_executor(None, func)
         return result
 
     @abstractmethod

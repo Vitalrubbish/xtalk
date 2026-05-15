@@ -11,6 +11,9 @@ const inputMap: ActionToFunctionMap = {
     "vad_speech_end": async (data, websocket, conversation, outputAudioSession) => {
         onVadSpeechEnd(data, websocket, conversation, outputAudioSession);
     },
+    "finish_asr": async (data, websocket, conversation, outputAudioSession) => {
+        conversation.state.streamState = 'processing';
+    },
     "full_audio_frame": async (data, websocket, conversation, outputAudioSession) => {
         const audioBase64 = typeof data?.audio_base64 === "string" ? data.audio_base64 : "";
         if (!audioBase64) {

@@ -13,6 +13,7 @@ const messagesMap: ActionToFunctionMap = {
             content: data.text,
             turnId: data.turn_id
         })
+        conversation.state.streamState = 'processing';
     },
     "update_resp": async (data, websocket, conversation, outputAudioSession) => {
         conversation.appendMessage({

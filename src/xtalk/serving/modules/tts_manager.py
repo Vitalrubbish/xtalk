@@ -14,7 +14,7 @@ from ..events import (
     TTSResumed,
     TTSFinished,
     TTSTextSynthesized,
-    TTSChunkGenerated,
+    TTSChunkReady,
     TTSChunkPlayed,
     ErrorOccurred,
     TTSVoiceChange,
@@ -40,12 +40,6 @@ class TTSQueueItem(NamedTuple):
 
     audio_chunk: bytes
     sample_rate: int
-
-
-class TextSynthesizedItem(NamedTuple):
-    """Data model for queued synthesized-text markers."""
-
-    text: str
 
 
 class TTSManager(Manager):
@@ -86,9 +80,7 @@ class TTSManager(Manager):
         self._first_sentence_ready = False
 
         # Queue for audio chunks fed to downstream consumers
-        self.tts_queue: asyncio.Queue[TTSQueueItem | TextSynthesizedItem] = (
-            asyncio.Queue()
-        )
+        self.tts_queue: asyncio.Queue[TTSQueueItem] = asyncio.Queue()
 
         self._segments_queue: Optional[asyncio.Queue] = None
         self._segments_task: Optional[asyncio.Task] = None
@@ -340,7 +332,7 @@ class TTSManager(Manager):
                             if not self._consumer_running:
                                 break
 
-                            event = TTSChunkGenerated(
+                            event = TTSChunkReady(
                                 session_id=self.session_id,
                                 audio_chunk=chunk,
                                 sample_rate=item.sample_rate,
@@ -351,15 +343,6 @@ class TTSManager(Manager):
                             await self._track_outstanding_chunk(
                                 self._chunk_duration_ms(chunk, item.sample_rate)
                             )
-                    elif isinstance(item, TextSynthesizedItem):
-                        await self.event_bus.publish(
-                            TTSTextSynthesized(
-                                session_id=self.session_id,
-                                text=item.text,
-                            ),
-                            wait_for_completion=True,
-                        )
-
                     # Mark task as done after processing
                     self.tts_queue.task_done()
 
@@ -478,9 +461,21 @@ class TTSManager(Manager):
 
         try:
             sample_rate = int(getattr(tts_model, "sample_rate", 48000) or 48000)
+            synthesized_duration_ms = 0.0
+            speed = 1.0
+            if self.speed_controller is not None and self.current_speed != 1.0:
+                speed = max(0.01, float(self.current_speed or 1.0))
             async for ch in self._synthesize_stream_with_fallback(tts_model, sentence):
+                synthesized_duration_ms += self._chunk_duration_ms(ch, sample_rate)
                 await self.tts_queue.put(TTSQueueItem(ch, sample_rate))
-            await self.tts_queue.put(TextSynthesizedItem(sentence))
+            await self.event_bus.publish(
+                TTSTextSynthesized(
+                    session_id=self.session_id,
+                    text=sentence,
+                    audio_duration=synthesized_duration_ms / speed,
+                ),
+                wait_for_completion=True,
+            )
 
         except asyncio.CancelledError:
             raise

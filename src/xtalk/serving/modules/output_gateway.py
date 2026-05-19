@@ -20,7 +20,7 @@ from ..events import (
     ResponseUpdate,
     ResponseFinish,
     ErrorOccurred,
-    TTSChunkGenerated,
+    TTSChunkReady,
     TTSVoiceChange,
     TTSEmotionChange,
     CaptionUpdated,
@@ -245,8 +245,8 @@ class OutputGateway(EventListenerMixin):
             },
         )
 
-    @EventListenerMixin.event_handler(TTSChunkGenerated, priority=5)
-    async def _send_tts_chunk_signal(self, event: TTSChunkGenerated) -> None:
+    @EventListenerMixin.event_handler(TTSChunkReady, priority=5)
+    async def _send_tts_chunk_signal(self, event: TTSChunkReady) -> None:
         if hasattr(event, "audio_chunk") and event.audio_chunk:
             try:
                 await self._send_binary(event.audio_chunk)

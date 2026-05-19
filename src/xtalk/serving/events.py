@@ -224,17 +224,19 @@ class ResponseFinish(BaseEvent):
 
 @dataclass
 class TTSTextSynthesized(BaseEvent):
-    """Text marker emitted after one synthesized text segment is fully enqueued.
+    """Text marker emitted after one synthesized text segment is fully produced.
 
     Attributes
     ----------
     text : str
-        Text segment whose synthesized audio has already been published into the
-        TTS playback queue in the same FIFO order.
+        Text segment that was synthesized.
+    audio_duration : float
+        Estimated playback duration of the synthesized audio in milliseconds.
     """
 
     TYPE: ClassVar[str] = "tts.text_synthesized"
     text: str = ""
+    audio_duration: float = 0.0
 
 
 @dataclass
@@ -262,8 +264,9 @@ class TTSSpeedChange(BaseEvent):
 
 
 @dataclass
-class TTSChunkGenerated(BaseEvent):
-    TYPE: ClassVar[str] = "tts.chunk_generated"
+class TTSChunkReady(BaseEvent):
+    """Indicates one TTS audio chunk is ready for sending. Not emitted when the chunk is generated."""
+    TYPE: ClassVar[str] = "tts.chunk_ready"
     audio_chunk: bytes = b""
     sample_rate: int = 48000
 

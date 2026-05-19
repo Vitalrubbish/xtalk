@@ -5,10 +5,10 @@ from __future__ import annotations
 # 1. Extend TTSPlaybackManager state with a segment ledger, a FIFO queue of
 #    generated chunk durations, the latest reported text prefix, and cached
 #    final-response metadata such as the active turn id and final text.
-# 2. Subscribe to TTSChunkGenerated and TTSTextSynthesized. Accumulate chunk
-#    durations as audio is emitted, and when TTSTextSynthesized arrives, close
-#    the current synthesized text segment and bind that text to the generated
-#    audio duration collected for it.
+# 2. Subscribe to TTSChunkGenerated and TTSTextSynthesized. TTSChunkGenerated
+#    is only used to build the FIFO chunk-duration queue for playback acks,
+#    while TTSTextSynthesized carries the sentence-level audio duration needed
+#    to close each synthesized text segment.
 # 3. Consume TTSChunkPlayed to advance playback through the segment ledger.
 #    For each confirmed played chunk, reduce the FIFO duration queue, update the
 #    active segment's played-audio counter, map the played-audio ratio back to a
@@ -33,7 +33,7 @@ from ..events import (
     LLMAgentResponseUpdate,
     ResponseFinish,
     ResponseUpdate,
-    TTSChunkGenerated,
+    TTSChunkReady,
     TTSChunkPlayed,
     TTSPlaybackFinished,
     TTSTextSynthesized,
@@ -68,7 +68,6 @@ class TTSPlaybackManager(Manager):
         self._pending_turn_id = 0
         self._segments: deque[_PlaybackSegment] = deque()
         self._generated_chunk_ms: deque[float] = deque()
-        self._current_segment_generated_ms = 0.0
         self._played_without_segment_ms = 0.0
         self._completed_text = ""
         self._reported_text = ""
@@ -78,7 +77,6 @@ class TTSPlaybackManager(Manager):
 
         self._segments.clear()
         self._generated_chunk_ms.clear()
-        self._current_segment_generated_ms = 0.0
         self._played_without_segment_ms = 0.0
         self._completed_text = ""
         self._reported_text = ""
@@ -102,10 +100,9 @@ class TTSPlaybackManager(Manager):
         elif turn_id:
             self._current_turn_id = turn_id
 
-    @Manager.event_handler(TTSChunkGenerated, priority=20)
-    async def _track_generated_chunk(self, event: TTSChunkGenerated) -> None:
+    @Manager.event_handler(TTSChunkReady, priority=20)
+    async def _track_generated_chunk(self, event: TTSChunkReady) -> None:
         """Track generated chunk durations in FIFO order for playback acks."""
-
         chunk_ms = self._chunk_duration_ms(
             audio_chunk=event.audio_chunk,
             sample_rate=event.sample_rate,
@@ -113,28 +110,24 @@ class TTSPlaybackManager(Manager):
         if chunk_ms <= 0.0:
             return
         self._generated_chunk_ms.append(chunk_ms)
-        self._current_segment_generated_ms += chunk_ms
 
     @Manager.event_handler(TTSTextSynthesized, priority=20)
     async def _close_text_segment(self, event: TTSTextSynthesized) -> None:
-        """Bind one synthesized text segment to the generated audio since last marker."""
-
+        """Bind one synthesized text segment to its reported synthesized duration."""
         text = event.text or ""
         if not text:
             return
         self._segments.append(
             _PlaybackSegment(
                 text=text,
-                total_audio_ms=max(0.0, self._current_segment_generated_ms),
+                total_audio_ms=max(0.0, float(event.audio_duration or 0.0)),
             )
         )
-        self._current_segment_generated_ms = 0.0
         await self._apply_pending_playback_time()
 
     @Manager.event_handler(TTSChunkPlayed, priority=20)
     async def _publish_response_update(self, event: TTSChunkPlayed) -> None:
         """Advance played text according to frontend playback confirmations."""
-
         del event
         if not self._generated_chunk_ms:
             return

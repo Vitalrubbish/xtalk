@@ -1,4 +1,5 @@
 from . import Agent, AgentContext, AgentOutput
+from .tools.utils import build_tool_call_result_payload
 from langchain.chat_models.base import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
@@ -7,8 +8,10 @@ from langchain_core.messages import (
     HumanMessage,
     AIMessage,
     ToolCall,
+    ToolMessage
 )
-from typing import Any, Iterable, AsyncIterator
+from langchain_core.tools import BaseTool
+from typing import Any, Iterable, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import asyncio
@@ -58,6 +61,7 @@ class ExperimentalAgent(Agent):
         model: BaseChatModel | dict[str, Any],
         backchannel_model: BaseChatModel | dict[str, Any],
         backchannel_source_dir: str | Path,
+        tools: list[BaseTool | Callable[[], BaseTool]] | None = None,
         system_prompt: str = "",
     ) -> None:
         self.model = model if isinstance(model, BaseChatModel) else ChatOpenAI(**model)
@@ -74,6 +78,9 @@ class ExperimentalAgent(Agent):
             if isinstance(backchannel_source_dir, Path)
             else Path(backchannel_source_dir)
         )
+
+        self._base_tools = tools
+        self.tools = self._init_tools(tools) if tools else []
 
         # every time remove this prefix before judging backchannel
         self._already_backchanneled_text = ""
@@ -107,6 +114,7 @@ class ExperimentalAgent(Agent):
             backchannel_model=self.backchannel_model,
             backchannel_source_dir=self.backchannel_source_dir,
             system_prompt=self._additional_system_prompt,
+            tools=self._base_tools,
         )
 
     def restore_history(self, messages: list[dict[str, Any]]) -> None:
@@ -160,12 +168,8 @@ class ExperimentalAgent(Agent):
 
     async def _handle_asr_final(self, asr_text: str) -> AsyncIterator[AgentOutput]:
         self._append_message(HumanMessage(content=asr_text))
-        collector = TextCollector()
-        async for item in self._stream_and_collect_text(
-            self._stream_messages(), collector
-        ):
+        async for item in self._stream_messages():
             yield item
-        self._append_message(AIMessage(content=collector.text))
         # reset backchannel state
         self._already_backchanneled_text = ""
         self._turn_already_to_backchannel_response = {}
@@ -234,9 +238,33 @@ class ExperimentalAgent(Agent):
             yield chunk.content
 
     async def _stream_messages(self) -> AsyncIterator[AgentOutput]:
-        # TODO: handle tool calling and tool result
-        async for chunk in self.model.astream(self.messages):
-            yield chunk.content
+        model_with_tools = self.model.bind_tools(self.tools) if self.tools else self.model
+        while True:
+            response_message = AIMessage(content="")
+            gathered = None
+            async for chunk in model_with_tools.astream(self.messages):
+                text = chunk.content
+                if text:
+                    response_message.content += text
+                    yield text
+                gathered = chunk if gathered is None else gathered + chunk
+            tool_calls: list[ToolCall] = (
+                list(getattr(gathered, "tool_calls", []) or []) if gathered else []
+            )
+            if tool_calls:
+                response_message.tool_calls = tool_calls
+            self._append_message(response_message)
+            if not tool_calls:
+                return
+            for tool_call in tool_calls:
+                yield tool_call
+                tool_result = await self._invoke_tool(tool_call)
+                self._append_message(tool_result)
+                yield build_tool_call_result_payload(
+                    name=tool_call["name"],
+                    args=tool_call["args"],
+                    content=tool_result.content,
+                )
 
     def _load_backchannel_audio(self, backchannel_content: str) -> bytes | None:
         map_path = self.backchannel_source_dir / "map.json"
@@ -262,3 +290,33 @@ class ExperimentalAgent(Agent):
         with open(map_path, "r", encoding="utf-8") as f:
             content_map: dict[str, str] = json.load(f)
         return list(content_map.keys())
+
+    # Tools
+    @staticmethod
+    def _init_tools(tools: list[BaseTool | Callable[[], BaseTool]]) -> list[BaseTool]:
+        initialized_tools = []
+        for tool in tools:
+            if isinstance(tool, BaseTool):
+                initialized_tools.append(tool)
+            elif callable(tool):
+                initialized_tools.append(tool())
+        return initialized_tools
+
+    async def _invoke_tool(
+        self,
+        tool_call: ToolCall,
+    ):
+        tool = next((t for t in self.tools if t.name == tool_call["name"]), None)
+        if not tool:
+            return ToolMessage(
+                content=f"Tool {tool_call['name']} not found",
+                tool_call_id=tool_call["id"],
+            )
+        try:
+            result: ToolMessage = await tool.ainvoke(tool_call["args"])
+            return result
+        except Exception as e:
+            return ToolMessage(
+                content=f"Error invoking tool {tool_call['name']}: {str(e)}",
+                tool_call_id=tool_call["id"],
+            )

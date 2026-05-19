@@ -29,7 +29,7 @@ from .tools import (
     build_web_search_tool,
 )
 from .tools.retrievers import LOCAL_SEARCH_TOOL, build_local_search_tool
-from .tools.utils import build_tool_call_result_payload
+from .tools.utils import build_tool_call_result
 from .interfaces import Agent, AgentContext, AgentOutput
 
 _EMBEDDING_PROCESSING_PROMPT = """
@@ -773,10 +773,9 @@ Caption:
                 )
                 self._session.messages.append(tool_result)
                 result_content = str(getattr(tool_result, "content", ""))
-                yield build_tool_call_result_payload(
-                    name=normalized_tool_call["name"],
-                    args=dict(normalized_tool_call["args"]),
-                    content=result_content,
+                yield build_tool_call_result(
+                    tool_call=normalized_tool_call,
+                    result_content=result_content,
                 )
 
     def accept(self, context: AgentContext) -> Iterable[AgentOutput]:

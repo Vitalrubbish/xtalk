@@ -1,4 +1,4 @@
-from .tools.utils import ToolCallResultArgs, ToolCallResultPayload
+from .tools.utils import ToolCallResultArgs, ToolCallResult
 from .interfaces import Agent, AgentContext, AgentOutput
 from .dummy import DummyAgent
 from .default import DefaultAgent
@@ -14,5 +14,5 @@ __all__ = [
     "LTSAgent",
     "ExperimentalAgent",
     "ToolCallResultArgs",
-    "ToolCallResultPayload",
+    "ToolCallResult",
 ]

@@ -1,5 +1,5 @@
 from . import Agent, AgentContext, AgentOutput
-from .tools.utils import build_tool_call_result_payload
+from .tools.utils import build_tool_call_result
 from langchain.chat_models.base import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
@@ -260,10 +260,9 @@ class ExperimentalAgent(Agent):
                 yield tool_call
                 tool_result = await self._invoke_tool(tool_call)
                 self._append_message(tool_result)
-                yield build_tool_call_result_payload(
-                    name=tool_call["name"],
-                    args=tool_call["args"],
-                    content=tool_result.content,
+                yield build_tool_call_result(
+                    tool_call=tool_call,
+                    result_content=str(tool_result.content),
                 )
 
     def _load_backchannel_audio(self, backchannel_content: str) -> bytes | None:

@@ -5,7 +5,7 @@ from typing import Iterable, TypedDict, AsyncIterator, Callable, Any, Union, Typ
 from langchain_core.messages import ToolCall
 from langchain_core.tools import BaseTool
 
-from .tools.utils import ToolCallResultPayload
+from .tools.utils import ToolCallResult
 
 
 class AgentContext(TypedDict):
@@ -21,7 +21,7 @@ class AgentContext(TypedDict):
     data: dict[str, Any]
 
 
-AgentOutput = Union[str, ToolCall, ToolCallResultPayload]
+AgentOutput = Union[str, ToolCall, ToolCallResult]
 T = TypeVar("T")
 
 

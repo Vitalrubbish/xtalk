@@ -69,6 +69,7 @@ class TTSPlaybackManager(Manager):
         self._segments: deque[_PlaybackSegment] = deque()
         self._generated_chunk_ms: deque[float] = deque()
         self._current_segment_generated_ms = 0.0
+        self._played_without_segment_ms = 0.0
         self._completed_text = ""
         self._reported_text = ""
 
@@ -78,6 +79,7 @@ class TTSPlaybackManager(Manager):
         self._segments.clear()
         self._generated_chunk_ms.clear()
         self._current_segment_generated_ms = 0.0
+        self._played_without_segment_ms = 0.0
         self._completed_text = ""
         self._reported_text = ""
 
@@ -127,6 +129,7 @@ class TTSPlaybackManager(Manager):
             )
         )
         self._current_segment_generated_ms = 0.0
+        await self._apply_pending_playback_time()
 
     @Manager.event_handler(TTSChunkPlayed, priority=20)
     async def _publish_response_update(self, event: TTSChunkPlayed) -> None:
@@ -136,33 +139,8 @@ class TTSPlaybackManager(Manager):
         if not self._generated_chunk_ms:
             return
         remaining_ms = max(0.0, self._generated_chunk_ms.popleft())
-        while remaining_ms > 0.0 and self._segments:
-            segment = self._segments[0]
-            if segment.total_audio_ms <= 0.0:
-                self._completed_text += segment.text
-                self._segments.popleft()
-                continue
-
-            unplayed_ms = max(0.0, segment.total_audio_ms - segment.played_audio_ms)
-            consume_ms = min(remaining_ms, unplayed_ms)
-            segment.played_audio_ms += consume_ms
-            remaining_ms -= consume_ms
-
-            if segment.played_audio_ms + 1e-6 >= segment.total_audio_ms:
-                self._completed_text += segment.text
-                self._segments.popleft()
-
-        played_text = self._build_reported_text()
-        if len(played_text) <= len(self._reported_text):
-            return
-        self._reported_text = played_text
-        await self.event_bus.publish(
-            ResponseUpdate(
-                session_id=self.session_id,
-                text=played_text,
-                turn_id=self._pending_turn_id or self._current_turn_id,
-            )
-        )
+        self._played_without_segment_ms += remaining_ms
+        await self._apply_pending_playback_time()
 
     def _build_reported_text(self) -> str:
         """Return the current played text prefix across completed and active segments."""
@@ -190,6 +168,46 @@ class TTSPlaybackManager(Manager):
             return 0.0
         sample_count = len(audio_chunk) / 2
         return sample_count * 1000.0 / sample_rate
+
+    async def _apply_pending_playback_time(self) -> None:
+        """Apply queued played-audio time to known text segments."""
+
+        remaining_ms = max(0.0, self._played_without_segment_ms)
+        if remaining_ms <= 0.0:
+            return
+        while remaining_ms > 0.0 and self._segments:
+            segment = self._segments[0]
+            if segment.total_audio_ms <= 0.0:
+                self._completed_text += segment.text
+                self._segments.popleft()
+                continue
+
+            unplayed_ms = max(0.0, segment.total_audio_ms - segment.played_audio_ms)
+            consume_ms = min(remaining_ms, unplayed_ms)
+            segment.played_audio_ms += consume_ms
+            remaining_ms -= consume_ms
+
+            if segment.played_audio_ms + 1e-6 >= segment.total_audio_ms:
+                self._completed_text += segment.text
+                self._segments.popleft()
+
+        self._played_without_segment_ms = remaining_ms
+        await self._publish_progress_if_grew()
+
+    async def _publish_progress_if_grew(self) -> None:
+        """Publish one response update when the played text prefix grows."""
+
+        played_text = self._build_reported_text()
+        if len(played_text) <= len(self._reported_text):
+            return
+        self._reported_text = played_text
+        await self.event_bus.publish(
+            ResponseUpdate(
+                session_id=self.session_id,
+                text=played_text,
+                turn_id=self._pending_turn_id or self._current_turn_id,
+            )
+        )
 
     @Manager.event_handler(LLMAgentResponseFinish, priority=20)
     async def _cache_response_finish(self, event: LLMAgentResponseFinish) -> None:

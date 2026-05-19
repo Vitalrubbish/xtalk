@@ -25,6 +25,7 @@ from .modules.speaker_manager import SpeakerManager
 from .modules.embeddings_manager import EmbeddingsManager
 from .modules.recording_manager import RecordingManager
 from .modules.turn_detector_manager import TurnDetectorManager
+from .modules.tts_playback_manager import TTSPlaybackManager
 from .modules.persistence_manager import PersistenceManager
 from .events import BaseEvent, LLMAgentLoop
 from ..pipelines import Pipeline
@@ -398,6 +399,7 @@ class DefaultService(Service):
         LLMAgentConsumptionManager,
         DirectAudioManager,
         TTSManager,
+        TTSPlaybackManager,
         CaptionerManager,
         RetrievalManager,
         TurnTakingManager,

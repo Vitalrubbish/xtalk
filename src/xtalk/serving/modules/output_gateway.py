@@ -17,8 +17,8 @@ from ..events import (
     TTSPaused,
     TTSResumed,
     TTSFinished,
-    LLMAgentResponseUpdate,
-    LLMAgentResponseFinish,
+    ResponseUpdate,
+    ResponseFinish,
     ErrorOccurred,
     TTSChunkGenerated,
     TTSVoiceChange,
@@ -198,14 +198,14 @@ class OutputGateway(EventListenerMixin):
     async def _send_resume_tts_signal(self, event) -> None:
         await self._forward("resume_tts", "")
 
-    @EventListenerMixin.event_handler(LLMAgentResponseUpdate, priority=5)
-    async def _send_update_resp_signal(self, event: LLMAgentResponseUpdate) -> None:
+    @EventListenerMixin.event_handler(ResponseUpdate, priority=5)
+    async def _send_update_resp_signal(self, event: ResponseUpdate) -> None:
         await self._forward(
             "update_resp", {"text": event.text, "turn_id": event.turn_id}
         )
 
-    @EventListenerMixin.event_handler(LLMAgentResponseFinish, priority=5)
-    async def _send_finish_resp_signal(self, event: LLMAgentResponseFinish) -> None:
+    @EventListenerMixin.event_handler(ResponseFinish, priority=5)
+    async def _send_finish_resp_signal(self, event: ResponseFinish) -> None:
         await self._forward(
             "finish_resp", {"text": event.text, "turn_id": event.turn_id}
         )

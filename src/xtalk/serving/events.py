@@ -189,6 +189,55 @@ class LLMAgentResponseFinish(BaseEvent):
 
 
 @dataclass
+class ResponseUpdate(BaseEvent):
+    """Text prefix whose corresponding TTS playback progress has been confirmed.
+
+    Attributes
+    ----------
+    text : str
+        Text prefix that has been played to the user.
+    turn_id : int
+        Turn identifier associated with the response.
+    """
+
+    TYPE: ClassVar[str] = "response.update"
+    text: str = ""
+    turn_id: int = 0
+
+
+@dataclass
+class ResponseFinish(BaseEvent):
+    """Final text whose corresponding TTS playback has finished.
+
+    Attributes
+    ----------
+    text : str
+        Final response text whose playback completed.
+    turn_id : int
+        Turn identifier associated with the response.
+    """
+
+    TYPE: ClassVar[str] = "response.finish"
+    text: str = ""
+    turn_id: int = 0
+
+
+@dataclass
+class TTSTextSynthesized(BaseEvent):
+    """Text marker emitted after one synthesized text segment is fully enqueued.
+
+    Attributes
+    ----------
+    text : str
+        Text segment whose synthesized audio has already been published into the
+        TTS playback queue in the same FIFO order.
+    """
+
+    TYPE: ClassVar[str] = "tts.text_synthesized"
+    text: str = ""
+
+
+@dataclass
 class TTSVoiceChange(BaseEvent):
     TYPE: ClassVar[str] = "tts.reference_audio_changed"
     voice_name: str = ""

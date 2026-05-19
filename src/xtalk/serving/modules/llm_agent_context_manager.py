@@ -19,6 +19,8 @@ from ..events import (
     EmbeddingStatusUpdated,
     LLMAgentLoop,
     SpeakerRecognized,
+    ResponseUpdate,
+    ResponseFinish
 )
 from ..interfaces import Manager
 
@@ -64,6 +66,18 @@ class LLMAgentContextManager(Manager):
         """Forward ``ASRResultFinal`` into the agent."""
 
         await self._accept_event_context(event, context_type="asr_final")
+
+    @Manager.event_handler(ResponseUpdate, priority=20)
+    async def _handle_response_update(self, event: ResponseUpdate) -> None:
+        """Forward ``ResponseUpdate`` into the agent."""
+
+        await self._accept_event_context(event, context_type="response_update")
+
+    @Manager.event_handler(ResponseFinish, priority=20)
+    async def _handle_response_finish(self, event: ResponseFinish) -> None:
+        """Forward ``ResponseFinish`` into the agent."""
+
+        await self._accept_event_context(event, context_type="response_finish")
 
     @Manager.event_handler(CaptionUpdated, priority=20)
     async def _handle_caption_updated(self, event: CaptionUpdated) -> None:

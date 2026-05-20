@@ -61,10 +61,8 @@ async def send_session_attached(self) -> None
 _定义于 `xtalk.serving.modules.asr_manager`。_
 
 ```python
-class ASRManager(Manager, TurnStateRestorable)
+class ASRManager(Manager)
 ```
-
-支持通过 `restore_turn_state()` 恢复轮次状态。
 
 ## EmbeddingsManager
 
@@ -99,11 +97,10 @@ class LatencyManager(EventListenerMixin)
 _定义于 `xtalk.serving.modules.llm_agent_manager`。_
 
 ```python
-class LLMAgentManager(Manager, TurnStateRestorable)
+class LLMAgentManager(Manager)
 ```
 
 驱动 LLM Agent 生成并协调 TTS 流式处理。
-同样支持通过 `restore_turn_state()` 恢复轮次状态。
 
 ## SpeakerManager
 

@@ -154,13 +154,7 @@ class OutputGateway(EventListenerMixin):
     async def _forward_asr(self, action: str, event) -> None:
         """Forward an ASR result (partial or final) to the frontend."""
         display_text = event.display_text or event.text
-        await self._forward(
-            action,
-            {
-                "text": display_text,
-                "turn_id": event.turn_id,
-            },
-        )
+        await self._forward(action, {"text": display_text})
 
     # ── Session ─────────────────────────────────────────────────────
 
@@ -200,15 +194,11 @@ class OutputGateway(EventListenerMixin):
 
     @EventListenerMixin.event_handler(ResponseUpdate, priority=5)
     async def _send_update_resp_signal(self, event: ResponseUpdate) -> None:
-        await self._forward(
-            "update_resp", {"text": event.text, "turn_id": event.turn_id}
-        )
+        await self._forward("update_resp", {"text": event.text})
 
     @EventListenerMixin.event_handler(ResponseFinish, priority=5)
     async def _send_finish_resp_signal(self, event: ResponseFinish) -> None:
-        await self._forward(
-            "finish_resp", {"text": event.text, "turn_id": event.turn_id}
-        )
+        await self._forward("finish_resp", {"text": event.text})
 
     @EventListenerMixin.event_handler(TTSFinished, priority=5)
     async def _send_tts_finished_signal(self, event: TTSFinished) -> None:

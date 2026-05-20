@@ -43,7 +43,6 @@ class PersistenceManager(Manager):
                 session_id=self.session_id,
                 role="user",
                 content=event.text,
-                turn_id=event.turn_id,
             )
         except Exception as exc:
             logger.warning(
@@ -64,7 +63,6 @@ class PersistenceManager(Manager):
                 session_id=self.session_id,
                 role="assistant",
                 content=event.text,
-                turn_id=event.turn_id,
             )
         except Exception as exc:
             logger.warning(

@@ -53,7 +53,6 @@ class PartialInferenceState:
     """Track one slow-model inference task launched from an ASR partial."""
 
     partial_id: int
-    turn_id: int
     text: str
     task: asyncio.Task[PartialInferenceResult] | None = None
     result: PartialInferenceResult | None = None
@@ -378,29 +377,22 @@ class LTSAgent(Agent):
             reply_content=str(reply_content),
         )
 
-    def _select_latest_completed_partial(
-        self,
-        turn_id: int,
-    ) -> PartialInferenceState | None:
-        """Return the latest completed partial state for one turn."""
+    def _select_latest_completed_partial(self) -> PartialInferenceState | None:
+        """Return the latest completed partial state."""
 
         completed = [
             state
             for state in self._runtime.partials.values()
-            if state.turn_id == turn_id and state.result is not None
+            if state.result is not None
         ]
         if not completed:
             return None
         return max(completed, key=lambda state: state.partial_id)
 
-    def _drop_turn_partials(self, turn_id: int) -> None:
-        """Drop all cached partial states belonging to one turn."""
+    def _drop_partials(self) -> None:
+        """Drop all cached partial states."""
 
-        self._runtime.partials = {
-            partial_id: state
-            for partial_id, state in self._runtime.partials.items()
-            if state.turn_id != turn_id
-        }
+        self._runtime.partials.clear()
 
     async def _run_partial_inference(
         self,
@@ -458,7 +450,6 @@ class LTSAgent(Agent):
         partial_text = str(payload.get("text", "") or "").strip()
         if not partial_text:
             return
-        turn_id = int(payload.get("turn_id", 0) or 0)
         history_text = self.get_chat_history(with_system=True)
 
         async with self._state_lock:
@@ -471,7 +462,6 @@ class LTSAgent(Agent):
             self._runtime.next_partial_id += 1
             state = PartialInferenceState(
                 partial_id=partial_id,
-                turn_id=turn_id,
                 text=partial_text,
             )
             state.task = asyncio.create_task(
@@ -504,10 +494,8 @@ class LTSAgent(Agent):
         final_text = str(payload.get("text", "") or "").strip()
         if not final_text:
             return
-        turn_id = int(payload.get("turn_id", 0) or 0)
-
         async with self._state_lock:
-            latest_partial = self._select_latest_completed_partial(turn_id)
+            latest_partial = self._select_latest_completed_partial()
 
         history_text = self.get_chat_history(with_system=True)
         latest_partial_asr = latest_partial.text if latest_partial else None
@@ -527,7 +515,7 @@ class LTSAgent(Agent):
         reply_text = "".join(chunks)
         async with self._state_lock:
             self._append_final_reply(final_text, reply_text)
-            self._drop_turn_partials(turn_id)
+            self._drop_partials()
 
     def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
         """Accept an incremental context update.

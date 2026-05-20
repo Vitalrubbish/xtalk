@@ -136,7 +136,6 @@ class ASRResultRecord:
 
     action: str
     text: str
-    turn_id: int | None
     received_at: float
 
 
@@ -1423,19 +1422,14 @@ class CaseRunner:
             return
         if action in {"update_asr", "finish_asr"}:
             text = ""
-            turn_id: int | None = None
             if isinstance(data, dict):
                 raw_text = data.get("text")
                 if isinstance(raw_text, str):
                     text = raw_text
-                raw_turn_id = data.get("turn_id")
-                if isinstance(raw_turn_id, int):
-                    turn_id = raw_turn_id
             self._asr_results.append(
                 ASRResultRecord(
                     action=action,
                     text=text,
-                    turn_id=turn_id,
                     received_at=asyncio.get_running_loop().time(),
                 )
             )
@@ -1705,7 +1699,6 @@ def build_asr_report_payload(
         {
             "action": record.action,
             "text": record.text,
-            "turn_id": record.turn_id,
             "received_at": record.received_at,
         }
         for record in asr_results

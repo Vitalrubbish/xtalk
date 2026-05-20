@@ -4,7 +4,7 @@ from __future__ import annotations
 # Playback tracking plan:
 # 1. Extend TTSPlaybackManager state with a segment ledger, a FIFO queue of
 #    generated chunk durations, the latest reported text prefix, and cached
-#    final-response metadata such as the active turn id and final text.
+#    final-response metadata such as the active response text.
 # 2. Subscribe to TTSChunkGenerated and TTSTextSynthesized. TTSChunkGenerated
 #    is only used to build the FIFO chunk-duration queue for playback acks,
 #    while TTSTextSynthesized carries the sentence-level audio duration needed
@@ -63,9 +63,8 @@ class TTSPlaybackManager(Manager):
         self.event_bus = event_bus
         self.session_id = session_id
         self.config: dict[str, Any] = config or {}
-        self._current_turn_id = 0
+        self._current_response_text = ""
         self._pending_text = ""
-        self._pending_turn_id = 0
         self._segments: deque[_PlaybackSegment] = deque()
         self._generated_chunk_ms: deque[float] = deque()
         self._played_without_segment_ms = 0.0
@@ -73,7 +72,7 @@ class TTSPlaybackManager(Manager):
         self._reported_text = ""
 
     def _reset_playback_tracking(self) -> None:
-        """Reset playback-progress state while preserving current turn metadata."""
+        """Reset playback-progress state while preserving response metadata."""
 
         self._segments.clear()
         self._generated_chunk_ms.clear()
@@ -85,20 +84,19 @@ class TTSPlaybackManager(Manager):
         """Reset all cached response and playback-tracking state."""
 
         self._reset_playback_tracking()
-        self._current_turn_id = 0
+        self._current_response_text = ""
         self._pending_text = ""
-        self._pending_turn_id = 0
 
     @Manager.event_handler(LLMAgentResponseUpdate, priority=20)
     async def _cache_response_update(self, event: LLMAgentResponseUpdate) -> None:
-        """Track the active turn id without emitting frontend-facing updates."""
+        """Track the active response text without emitting frontend-facing updates."""
 
-        turn_id = int(event.turn_id or 0)
-        if turn_id and turn_id != self._current_turn_id:
+        next_text = event.text or ""
+        if self._current_response_text and not next_text.startswith(
+            self._current_response_text
+        ):
             self._reset_all_state()
-            self._current_turn_id = turn_id
-        elif turn_id:
-            self._current_turn_id = turn_id
+        self._current_response_text = next_text
 
     @Manager.event_handler(TTSChunkReady, priority=20)
     async def _track_generated_chunk(self, event: TTSChunkReady) -> None:
@@ -198,7 +196,6 @@ class TTSPlaybackManager(Manager):
             ResponseUpdate(
                 session_id=self.session_id,
                 text=played_text,
-                turn_id=self._pending_turn_id or self._current_turn_id,
             )
         )
 
@@ -206,12 +203,13 @@ class TTSPlaybackManager(Manager):
     async def _cache_response_finish(self, event: LLMAgentResponseFinish) -> None:
         """Cache the latest generated response until playback finishes."""
 
-        turn_id = int(event.turn_id or 0)
-        if turn_id and turn_id != self._current_turn_id:
+        next_text = event.text or ""
+        if self._current_response_text and not next_text.startswith(
+            self._current_response_text
+        ):
             self._reset_all_state()
-            self._current_turn_id = turn_id
-        self._pending_text = event.text or ""
-        self._pending_turn_id = turn_id
+        self._current_response_text = next_text
+        self._pending_text = next_text
 
     @Manager.event_handler(TTSPlaybackFinished, priority=20)
     async def _publish_response_finish(self, event: TTSPlaybackFinished) -> None:
@@ -231,7 +229,6 @@ class TTSPlaybackManager(Manager):
                     ResponseUpdate(
                         session_id=self.session_id,
                         text=self._pending_text,
-                        turn_id=self._pending_turn_id or self._current_turn_id,
                     )
                 )
                 self._reported_text = self._pending_text
@@ -239,7 +236,6 @@ class TTSPlaybackManager(Manager):
                 ResponseFinish(
                     session_id=self.session_id,
                     text=self._pending_text,
-                    turn_id=self._pending_turn_id,
                 )
             )
         finally:

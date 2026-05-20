@@ -54,7 +54,7 @@ def create_event_class(*, name: str, fields: dict[str, Any] | None = None, type_
 ```pycon
 >>> CustomEvent = create_event_class(
 ...     name="CustomEvent",
-...     fields={"text": "", "turn_id": 0},
+...     fields={"text": ""},
 ... )
 ```
 

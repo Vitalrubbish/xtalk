@@ -60,7 +60,7 @@ def create_event_class(
     --------
     >>> CustomEvent = create_event_class(
     ...     name="CustomEvent",
-    ...     fields={"text": "", "turn_id": 0},
+    ...     fields={"text": ""},
     ... )
     """
     fields = fields or {}
@@ -112,7 +112,6 @@ class ASRResultPartial(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_partial"
     text: str = ""
     display_text: str = ""  # Cleaned text for frontend display
-    turn_id: int = 0
     speech_pause: bool = False
 
 
@@ -122,7 +121,6 @@ class ASRResultFinal(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_final"
     text: str = ""
     display_text: str = ""  # Cleaned text for frontend display
-    turn_id: int = 0
 
 
 @dataclass
@@ -168,24 +166,20 @@ class TTSFinished(BaseEvent):
 class LLMAgentResponseUpdate(BaseEvent):
     TYPE: ClassVar[str] = "llm_agent.response_update"
     text: str = ""
-    turn_id: int = 0
 
 
 @dataclass
 class LLMAgentResponseFinish(BaseEvent):
-    """Final text emitted by the agent for a turn.
+    """Final text emitted by the agent for one response.
 
     Attributes
     ----------
     text : str
         Final response text.
-    turn_id : int
-        Turn identifier associated with the response.
     """
 
     TYPE: ClassVar[str] = "llm_agent.response_finish"
     text: str = ""
-    turn_id: int = 0
 
 
 @dataclass
@@ -196,13 +190,10 @@ class ResponseUpdate(BaseEvent):
     ----------
     text : str
         Text prefix that has been played to the user.
-    turn_id : int
-        Turn identifier associated with the response.
     """
 
     TYPE: ClassVar[str] = "response.update"
     text: str = ""
-    turn_id: int = 0
 
 
 @dataclass
@@ -213,13 +204,10 @@ class ResponseFinish(BaseEvent):
     ----------
     text : str
         Final response text whose playback completed.
-    turn_id : int
-        Turn identifier associated with the response.
     """
 
     TYPE: ClassVar[str] = "response.finish"
     text: str = ""
-    turn_id: int = 0
 
 
 @dataclass

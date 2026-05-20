@@ -93,7 +93,7 @@ Based on X-Talk’s event-bus mechanism, then you can add a new `Manager` to sub
     For Example:
 ```python
 LLMOutputRefactoredFinal = create_event_class(
-    name="LLMOutputRefactoredFinal", fields={"text": "", "turn_id": 0} # key: default_value
+    name="LLMOutputRefactoredFinal", fields={"text": ""} # key: default_value
 )
 
 class LLMOutputRefactorManager(Manager):
@@ -115,7 +115,6 @@ class LLMOutputRefactorManager(Manager):
             new_event = LLMOutputRefactoredFinal(
                 session_id=event.session_id,
                 text=refactored_output,
-                turn_id=event.turn_id,
             )
             await self.event_bus.publish(new_event)
 
@@ -142,7 +141,7 @@ async def output_gateway_llm_output_refactored_final_handler(
     await self.send_signal(
         {
             "action": "finish_resp", # see frontend/src/action-handler-functions/messages.ts
-            "data": {"text": event.text, "turn_id": event.turn_id},
+            "data": {"text": event.text},
         }
     )
 

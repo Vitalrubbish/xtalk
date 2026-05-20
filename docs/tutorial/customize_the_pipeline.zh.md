@@ -93,7 +93,7 @@ pipeline = Xtalk.create_pipeline_from_config(
 例如：
 ```python
 LLMOutputRefactoredFinal = create_event_class(
-    name="LLMOutputRefactoredFinal", fields={"text": "", "turn_id": 0} # 键: 默认值
+    name="LLMOutputRefactoredFinal", fields={"text": ""} # 键: 默认值
 )
 
 class LLMOutputRefactorManager(Manager):
@@ -115,7 +115,6 @@ class LLMOutputRefactorManager(Manager):
             new_event = LLMOutputRefactoredFinal(
                 session_id=event.session_id,
                 text=refactored_output,
-                turn_id=event.turn_id,
             )
             await self.event_bus.publish(new_event)
 
@@ -140,7 +139,7 @@ async def output_gateway_llm_output_refactored_final_handler(
     await self.send_signal(
         {
             "action": "finish_resp", # 可在 frontend/src/action-handler-functions/messages.ts 中找到 "finish_resp"
-            "data": {"text": event.text, "turn_id": event.turn_id},
+            "data": {"text": event.text},
         }
     )
 

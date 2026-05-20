@@ -28,10 +28,10 @@ from ..events import (
     TurnTTSStopRequested,
     TurnTTSTextAppendRequested,
 )
-from ..interfaces import Manager, TurnStateRestorable
+from ..interfaces import Manager
 
 
-class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
+class LLMAgentConsumptionManager(Manager):
     """Consume one or more agent streams and forward their output downstream.
 
     Notes
@@ -59,7 +59,6 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
         self._resume_event = asyncio.Event()
         self._resume_event.set()
 
-        self._turn_id = 0
         self._turn_accumulated_text = ""
         self._turn_first_chunk_generated = False
         self._turn_tts_started = False
@@ -98,13 +97,10 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
         iterator = event.stream.__aiter__()
         async with self._streams_lock:
             if not self._active_streams:
-                self._turn_id += 1
                 self._reset_turn_output_state_locked()
 
-            turn_id = self._turn_id
             task = asyncio.create_task(
                 self._consume_stream(
-                    turn_id=turn_id,
                     iterator=iterator,
                 )
             )
@@ -172,7 +168,6 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
     async def _consume_stream(
         self,
         *,
-        turn_id: int,
         iterator: AsyncIterator[AgentOutput],
     ) -> None:
         """Consume one agent stream and forward emitted items downstream."""
@@ -195,7 +190,6 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
                     break
                 await self._consume_stream_item(
                     task=task,
-                    turn_id=turn_id,
                     item=item,
                 )
         except asyncio.CancelledError:
@@ -210,7 +204,6 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
         finally:
             await self._finalize_stream(
                 task=task,
-                turn_id=turn_id,
                 iterator=iterator,
             )
 
@@ -218,7 +211,6 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
         self,
         *,
         task: asyncio.Task[None],
-        turn_id: int,
         item: AgentOutput,
     ) -> None:
         """Emit one consumed stream item into the shared turn output channel."""
@@ -251,7 +243,7 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
             if should_start_tts:
                 self._turn_tts_started = True
 
-            await self._publish_llm_response_update(accumulated_text, turn_id=turn_id)
+            await self._publish_llm_response_update(accumulated_text)
             if should_start_tts:
                 await self.event_bus.publish(
                     TurnTTSStartRequested(session_id=self.session_id),
@@ -268,7 +260,6 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
         self,
         *,
         task: asyncio.Task[None],
-        turn_id: int,
         iterator: AsyncIterator[AgentOutput],
     ) -> None:
         """Finalize one stream and emit turn-finish events when it is the last."""
@@ -291,7 +282,7 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
                     await self.event_bus.publish(
                         TurnTTSFlushRequested(session_id=self.session_id)
                     )
-                await self._publish_llm_response_finish(final_text, turn_id=turn_id)
+                await self._publish_llm_response_finish(final_text)
         finally:
             await self._close_iterator(iterator)
 
@@ -348,25 +339,23 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
         except (asyncio.CancelledError, Exception):
             pass
 
-    async def _publish_llm_response_update(self, text: str, *, turn_id: int) -> None:
+    async def _publish_llm_response_update(self, text: str) -> None:
         """Publish an incremental merged response update."""
 
         await self.event_bus.publish(
             LLMAgentResponseUpdate(
                 session_id=self.session_id,
                 text=text,
-                turn_id=turn_id,
             )
         )
 
-    async def _publish_llm_response_finish(self, text: str, *, turn_id: int) -> None:
+    async def _publish_llm_response_finish(self, text: str) -> None:
         """Publish the final merged response for the current turn."""
 
         await self.event_bus.publish(
             LLMAgentResponseFinish(
                 session_id=self.session_id,
                 text=text,
-                turn_id=turn_id,
             )
         )
 
@@ -416,8 +405,3 @@ class LLMAgentConsumptionManager(Manager, TurnStateRestorable):
             tasks, iterators = self._detach_all_streams_locked()
         await self._cancel_tasks(tasks)
         await self._close_iterators(iterators)
-
-    def restore_turn_state(self, *, last_turn_id: int) -> None:
-        """Restore the last persisted turn identifier."""
-
-        self._turn_id = last_turn_id

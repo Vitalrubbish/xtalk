@@ -21,12 +21,123 @@ from uuid import uuid4
 
 @dataclass
 class TextCollector:
-    # TODO: able to collect tool result
     parts: list[str] = field(default_factory=list)
 
     @property
     def text(self) -> str:
         return "".join(self.parts)
+
+
+@dataclass
+class PlaybackAIMessageMeta:
+    """Track merge state for one playback-managed assistant message."""
+
+    final: bool = False
+    prefix: str | None = None
+
+
+class ChatHistory:
+    """Manage chat history plus playback-aware assistant-message merging."""
+
+    def __init__(self, system_prompt: str) -> None:
+        """Initialize the history with one system message.
+
+        Parameters
+        ----------
+        system_prompt:
+            The system prompt to place at the start of the message list.
+        """
+
+        self._messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
+        self._playback_ai_meta: dict[int, PlaybackAIMessageMeta] = {}
+
+    @property
+    def messages(self) -> list[BaseMessage]:
+        """Return the current chat-history message list."""
+
+        return self._messages
+
+    def append_message(self, message: BaseMessage) -> None:
+        """Append one message to the history unchanged.
+
+        Parameters
+        ----------
+        message:
+            The message to append.
+        """
+
+        self._messages.append(message)
+
+    def append_or_update_ai_message(self, full_text: str, *, final: bool) -> None:
+        """Append or merge one playback-managed assistant message.
+
+        Parameters
+        ----------
+        full_text:
+            The cumulative assistant text confirmed by playback.
+        final:
+            Whether this update closes the playback-managed assistant message.
+        """
+
+        if not full_text:
+            return
+
+        previous_playback = self._find_previous_playback_ai_message()
+        if previous_playback is not None:
+            index, message, meta = previous_playback
+            if index == len(self._messages) - 1 and not meta.final:
+                if meta.prefix and full_text.startswith(meta.prefix):
+                    message.content = full_text[len(meta.prefix) :]
+                else:
+                    message.content = full_text
+                    meta.prefix = None
+                meta.final = final
+                return
+
+            previous_full_text = self._resolve_playback_full_text(message, meta)
+            if not meta.final and full_text.startswith(previous_full_text):
+                suffix = full_text[len(previous_full_text) :]
+                meta.final = final
+                if not suffix:
+                    return
+                self._messages.append(AIMessage(content=suffix))
+                self._playback_ai_meta[len(self._messages) - 1] = PlaybackAIMessageMeta(
+                    final=final,
+                    prefix=previous_full_text,
+                )
+                return
+
+        self._append_playback_ai_message(full_text, final=final)
+
+    def _append_playback_ai_message(self, content: str, *, final: bool) -> int:
+        """Append one playback-managed assistant message."""
+
+        message_index = len(self._messages)
+        self.append_message(AIMessage(content=content))
+        self._playback_ai_meta[message_index] = PlaybackAIMessageMeta(final=final)
+        return message_index
+
+    def _find_previous_playback_ai_message(
+        self,
+    ) -> tuple[int, AIMessage, PlaybackAIMessageMeta] | None:
+        """Return the latest playback-managed assistant message if present."""
+
+        for index in range(len(self._messages) - 1, -1, -1):
+            if index not in self._playback_ai_meta:
+                continue
+            message = self._messages[index]
+            if isinstance(message, AIMessage):
+                return index, message, self._playback_ai_meta[index]
+        return None
+
+    @staticmethod
+    def _resolve_playback_full_text(
+        message: AIMessage,
+        meta: PlaybackAIMessageMeta,
+    ) -> str:
+        """Resolve the full playback text represented by one assistant message."""
+
+        return f"{meta.prefix or ''}{message.content}"
 
 
 class ExperimentalAgent(Agent):
@@ -72,7 +183,7 @@ class ExperimentalAgent(Agent):
         )
         self._additional_system_prompt = system_prompt
         self.system_prompt = self.BASE_SYSTEM_PROMPT + system_prompt
-        self.messages = [SystemMessage(content=self.system_prompt)]
+        self._chat_history = ChatHistory(system_prompt=self.system_prompt)
         self.backchannel_source_dir = (
             backchannel_source_dir
             if isinstance(backchannel_source_dir, Path)
@@ -92,6 +203,12 @@ class ExperimentalAgent(Agent):
     def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
         yield from self.sync_iter_from_async(self.async_accept(context))
 
+    @property
+    def messages(self) -> list[BaseMessage]:
+        """Return the current chat history for prompting and inspection."""
+
+        return self._chat_history.messages
+
     async def async_accept(self, context: AgentContext) -> AsyncIterator[AgentOutput]:
         context_type = context["type"]
         context_data = context["data"]
@@ -107,6 +224,10 @@ class ExperimentalAgent(Agent):
         if context_type == "asr_partial":
             async for item in self._handle_asr_partial(context_data["text"]):
                 yield item
+        if context_type == "response_update":
+            self._handle_response_update(context_data["text"])
+        if context_type == "response_finish":
+            self._handle_response_finish(context_data["text"])
 
     def clone(self) -> "ExperimentalAgent":
         return ExperimentalAgent(
@@ -118,14 +239,14 @@ class ExperimentalAgent(Agent):
         )
 
     def restore_history(self, messages: list[dict[str, Any]]) -> None:
-        self.messages = [SystemMessage(content=self.system_prompt)]
+        self._chat_history = ChatHistory(system_prompt=self.system_prompt)
         for msg in messages:
             role = msg["role"]
             content = msg["content"]
             if role == "user":
-                self._append_message(HumanMessage(content=content))
+                self._chat_history.append_message(HumanMessage(content=content))
             elif role == "assistant":
-                self._append_message(AIMessage(content=content))
+                self._chat_history.append_or_update_ai_message(content, final=True)
 
     def get_chat_history(self, with_system: bool = False) -> str | None:
         if not self.messages:
@@ -134,10 +255,6 @@ class ExperimentalAgent(Agent):
         return "\n".join(
             f"{msg.type}: {msg.content}" for msg in self.messages[start_idx:]
         )
-
-    # global utilities
-    def _append_message(self, message: BaseMessage) -> None:
-        self.messages.append(message)
 
     async def _stream_and_collect_text(
         self, stream: AsyncIterator[AgentOutput], collector: TextCollector
@@ -153,26 +270,34 @@ class ExperimentalAgent(Agent):
         while True:
             # greeting: AI take initiative to call user on session start
             if len(self.messages) == 1:
+                self._chat_history.append_message(HumanMessage(content="你好。"))
                 collector = TextCollector()
                 async for item in self._stream_and_collect_text(
                     self._stream_greeting(), collector
                 ):
                     yield item
-                # append user first
-                self._append_message(HumanMessage(content="你好。"))
-                self._append_message(AIMessage(content=collector.text))
                 # since this should only be triggered once and no other logic in the loop, break temporarily
                 break
             # avoid blocking the event loop
             await asyncio.sleep(0.2)
 
     async def _handle_asr_final(self, asr_text: str) -> AsyncIterator[AgentOutput]:
-        self._append_message(HumanMessage(content=asr_text))
+        self._chat_history.append_message(HumanMessage(content=asr_text))
         async for item in self._stream_messages():
             yield item
         # reset backchannel state
         self._already_backchanneled_text = ""
         self._turn_already_to_backchannel_response = {}
+
+    def _handle_response_update(self, text: str) -> None:
+        """Record one incremental playback-confirmed assistant update."""
+
+        self._chat_history.append_or_update_ai_message(text, final=False)
+
+    def _handle_response_finish(self, text: str) -> None:
+        """Record one final playback-confirmed assistant update."""
+
+        self._chat_history.append_or_update_ai_message(text, final=True)
 
     # backchannel
     async def _handle_asr_partial(self, asr_text: str) -> AsyncIterator[AgentOutput]:
@@ -251,15 +376,18 @@ class ExperimentalAgent(Agent):
             tool_calls: list[ToolCall] = (
                 list(getattr(gathered, "tool_calls", []) or []) if gathered else []
             )
-            if tool_calls:
-                response_message.tool_calls = tool_calls
-            self._append_message(response_message)
             if not tool_calls:
                 return
+            # Spoken text is tracked by playback-managed AI messages. Keep the
+            # tool-call message focused on the structured tool invocation to
+            # avoid duplicating the same text in chat history.
+            response_message.content = ""
+            response_message.tool_calls = tool_calls
+            self._chat_history.append_message(response_message)
             for tool_call in tool_calls:
                 yield tool_call
                 tool_result = await self._invoke_tool(tool_call)
-                self._append_message(tool_result)
+                self._chat_history.append_message(tool_result)
                 yield build_tool_call_result(
                     tool_call=tool_call,
                     result_content=str(tool_result.content),

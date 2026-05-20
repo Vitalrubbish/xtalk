@@ -58,8 +58,8 @@ class ExperimentalAgent(Agent):
     def __init__(
         self,
         model: BaseChatModel | dict[str, Any],
-        backchannel_model: BaseChatModel | dict[str, Any],
-        backchannel_source_dir: str | Path,
+        backchannel_model: BaseChatModel | dict[str, Any] | None = None,
+        backchannel_source_dir: str | Path | None = None,
         tools: list[BaseTool | Callable[[], BaseTool]] | None = None,
         system_prompt: str = "",
     ) -> None:
@@ -68,13 +68,15 @@ class ExperimentalAgent(Agent):
             backchannel_model
             if isinstance(backchannel_model, BaseChatModel)
             else ChatOpenAI(**backchannel_model)
+            if backchannel_model is not None
+            else None
         )
         self._additional_system_prompt = system_prompt
         self.system_prompt = self.BASE_SYSTEM_PROMPT + system_prompt
         self._chat_history = ChatHistory(system_prompt=self.system_prompt)
         self.backchannel_source_dir = (
             backchannel_source_dir
-            if isinstance(backchannel_source_dir, Path)
+            if isinstance(backchannel_source_dir, Path) or backchannel_source_dir is None
             else Path(backchannel_source_dir)
         )
 
@@ -189,6 +191,8 @@ class ExperimentalAgent(Agent):
 
     # backchannel
     async def _handle_asr_partial(self, asr_text: str) -> AsyncIterator[AgentOutput]:
+        if self.backchannel_model is None or self.backchannel_source_dir is None:
+            return
         # remove prefix from asr text to avoid repeated backchannel for the same content
         text_to_judge = asr_text[len(self._already_backchanneled_text) :]
         messages = [
@@ -202,7 +206,9 @@ class ExperimentalAgent(Agent):
             )
         ]
         
-        response_content = (await self.backchannel_model.ainvoke(messages)).content
+        response_content = self.content_to_text(
+            (await self.backchannel_model.ainvoke(messages)).content
+        )
         structured_content = None
         try:
             structured_content = json.loads(response_content)
@@ -248,7 +254,9 @@ class ExperimentalAgent(Agent):
         prompt = self.GREETING_GEN_PROMPT + self.system_prompt
         messages = [SystemMessage(content=prompt)]
         async for chunk in self.model.astream(messages):
-            yield chunk.content
+            text = self.content_to_text(chunk.content)
+            if text:
+                yield text
 
     async def _stream_messages(self) -> AsyncIterator[AgentOutput]:
         model_with_tools = self.model.bind_tools(self.tools) if self.tools else self.model
@@ -256,7 +264,7 @@ class ExperimentalAgent(Agent):
             response_message = AIMessage(content="")
             gathered = None
             async for chunk in model_with_tools.astream(self.messages):
-                text = chunk.content
+                text = self.content_to_text(chunk.content)
                 if text:
                     response_message.content += text
                     yield text

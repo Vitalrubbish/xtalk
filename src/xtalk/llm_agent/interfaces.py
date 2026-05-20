@@ -141,6 +141,39 @@ class ChatHistory:
 class Agent(ABC):
     """Abstract interface for conversational agents used by Xtalk."""
 
+    @staticmethod
+    def content_to_text(content: Any) -> str:
+        """Normalize model content blocks into plain text.
+
+        Parameters
+        ----------
+        content:
+            Content emitted by a LangChain model chunk or message.
+
+        Returns
+        -------
+        str
+            Plain-text content extracted from the input.
+        """
+
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            return "".join(parts)
+        return str(content)
+
     @abstractmethod
     def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
         """Accept an incremental context update.

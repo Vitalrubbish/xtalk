@@ -1,4 +1,5 @@
-from . import Agent, AgentContext, AgentOutput
+from .interfaces import Agent, AgentContext, AgentOutput, ChatHistory
+from .tools.utils import build_tool_call_result
 from langchain.chat_models.base import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import (
@@ -7,8 +8,10 @@ from langchain_core.messages import (
     HumanMessage,
     AIMessage,
     ToolCall,
+    ToolMessage
 )
-from typing import Any, Iterable, AsyncIterator
+from langchain_core.tools import BaseTool
+from typing import Any, Iterable, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import asyncio
@@ -18,7 +21,6 @@ from uuid import uuid4
 
 @dataclass
 class TextCollector:
-    # TODO: able to collect tool result
     parts: list[str] = field(default_factory=list)
 
     @property
@@ -56,8 +58,9 @@ class ExperimentalAgent(Agent):
     def __init__(
         self,
         model: BaseChatModel | dict[str, Any],
-        backchannel_model: BaseChatModel | dict[str, Any],
-        backchannel_source_dir: str | Path,
+        backchannel_model: BaseChatModel | dict[str, Any] | None = None,
+        backchannel_source_dir: str | Path | None = None,
+        tools: list[BaseTool | Callable[[], BaseTool]] | None = None,
         system_prompt: str = "",
     ) -> None:
         self.model = model if isinstance(model, BaseChatModel) else ChatOpenAI(**model)
@@ -65,15 +68,20 @@ class ExperimentalAgent(Agent):
             backchannel_model
             if isinstance(backchannel_model, BaseChatModel)
             else ChatOpenAI(**backchannel_model)
+            if backchannel_model is not None
+            else None
         )
         self._additional_system_prompt = system_prompt
         self.system_prompt = self.BASE_SYSTEM_PROMPT + system_prompt
-        self.messages = [SystemMessage(content=self.system_prompt)]
+        self._chat_history = ChatHistory(system_prompt=self.system_prompt)
         self.backchannel_source_dir = (
             backchannel_source_dir
-            if isinstance(backchannel_source_dir, Path)
+            if isinstance(backchannel_source_dir, Path) or backchannel_source_dir is None
             else Path(backchannel_source_dir)
         )
+
+        self._base_tools = tools
+        self.tools = self._init_tools(tools) if tools else []
 
         # every time remove this prefix before judging backchannel
         self._already_backchanneled_text = ""
@@ -84,6 +92,12 @@ class ExperimentalAgent(Agent):
 
     def accept(self, context: AgentContext) -> Iterable[AgentOutput]:
         yield from self.sync_iter_from_async(self.async_accept(context))
+
+    @property
+    def messages(self) -> list[BaseMessage]:
+        """Return the current chat history for prompting and inspection."""
+
+        return self._chat_history.messages
 
     async def async_accept(self, context: AgentContext) -> AsyncIterator[AgentOutput]:
         context_type = context["type"]
@@ -100,6 +114,10 @@ class ExperimentalAgent(Agent):
         if context_type == "asr_partial":
             async for item in self._handle_asr_partial(context_data["text"]):
                 yield item
+        if context_type == "response_update":
+            self._handle_response_update(context_data["text"])
+        if context_type == "response_finish":
+            self._handle_response_finish(context_data["text"])
 
     def clone(self) -> "ExperimentalAgent":
         return ExperimentalAgent(
@@ -107,17 +125,18 @@ class ExperimentalAgent(Agent):
             backchannel_model=self.backchannel_model,
             backchannel_source_dir=self.backchannel_source_dir,
             system_prompt=self._additional_system_prompt,
+            tools=self._base_tools,
         )
 
     def restore_history(self, messages: list[dict[str, Any]]) -> None:
-        self.messages = [SystemMessage(content=self.system_prompt)]
+        self._chat_history = ChatHistory(system_prompt=self.system_prompt)
         for msg in messages:
             role = msg["role"]
             content = msg["content"]
             if role == "user":
-                self._append_message(HumanMessage(content=content))
+                self._chat_history.append_message(HumanMessage(content=content))
             elif role == "assistant":
-                self._append_message(AIMessage(content=content))
+                self._chat_history.append_or_update_ai_message(content, final=True)
 
     def get_chat_history(self, with_system: bool = False) -> str | None:
         if not self.messages:
@@ -126,10 +145,6 @@ class ExperimentalAgent(Agent):
         return "\n".join(
             f"{msg.type}: {msg.content}" for msg in self.messages[start_idx:]
         )
-
-    # global utilities
-    def _append_message(self, message: BaseMessage) -> None:
-        self.messages.append(message)
 
     async def _stream_and_collect_text(
         self, stream: AsyncIterator[AgentOutput], collector: TextCollector
@@ -145,33 +160,39 @@ class ExperimentalAgent(Agent):
         while True:
             # greeting: AI take initiative to call user on session start
             if len(self.messages) == 1:
+                self._chat_history.append_message(HumanMessage(content="你好。"))
                 collector = TextCollector()
                 async for item in self._stream_and_collect_text(
                     self._stream_greeting(), collector
                 ):
                     yield item
-                # append user first
-                self._append_message(HumanMessage(content="你好。"))
-                self._append_message(AIMessage(content=collector.text))
                 # since this should only be triggered once and no other logic in the loop, break temporarily
                 break
             # avoid blocking the event loop
             await asyncio.sleep(0.2)
 
     async def _handle_asr_final(self, asr_text: str) -> AsyncIterator[AgentOutput]:
-        self._append_message(HumanMessage(content=asr_text))
-        collector = TextCollector()
-        async for item in self._stream_and_collect_text(
-            self._stream_messages(), collector
-        ):
+        self._chat_history.append_message(HumanMessage(content=asr_text))
+        async for item in self._stream_messages():
             yield item
-        self._append_message(AIMessage(content=collector.text))
         # reset backchannel state
         self._already_backchanneled_text = ""
         self._turn_already_to_backchannel_response = {}
 
+    def _handle_response_update(self, text: str) -> None:
+        """Record one incremental playback-confirmed assistant update."""
+
+        self._chat_history.append_or_update_ai_message(text, final=False)
+
+    def _handle_response_finish(self, text: str) -> None:
+        """Record one final playback-confirmed assistant update."""
+
+        self._chat_history.append_or_update_ai_message(text, final=True)
+
     # backchannel
     async def _handle_asr_partial(self, asr_text: str) -> AsyncIterator[AgentOutput]:
+        if self.backchannel_model is None or self.backchannel_source_dir is None:
+            return
         # remove prefix from asr text to avoid repeated backchannel for the same content
         text_to_judge = asr_text[len(self._already_backchanneled_text) :]
         messages = [
@@ -185,7 +206,9 @@ class ExperimentalAgent(Agent):
             )
         ]
         
-        response_content = (await self.backchannel_model.ainvoke(messages)).content
+        response_content = self.content_to_text(
+            (await self.backchannel_model.ainvoke(messages)).content
+        )
         structured_content = None
         try:
             structured_content = json.loads(response_content)
@@ -231,12 +254,40 @@ class ExperimentalAgent(Agent):
         prompt = self.GREETING_GEN_PROMPT + self.system_prompt
         messages = [SystemMessage(content=prompt)]
         async for chunk in self.model.astream(messages):
-            yield chunk.content
+            text = self.content_to_text(chunk.content)
+            if text:
+                yield text
 
     async def _stream_messages(self) -> AsyncIterator[AgentOutput]:
-        # TODO: handle tool calling and tool result
-        async for chunk in self.model.astream(self.messages):
-            yield chunk.content
+        model_with_tools = self.model.bind_tools(self.tools) if self.tools else self.model
+        while True:
+            response_message = AIMessage(content="")
+            gathered = None
+            async for chunk in model_with_tools.astream(self.messages):
+                text = self.content_to_text(chunk.content)
+                if text:
+                    response_message.content += text
+                    yield text
+                gathered = chunk if gathered is None else gathered + chunk
+            tool_calls: list[ToolCall] = (
+                list(getattr(gathered, "tool_calls", []) or []) if gathered else []
+            )
+            if not tool_calls:
+                return
+            # Spoken text is tracked by playback-managed AI messages. Keep the
+            # tool-call message focused on the structured tool invocation to
+            # avoid duplicating the same text in chat history.
+            response_message.content = ""
+            response_message.tool_calls = tool_calls
+            self._chat_history.append_message(response_message)
+            for tool_call in tool_calls:
+                yield tool_call
+                tool_result = await self._invoke_tool(tool_call)
+                self._chat_history.append_message(tool_result)
+                yield build_tool_call_result(
+                    tool_call=tool_call,
+                    result_content=str(tool_result.content),
+                )
 
     def _load_backchannel_audio(self, backchannel_content: str) -> bytes | None:
         map_path = self.backchannel_source_dir / "map.json"
@@ -262,3 +313,33 @@ class ExperimentalAgent(Agent):
         with open(map_path, "r", encoding="utf-8") as f:
             content_map: dict[str, str] = json.load(f)
         return list(content_map.keys())
+
+    # Tools
+    @staticmethod
+    def _init_tools(tools: list[BaseTool | Callable[[], BaseTool]]) -> list[BaseTool]:
+        initialized_tools = []
+        for tool in tools:
+            if isinstance(tool, BaseTool):
+                initialized_tools.append(tool)
+            elif callable(tool):
+                initialized_tools.append(tool())
+        return initialized_tools
+
+    async def _invoke_tool(
+        self,
+        tool_call: ToolCall,
+    ):
+        tool = next((t for t in self.tools if t.name == tool_call["name"]), None)
+        if not tool:
+            return ToolMessage(
+                content=f"Tool {tool_call['name']} not found",
+                tool_call_id=tool_call["id"],
+            )
+        try:
+            result: ToolMessage = await tool.ainvoke(tool_call["args"])
+            return result
+        except Exception as e:
+            return ToolMessage(
+                content=f"Error invoking tool {tool_call['name']}: {str(e)}",
+                tool_call_id=tool_call["id"],
+            )

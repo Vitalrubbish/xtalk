@@ -5,7 +5,7 @@ from typing import Any
 
 from ...log_utils import logger
 from ..event_bus import EventBus
-from ..events import ToolCallOccurred, TTSChunkGenerated
+from ..events import ToolCallOccurred, TTSChunkReady
 from ..interfaces import Manager
 
 
@@ -78,7 +78,7 @@ class DirectAudioManager(Manager):
             return
 
         await self.event_bus.publish(
-            TTSChunkGenerated(
+            TTSChunkReady(
                 session_id=self.session_id,
                 audio_chunk=audio,
                 sample_rate=sample_rate,

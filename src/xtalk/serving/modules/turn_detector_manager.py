@@ -28,7 +28,7 @@ from ..events import (
     ASRResultPartial,
     VADSpeechStart,
     VADSpeechEnd,
-    TTSChunkGenerated,
+    TTSChunkReady,
     TTSPlaybackFinished,
     TTSStopped,
     TurnDetectorStopSpeaking,
@@ -122,8 +122,8 @@ class TurnDetectorManager(Manager):
             return
         self._disable_proxy_vad()
 
-    @Manager.event_handler(TTSChunkGenerated)
-    async def _on_tts_chunk_generated(self, event: TTSChunkGenerated) -> None:
+    @Manager.event_handler(TTSChunkReady)
+    async def _on_tts_chunk_generated(self, event: TTSChunkReady) -> None:
         # TODO: subscribe client audio start playing event for accurate control
         """Set turn detector to non-listening when TTS starts producing audio."""
         if self.turn_detector is None:

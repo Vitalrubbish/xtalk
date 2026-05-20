@@ -60,7 +60,7 @@ def create_event_class(
     --------
     >>> CustomEvent = create_event_class(
     ...     name="CustomEvent",
-    ...     fields={"text": "", "turn_id": 0},
+    ...     fields={"text": ""},
     ... )
     """
     fields = fields or {}
@@ -112,7 +112,6 @@ class ASRResultPartial(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_partial"
     text: str = ""
     display_text: str = ""  # Cleaned text for frontend display
-    turn_id: int = 0
     speech_pause: bool = False
 
 
@@ -122,7 +121,6 @@ class ASRResultFinal(BaseEvent):
     TYPE: ClassVar[str] = "asr.result_final"
     text: str = ""
     display_text: str = ""  # Cleaned text for frontend display
-    turn_id: int = 0
 
 
 @dataclass
@@ -168,24 +166,65 @@ class TTSFinished(BaseEvent):
 class LLMAgentResponseUpdate(BaseEvent):
     TYPE: ClassVar[str] = "llm_agent.response_update"
     text: str = ""
-    turn_id: int = 0
 
 
 @dataclass
 class LLMAgentResponseFinish(BaseEvent):
-    """Final text emitted by the agent for a turn.
+    """Final text emitted by the agent for one response.
 
     Attributes
     ----------
     text : str
         Final response text.
-    turn_id : int
-        Turn identifier associated with the response.
     """
 
     TYPE: ClassVar[str] = "llm_agent.response_finish"
     text: str = ""
-    turn_id: int = 0
+
+
+@dataclass
+class ResponseUpdate(BaseEvent):
+    """Text prefix whose corresponding TTS playback progress has been confirmed.
+
+    Attributes
+    ----------
+    text : str
+        Text prefix that has been played to the user.
+    """
+
+    TYPE: ClassVar[str] = "response.update"
+    text: str = ""
+
+
+@dataclass
+class ResponseFinish(BaseEvent):
+    """Final text whose corresponding TTS playback has finished.
+
+    Attributes
+    ----------
+    text : str
+        Final response text whose playback completed.
+    """
+
+    TYPE: ClassVar[str] = "response.finish"
+    text: str = ""
+
+
+@dataclass
+class TTSTextSynthesized(BaseEvent):
+    """Text marker emitted after one synthesized text segment is fully produced.
+
+    Attributes
+    ----------
+    text : str
+        Text segment that was synthesized.
+    audio_duration : float
+        Estimated playback duration of the synthesized audio in milliseconds.
+    """
+
+    TYPE: ClassVar[str] = "tts.text_synthesized"
+    text: str = ""
+    audio_duration: float = 0.0
 
 
 @dataclass
@@ -213,8 +252,9 @@ class TTSSpeedChange(BaseEvent):
 
 
 @dataclass
-class TTSChunkGenerated(BaseEvent):
-    TYPE: ClassVar[str] = "tts.chunk_generated"
+class TTSChunkReady(BaseEvent):
+    """Indicates one TTS audio chunk is ready for sending. Not emitted when the chunk is generated."""
+    TYPE: ClassVar[str] = "tts.chunk_ready"
     audio_chunk: bytes = b""
     sample_rate: int = 48000
 

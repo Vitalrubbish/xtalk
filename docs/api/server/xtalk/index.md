@@ -917,16 +917,6 @@ def restore_conversation(self, *, messages: list[dict[str, Any]]) -> None
 
 Restore persisted conversation history into the session agent.
 
-#### restore_turn_state
-
-_Defined in `xtalk.serving.service`._
-
-```python
-def restore_turn_state(self, *, last_turn_id: int) -> None
-```
-
-Restore per-manager turn counters from persisted state.
-
 #### send_session_attached
 
 _Defined in `xtalk.serving.service`._
@@ -1067,7 +1057,7 @@ Create a ``BaseEvent`` subclass dynamically.
 ```pycon
 >>> CustomEvent = create_event_class(
 ...     name="CustomEvent",
-...     fields={"text": "", "turn_id": 0},
+...     fields={"text": ""},
 ... )
 ```
 

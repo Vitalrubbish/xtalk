@@ -25,10 +25,11 @@ from .modules.speaker_manager import SpeakerManager
 from .modules.embeddings_manager import EmbeddingsManager
 from .modules.recording_manager import RecordingManager
 from .modules.turn_detector_manager import TurnDetectorManager
+from .modules.tts_playback_manager import TTSPlaybackManager
 from .modules.persistence_manager import PersistenceManager
 from .events import BaseEvent, LLMAgentLoop
 from ..pipelines import Pipeline
-from .interfaces import EventListenerMixin, EventOverrides, TurnStateRestorable
+from .interfaces import EventListenerMixin, EventOverrides
 
 
 class Service:
@@ -298,12 +299,6 @@ class Service:
             return
         agent.restore_history(messages)
 
-    def restore_turn_state(self, *, last_turn_id: int) -> None:
-        """Restore per-manager turn counters from persisted state."""
-        for manager in self._managers:
-            if isinstance(manager, TurnStateRestorable):
-                manager.restore_turn_state(last_turn_id=last_turn_id)
-
     async def send_session_attached(self) -> None:
         """Notify the client that the session is attached."""
         if not hasattr(self, "output_gateway"):
@@ -398,6 +393,7 @@ class DefaultService(Service):
         LLMAgentConsumptionManager,
         DirectAudioManager,
         TTSManager,
+        TTSPlaybackManager,
         CaptionerManager,
         RetrievalManager,
         TurnTakingManager,

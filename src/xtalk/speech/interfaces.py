@@ -136,7 +136,7 @@ class ASR(ABC):
         audio : bytes
             Incremental PCM 16-bit mono audio bytes.
         is_final : bool, optional
-            Whether the chunk should force a final decode.
+            Whether the chunk should force a final decode. Internal state like committed text should not be reset, but the implementation may use this as a hint to optimize decoding, like flushing the upstreamASR model itself.
         chat_history : str | None, optional
             Serialized chat history for the current session, excluding the
             in-progress turn when unavailable.

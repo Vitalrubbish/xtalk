@@ -4,14 +4,14 @@ const messagesMap: ActionToFunctionMap = {
         conversation.appendMessage({
             role: "user",
             content: data.text,
-            turnId: data.turn_id
+            final: false
         })
     },
     "finish_asr": async (data, websocket, conversation, outputAudioSession) => {
         conversation.appendMessage({
             role: "user",
             content: data.text,
-            turnId: data.turn_id
+            final: true
         })
         conversation.state.streamState = 'processing';
     },
@@ -19,14 +19,14 @@ const messagesMap: ActionToFunctionMap = {
         conversation.appendMessage({
             role: "assistant",
             content: data.text,
-            turnId: data.turn_id
+            final: false
         })
     },
     "finish_resp": async (data, websocket, conversation, outputAudioSession) => {
         conversation.appendMessage({
             role: "assistant",
             content: data.text,
-            turnId: data.turn_id
+            final: true
         })
     },
 };

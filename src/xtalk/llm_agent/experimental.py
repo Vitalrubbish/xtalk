@@ -62,7 +62,27 @@ class ExperimentalAgent(Agent):
         backchannel_source_dir: str | Path | None = None,
         tools: list[BaseTool | Callable[[], BaseTool]] | None = None,
         system_prompt: str = "",
+        proactive: bool = True,
     ) -> None:
+        """Initialize the experimental agent.
+
+        Parameters
+        ----------
+        model : BaseChatModel | dict[str, Any]
+            Primary chat model or configuration.
+        backchannel_model : BaseChatModel | dict[str, Any] | None, optional
+            Optional model used to judge backchannel insertion.
+        backchannel_source_dir : str | Path | None, optional
+            Directory containing backchannel assets.
+        tools : list[BaseTool | Callable[[], BaseTool]] | None, optional
+            Optional tool instances or factories.
+        system_prompt : str, optional
+            Additional system prompt appended after the base prompt.
+        proactive : bool, optional
+            Whether the agent should proactively emit the startup greeting on
+            the session loop.
+        """
+
         self.model = model if isinstance(model, BaseChatModel) else ChatOpenAI(**model)
         self.backchannel_model = (
             backchannel_model
@@ -72,6 +92,7 @@ class ExperimentalAgent(Agent):
             else None
         )
         self._additional_system_prompt = system_prompt
+        self.proactive = proactive
         self.system_prompt = self.BASE_SYSTEM_PROMPT + system_prompt
         self._chat_history = ChatHistory(system_prompt=self.system_prompt)
         self.backchannel_source_dir = (
@@ -126,6 +147,7 @@ class ExperimentalAgent(Agent):
             backchannel_source_dir=self.backchannel_source_dir,
             system_prompt=self._additional_system_prompt,
             tools=self._base_tools,
+            proactive=self.proactive,
         )
 
     def restore_history(self, messages: list[dict[str, Any]]) -> None:
@@ -159,7 +181,7 @@ class ExperimentalAgent(Agent):
     async def _loop_runner(self) -> AsyncIterator[AgentOutput]:
         while True:
             # greeting: AI take initiative to call user on session start
-            if len(self.messages) == 1:
+            if self.proactive and len(self.messages) == 1:
                 self._chat_history.append_message(HumanMessage(content="你好。"))
                 collector = TextCollector()
                 async for item in self._stream_and_collect_text(

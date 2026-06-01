@@ -46,6 +46,7 @@ plugins:
             'Sample Config for Fully Local Deployment': 完全本地部署示例配置
             'Text Embedding': 文本嵌入
             'Tool Use': 使用工具
+            Bot2Bot: Bot2Bot
             'Introduce a New Model': 引入新模型
             'Customize the Pipeline': 定制X-Talk逻辑
             Testing: 测试
@@ -66,6 +67,7 @@ nav:
       - 'Sample Config for Fully Local Deployment': tutorial/sample_config_for_fully_local_deployment.md
       - 'Text Embedding': tutorial/text_embedding.md
       - 'Tool Use': tutorial/tool_use.md
+      - Bot2Bot: tutorial/bot2bot.md
       - 'Introduce a New Model': tutorial/introduce_a_new_model.md
       - 'Customize the Pipeline': tutorial/customize_the_pipeline.md
       - Testing: tutorial/testing.md
@@ -76,4 +78,3 @@ nav:
       - 'Client': api/client/globals.md
       - 'Server': api/server/index.md
   - Developer: developer.md
-

@@ -122,7 +122,7 @@ edge-tts = [
   "edge-tts"
 ]
 silero-vad = [
-  "torch",
+  "onnxruntime",
 ]
 rubberband = [
   "pyrubberband"

@@ -102,7 +102,7 @@ class DefaultPipeline(Pipeline):
         default=None, metadata={"init_key": "caption_rewriter", "clone": False}
     )
     vad_model: Optional[VAD] = field(
-        default=None, metadata={"init_key": "vad", "clone": False}
+        default=None, metadata={"init_key": "vad", "clone": True}
     )
     enhancer_model: Optional[SpeechEnhancer] = field(
         default=None, metadata={"init_key": "speech_enhancer", "clone": True}

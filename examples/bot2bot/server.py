@@ -172,53 +172,6 @@ def validate_agent_class(agent_class: type[Any]) -> None:
         )
 
 
-def get_template_system_prompt(template_config: dict[str, Any]) -> str:
-    """Extract the template ``system_prompt`` when present.
-
-    Parameters
-    ----------
-    template_config : dict[str, Any]
-        Template config loaded from ``--config``.
-
-    Returns
-    -------
-    str
-        Template prompt string, or an empty string when omitted.
-    """
-
-    llm_agent_config = template_config.get("llm_agent")
-    if not isinstance(llm_agent_config, dict):
-        return ""
-    params = llm_agent_config.get("params")
-    if not isinstance(params, dict):
-        return ""
-    system_prompt = params.get("system_prompt")
-    return system_prompt.strip() if isinstance(system_prompt, str) else ""
-
-
-def build_default_system_prompt(
-    template_system_prompt: str,
-    focus_hint: str,
-) -> str:
-    """Create one default prompt seeded from the template prompt.
-
-    Parameters
-    ----------
-    template_system_prompt : str
-        Prompt defined by the template config.
-    focus_hint : str
-        Additional role hint appended for the starter bot.
-
-    Returns
-    -------
-    str
-        Combined default prompt shown in the frontend.
-    """
-
-    parts = [template_system_prompt, focus_hint]
-    return "\n".join(part for part in parts if part).strip()
-
-
 def parse_bot_drafts(payload: dict[str, Any]) -> list[BotDraft]:
     """Parse and validate a bot list from the frontend payload.
 
@@ -430,11 +383,9 @@ class Bot2BotRuntimeManager:
         *,
         template_config: dict[str, Any],
         agent_type: str,
-        template_system_prompt: str,
     ) -> None:
         self.template_config = template_config
         self.agent_type = agent_type
-        self.template_system_prompt = template_system_prompt
         self.active_run: ActiveRun | None = None
 
     def describe_template(self) -> dict[str, Any]:
@@ -452,18 +403,12 @@ class Bot2BotRuntimeManager:
             "default_bots": [
                 {
                     "name": "Bot A",
-                    "system_prompt": build_default_system_prompt(
-                        self.template_system_prompt,
-                        "你更偏产品和用户体验视角，回应时喜欢抛出新的问题。",
-                    ),
+                    "system_prompt": "",
                     "proactive": True,
                 },
                 {
                     "name": "Bot B",
-                    "system_prompt": build_default_system_prompt(
-                        self.template_system_prompt,
-                        "你更偏工程实现和稳定性视角，回应时喜欢给出具体取舍。",
-                    ),
+                    "system_prompt": "",
                     "proactive": False,
                 },
             ],
@@ -562,11 +507,9 @@ def create_app(config_path: str) -> FastAPI:
     template_config = load_json(config_path)
     agent_class = resolve_agent_class(template_config)
     validate_agent_class(agent_class)
-    template_system_prompt = get_template_system_prompt(template_config)
     manager = Bot2BotRuntimeManager(
         template_config=template_config,
         agent_type=agent_class.__name__,
-        template_system_prompt=template_system_prompt,
     )
 
     app = FastAPI(title="Xtalk Bot2Bot Demo")

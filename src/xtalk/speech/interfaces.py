@@ -59,8 +59,12 @@ class ASR(ABC):
         audio : bytes
             Incremental PCM 16-bit mono audio bytes.
         is_final : bool, optional
-            Whether the caller is forcing a temporal final decode because the user paused
-            or the turn ended. Does not mean the ASR state must be reset, but may be used as a hint to optimize decoding.
+            Whether the caller is asking the ASR to treat the current point as
+            a temporary boundary and optionally flush any tail audio that would
+            otherwise remain buffered. This is only a decoding hint. It does
+            not mean the streaming state must be reset, and previously
+            recognized text for the session must be preserved so later audio
+            can continue from the accumulated result.
         chat_history : str | None, optional
             Serialized chat history for the current session, excluding the
             in-progress turn when unavailable.
@@ -84,8 +88,8 @@ class ASR(ABC):
         Returns
         -------
         int | None
-            Recommended byte count for streaming accumulation, or ``None`` when
-            no preference is provided.
+            Recommended byte count for each chunk passed to
+            ``recognize_stream``, or ``None`` when no preference is provided.
         """
         return None
 
@@ -136,7 +140,12 @@ class ASR(ABC):
         audio : bytes
             Incremental PCM 16-bit mono audio bytes.
         is_final : bool, optional
-            Whether the chunk should force a final decode. Internal state like committed text should not be reset, but the implementation may use this as a hint to optimize decoding, like flushing the upstreamASR model itself.
+            Whether the caller is asking the ASR to treat the current point as
+            a temporary boundary and optionally flush any tail audio that would
+            otherwise remain buffered. This is only a decoding hint. It does
+            not mean the streaming state must be reset, and previously
+            recognized text for the session must be preserved so later audio
+            can continue from the accumulated result.
         chat_history : str | None, optional
             Serialized chat history for the current session, excluding the
             in-progress turn when unavailable.

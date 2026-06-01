@@ -41,6 +41,7 @@ function cloneBotDraft(source, index) {
         name: source?.name?.trim() || `Bot ${index}`,
         system_prompt: source?.system_prompt?.trim() || "",
         proactive: Boolean(source?.proactive),
+        voice: source?.voice?.trim() || "",
     };
 }
 
@@ -141,16 +142,19 @@ function renderBots() {
         const nameInput = fragment.querySelector(".bot-name");
         const promptInput = fragment.querySelector(".bot-system-prompt");
         const proactiveInput = fragment.querySelector(".bot-proactive");
+        const voiceInput = fragment.querySelector(".bot-voice");
 
         title.textContent = `Bot ${index + 1}`;
         removeButton.disabled = disableEditing || state.botDrafts.length <= 2;
         nameInput.value = bot.name;
         promptInput.value = bot.system_prompt;
         proactiveInput.checked = bot.proactive;
+        voiceInput.value = bot.voice;
 
         nameInput.disabled = disableEditing;
         promptInput.disabled = disableEditing;
         proactiveInput.disabled = disableEditing;
+        voiceInput.disabled = disableEditing;
 
         removeButton.addEventListener("click", () => {
             state.botDrafts.splice(index, 1);
@@ -164,6 +168,9 @@ function renderBots() {
         });
         promptInput.addEventListener("input", (event) => {
             state.botDrafts[index].system_prompt = event.target.value;
+        });
+        voiceInput.addEventListener("input", (event) => {
+            state.botDrafts[index].voice = event.target.value;
         });
         proactiveInput.addEventListener("change", (event) => {
             const checked = Boolean(event.target.checked);
@@ -318,6 +325,7 @@ async function startBot2Bot() {
                 name: bot.name.trim(),
                 system_prompt: bot.system_prompt.trim(),
                 proactive: bot.proactive,
+                voice: bot.voice.trim(),
             })),
         };
         const run = await fetchJSON("/api/bot2bot/start", {
@@ -335,8 +343,6 @@ async function startBot2Bot() {
                     mode: "web_bridge",
                     participantId: botMeta.id,
                     bridge: state.bridge,
-                    autoEmitVad: true,
-                    vadRedemptionMs: 500,
                 },
                 serviceURLs: {
                     login: new URL(botMeta.login_path, window.location.href),

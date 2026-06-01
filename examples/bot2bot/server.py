@@ -38,11 +38,14 @@ class BotDraft:
         Per-bot prompt injected into ``llm_agent.params.system_prompt``.
     proactive : bool
         Whether the bot should proactively start the conversation.
+    voice : str
+        Optional TTS voice override injected into ``tts.params.voice``.
     """
 
     name: str
     system_prompt: str
     proactive: bool
+    voice: str
 
 
 @dataclass
@@ -144,6 +147,35 @@ def resolve_agent_class(template_config: dict[str, Any]) -> type[Any]:
     )
 
 
+def validate_template_vad_config(template_config: dict[str, Any]) -> None:
+    """Ensure the bot2bot template config defines a backend VAD model.
+
+    Parameters
+    ----------
+    template_config : dict[str, Any]
+        Template server config passed through ``--config``.
+
+    Raises
+    ------
+    ValueError
+        Raised when the template config does not define a valid ``vad`` block.
+    """
+
+    vad_config = template_config.get("vad")
+    if isinstance(vad_config, dict) and vad_config.get("type"):
+        return
+
+    raise ValueError(
+        "Bot2Bot requires backend VAD in the template config. "
+        "Install the dependency with `pip install -e '.[silero-vad]'`, then add "
+        'the following block to your config:\n'
+        '"vad": {\n'
+        '    "type": "SileroVAD",\n'
+        '    "params": {}\n'
+        "}"
+    )
+
+
 def validate_agent_class(agent_class: type[Any]) -> None:
     """Ensure the selected agent supports the demo overrides.
 
@@ -205,6 +237,7 @@ def parse_bot_drafts(payload: dict[str, Any]) -> list[BotDraft]:
         name_value = raw_bot.get("name")
         system_prompt_value = raw_bot.get("system_prompt")
         proactive_value = raw_bot.get("proactive")
+        voice_value = raw_bot.get("voice")
 
         name = name_value.strip() if isinstance(name_value, str) else ""
         system_prompt = (
@@ -213,6 +246,7 @@ def parse_bot_drafts(payload: dict[str, Any]) -> list[BotDraft]:
             else ""
         )
         proactive = bool(proactive_value)
+        voice = voice_value.strip() if isinstance(voice_value, str) else ""
 
         if not name:
             raise ValueError(f"Bot {index} name must be non-empty.")
@@ -226,6 +260,7 @@ def parse_bot_drafts(payload: dict[str, Any]) -> list[BotDraft]:
                 name=name,
                 system_prompt=system_prompt,
                 proactive=proactive,
+                voice=voice,
             )
         )
 
@@ -288,6 +323,19 @@ def build_bot_config(template_config: dict[str, Any], bot: BotDraft) -> dict[str
 
     llm_agent_params["system_prompt"] = bot.system_prompt
     llm_agent_params["proactive"] = bot.proactive
+
+    if bot.voice:
+        tts_config = config.get("tts")
+        if not isinstance(tts_config, dict):
+            tts_config = {}
+            config["tts"] = tts_config
+
+        tts_params = tts_config.get("params")
+        if not isinstance(tts_params, dict):
+            tts_params = {}
+            tts_config["params"] = tts_params
+
+        tts_params["voice"] = bot.voice
     return config
 
 
@@ -405,11 +453,13 @@ class Bot2BotRuntimeManager:
                     "name": "Bot A",
                     "system_prompt": "",
                     "proactive": True,
+                    "voice": "",
                 },
                 {
                     "name": "Bot B",
                     "system_prompt": "",
                     "proactive": False,
+                    "voice": "",
                 },
             ],
         }
@@ -505,6 +555,7 @@ def create_app(config_path: str) -> FastAPI:
     """
 
     template_config = load_json(config_path)
+    validate_template_vad_config(template_config)
     agent_class = resolve_agent_class(template_config)
     validate_agent_class(agent_class)
     manager = Bot2BotRuntimeManager(

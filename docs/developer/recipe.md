@@ -1,4 +1,4 @@
-# Developer Guide
+# Recipe
 
 The examples below show how to extend the framework by modifying it directly.
 

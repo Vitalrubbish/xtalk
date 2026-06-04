@@ -54,7 +54,6 @@ class CustomPipeline(DefaultPipeline):
         captioner: Optional[Captioner] = None,
         punt_restorer_model: Optional[PuntRestorer] = None,
         caption_rewriter: Optional[Rewriter | BaseChatModel] = None,
-        thought_rewriter: Optional[Rewriter | BaseChatModel] = None,
         vad: Optional[VAD] = None,
         speech_enhancer: Optional[SpeechEnhancer] = None,
         speaker_encoder: Optional[SpeakerEncoder] = None,
@@ -70,7 +69,6 @@ class CustomPipeline(DefaultPipeline):
             captioner=captioner,
             punt_restorer_model=punt_restorer_model,
             caption_rewriter=caption_rewriter,
-            thought_rewriter=thought_rewriter,
             vad=vad,
             speech_enhancer=speech_enhancer,
             speaker_encoder=speaker_encoder,
@@ -97,7 +95,7 @@ pipeline = Xtalk.create_pipeline_from_config(
 
 # Define custom events and manager
 LLMOutputRefactoredFinal = create_event_class(
-    name="LLMOutputRefactoredFinal", fields={"text": "", "turn_id": 0}
+    name="LLMOutputRefactoredFinal", fields={"text": ""}
 )
 
 
@@ -121,7 +119,6 @@ class LLMOutputRefactorManager(Manager):
             new_event = LLMOutputRefactoredFinal(
                 session_id=event.session_id,
                 text=refactored_output,
-                turn_id=event.turn_id,
             )
             await self.event_bus.publish(new_event)
 
@@ -131,7 +128,7 @@ class LLMOutputRefactorManager(Manager):
 
 
 # Create a Service and register the custom manager
-custom_service = DefaultService(pipeline=pipeline, service_config={"sim_gen": False})
+custom_service = DefaultService(pipeline=pipeline)
 custom_service.register_manager(LLMOutputRefactorManager)
 
 # Rewire event listeners of existing managers if needed
@@ -149,7 +146,7 @@ async def output_gateway_llm_output_refactored_final_handler(
     await self.send_signal(
         {
             "action": "finish_resp",
-            "data": {"text": event.text, "turn_id": event.turn_id},
+            "data": {"text": event.text},
         }
     )
 
@@ -163,7 +160,7 @@ custom_service.subscribe_event(
 # Create Xtalk instance with the custom service and start the app
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, Form, File, UploadFile, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
@@ -172,11 +169,7 @@ xtalk_instance = Xtalk(service_prototype=custom_service, max_sessions=10)
 
 
 app = FastAPI(title="Xtalk Server")
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await xtalk_instance.connect(websocket)
+xtalk_instance.mount_routes(app)
 
 
 # Serve static files
@@ -199,25 +192,6 @@ except:
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.post("/api/upload")
-async def upload_file(
-    session_id: str = Form(...),
-    file: UploadFile = File(...),
-):
-    # Check file type
-    content_type = (file.content_type or "").lower()
-    filename = (file.filename or "").lower()
-    is_text = content_type.startswith("text/") if content_type else False
-    if content_type and not is_text:
-        raise HTTPException(status_code=400, detail="Only text files are supported.")
-    # Read file content and embed
-    text = (await file.read()).decode("utf-8", errors="ignore")
-    await xtalk_instance.embed_text(session_id=session_id, text=text)
-    return {"status": "ok"}
-
-
 if __name__ == "__main__":
     import uvicorn
 

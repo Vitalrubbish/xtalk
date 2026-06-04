@@ -22,8 +22,15 @@ class DummyASR(ASR):
         """Convert audio to text (stub implementation)."""
         return self.default_text
 
-    def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str:
+    def recognize_stream(
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+    ) -> str:
         """Streaming stub: maintain accumulated text and return it."""
+        del chat_history
         if audio or is_final:
             self._stream_text = self.default_text
 

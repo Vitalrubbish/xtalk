@@ -6,9 +6,9 @@ from typing import Optional, Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
 
-from ..llm_agent.interfaces import Agent
+from ..llm_agent import Agent
 from ..rewriter.interfaces import Rewriter
-from ..rewriter.simple import DefaultCaptionRewriter, DefaultThoughtRewriter
+from ..rewriter.simple import DefaultCaptionRewriter
 from ..speech.interfaces import (
     ASR,
     TTS,
@@ -18,8 +18,9 @@ from ..speech.interfaces import (
     SpeechEnhancer,
     SpeechSpeedController,
     SpeakerEncoder,
+    TurnDetector,
 )
-from .interfaces import Pipeline, PipelineOutput
+from .interfaces import Pipeline
 
 
 def _maybe_clone(obj: Any) -> Any:
@@ -34,7 +35,45 @@ def _maybe_clone(obj: Any) -> Any:
 
 @dataclass(init=False)
 class DefaultPipeline(Pipeline):
-    """Lightweight pipeline: just a container for models/configs via dataclass."""
+    """Store the standard Xtalk model bundle for a session.
+
+    Parameters
+    ----------
+    asr : ASR
+        Speech recognition model.
+    llm_agent : Agent
+        Agent used to generate text responses and tool calls.
+    tts : TTS
+        Text-to-speech model.
+    default_response : str, optional
+        Fallback text returned when no better response is available.
+    use_streaming_tts : bool, optional
+        Whether service managers should prefer streaming TTS when supported.
+    captioner : Captioner | None, optional
+        Optional audio captioning model.
+    punt_restorer_model : PuntRestorer | None, optional
+        Optional punctuation restoration model.
+    caption_rewriter : Rewriter | BaseChatModel | None, optional
+        Optional caption rewriter or chat model to wrap as a rewriter.
+    vad : VAD | None, optional
+        Optional voice activity detector.
+    speech_enhancer : SpeechEnhancer | None, optional
+        Optional speech enhancement model.
+    speaker_encoder : SpeakerEncoder | None, optional
+        Optional speaker embedding model.
+    speech_speed_controller : SpeechSpeedController | None, optional
+        Optional post-processing speed controller for synthesized audio.
+    embeddings : Embeddings | None, optional
+        Optional embeddings backend for retrieval features.
+    turn_detector : TurnDetector | None, optional
+        Optional turn detector that coordinates interruption and generation.
+
+    Notes
+    -----
+    The dataclass field metadata controls how instances are cloned for each
+    session. Subclasses can add new fields as long as they expose an
+    ``init_key`` metadata entry.
+    """
 
     # ---- core models ----
     asr_model: ASR = field(metadata={"init_key": "asr", "clone": True})
@@ -62,12 +101,8 @@ class DefaultPipeline(Pipeline):
     caption_rewriter: Optional[Rewriter] = field(
         default=None, metadata={"init_key": "caption_rewriter", "clone": False}
     )
-    thought_rewriter: Optional[Rewriter] = field(
-        default=None, metadata={"init_key": "thought_rewriter", "clone": False}
-    )
-
     vad_model: Optional[VAD] = field(
-        default=None, metadata={"init_key": "vad", "clone": False}
+        default=None, metadata={"init_key": "vad", "clone": True}
     )
     enhancer_model: Optional[SpeechEnhancer] = field(
         default=None, metadata={"init_key": "speech_enhancer", "clone": True}
@@ -81,6 +116,9 @@ class DefaultPipeline(Pipeline):
     embeddings_model: Optional[Embeddings] = field(
         default=None, metadata={"init_key": "embeddings", "clone": False}
     )
+    turn_detector_model: Optional[TurnDetector] = field(
+        default=None, metadata={"init_key": "turn_detector", "clone": True}
+    )
 
     def __init__(
         self,
@@ -92,13 +130,46 @@ class DefaultPipeline(Pipeline):
         captioner: Optional[Captioner] = None,
         punt_restorer_model: Optional[PuntRestorer] = None,
         caption_rewriter: Optional[Rewriter | BaseChatModel] = None,
-        thought_rewriter: Optional[Rewriter | BaseChatModel] = None,
         vad: Optional[VAD] = None,
         speech_enhancer: Optional[SpeechEnhancer] = None,
         speaker_encoder: Optional[SpeakerEncoder] = None,
         speech_speed_controller: Optional[SpeechSpeedController] = None,
         embeddings: Optional[Embeddings] = None,
+        turn_detector: Optional[TurnDetector] = None,
     ):
+        """Initialize the default pipeline.
+
+        Parameters
+        ----------
+        asr : ASR
+            Speech recognition model.
+        llm_agent : Agent
+            Agent used for response generation.
+        tts : TTS
+            Text-to-speech model.
+        default_response : str, optional
+            Fallback response text.
+        use_streaming_tts : bool, optional
+            Whether to prefer streaming TTS paths.
+        captioner : Captioner | None, optional
+            Optional audio captioning model.
+        punt_restorer_model : PuntRestorer | None, optional
+            Optional punctuation restoration model.
+        caption_rewriter : Rewriter | BaseChatModel | None, optional
+            Optional caption rewriter or chat model.
+        vad : VAD | None, optional
+            Optional voice activity detector.
+        speech_enhancer : SpeechEnhancer | None, optional
+            Optional speech enhancer.
+        speaker_encoder : SpeakerEncoder | None, optional
+            Optional speaker encoder.
+        speech_speed_controller : SpeechSpeedController | None, optional
+            Optional speed controller for TTS output.
+        embeddings : Embeddings | None, optional
+            Optional embeddings backend.
+        turn_detector : TurnDetector | None, optional
+            Optional turn detector.
+        """
         # Assign directly to dataclass fields
         self.asr_model = asr
         self.llm_agent = llm_agent
@@ -112,6 +183,7 @@ class DefaultPipeline(Pipeline):
         self.speaker_encoder = speaker_encoder
         self._speed_controller = speech_speed_controller
         self.embeddings_model = embeddings
+        self.turn_detector_model = turn_detector
 
         # Normalize rewriters: BaseChatModel -> Default*Rewriter; Rewriter -> use as-is
         if isinstance(caption_rewriter, BaseChatModel):
@@ -119,20 +191,21 @@ class DefaultPipeline(Pipeline):
         else:
             self.caption_rewriter = caption_rewriter
 
-        if isinstance(thought_rewriter, BaseChatModel):
-            self.thought_rewriter = DefaultThoughtRewriter(model=thought_rewriter)
-        else:
-            self.thought_rewriter = thought_rewriter
-
     # --------------------------
     # clone (declarative, extensible, and inheritance-friendly)
     # --------------------------
     def clone(self):
-        """Clone a new pipeline instance.
+        """Clone the pipeline according to field metadata.
 
-        - Call .clone() for fields marked with clone=True
-        - Share references for the rest (suitable for stateless/read-only configs)
-        - Automatically include subclass dataclass fields with metadata.init_key
+        Returns
+        -------
+        DefaultPipeline
+            New pipeline instance of the same concrete type.
+
+        Notes
+        -----
+        Fields marked with ``clone=True`` call their own ``clone()`` method when
+        available. Remaining fields are shared by reference.
         """
         kwargs: dict[str, Any] = {}
 
@@ -170,9 +243,6 @@ class DefaultPipeline(Pipeline):
     def get_caption_rewriter_model(self):
         return self.caption_rewriter
 
-    def get_thought_rewriter_model(self):
-        return self.thought_rewriter
-
     def get_vad_model(self):
         return self.vad_model
 
@@ -188,11 +258,28 @@ class DefaultPipeline(Pipeline):
     def get_embeddings_model(self) -> Embeddings | None:
         return self.embeddings_model
 
+    def get_turn_detector_model(self) -> TurnDetector | None:
+        return self.turn_detector_model
+
     # --------------------------
     # runtime switchers (retain original logic)
     # --------------------------
     def set_tts_model(self, model_type: str, config: dict) -> None:
-        """Dynamically switch between IndexTTS and IndexTTS2 models."""
+        """Switch the active TTS model at runtime.
+
+        Parameters
+        ----------
+        model_type : str
+            Supported model family name, currently ``"IndexTTS"`` or
+            ``"IndexTTS2"``.
+        config : dict
+            Runtime configuration passed to the new TTS model constructor.
+
+        Raises
+        ------
+        ValueError
+            Raised if ``model_type`` is not supported.
+        """
         from ..speech.tts import IndexTTS, IndexTTS2
 
         current_ref_paths = []
@@ -236,7 +323,20 @@ class DefaultPipeline(Pipeline):
         api_key: str = "",
         extra_body: dict | None = None,
     ) -> None:
-        """Dynamically switch ChatOpenAI configuration."""
+        """Replace the current agent LLM with a ``ChatOpenAI`` instance.
+
+        Parameters
+        ----------
+        model : str
+            Target model name passed to ``ChatOpenAI``.
+        base_url : str, optional
+            Override for the OpenAI-compatible API base URL.
+        api_key : str, optional
+            API key used for the replacement model. Falls back to
+            ``OPENAI_API_KEY`` when omitted.
+        extra_body : dict | None, optional
+            Additional request payload fields forwarded to ``ChatOpenAI``.
+        """
         from langchain_openai import ChatOpenAI
         import os
 

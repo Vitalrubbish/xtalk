@@ -106,7 +106,14 @@ class ElevenLabsASR(ASR):
             return await self._async_offline_transcribe(audio)
         return await self._realtime_transcribe(audio, commit=True)
 
-    def recognize_stream(self, audio: bytes, *, is_final: bool = False) -> str:
+    def recognize_stream(
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+    ) -> str:
+        del chat_history
         if self.mode == "offline":
             if not self._mock_recognizer:
                 return ""
@@ -133,8 +140,13 @@ class ElevenLabsASR(ASR):
         return self._stream_text
 
     async def async_recognize_stream(
-        self, audio: bytes, *, is_final: bool = False
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
     ) -> str:
+        del chat_history
         if self.mode == "offline":
             if not self._mock_recognizer:
                 return ""

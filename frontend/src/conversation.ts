@@ -1,0 +1,191 @@
+export { Conversation };
+export type { ConversationMessage, ConversationState, ConversationUser };
+
+type ConversationMessage = {
+    role: "user" | "assistant" | "info";
+    content: string;
+    final?: boolean;
+}
+
+type ConversationUser = {
+    id: string;
+}
+
+function defaultConversation(): {
+    connectionState: "connected" | "reconnecting" | "disconnected";
+    streamState: "idle" | "listening" | "processing" | "speaking";
+    sessionId: string | null;
+    user: ConversationUser | null;
+    latency: {
+        network?: number,
+        asr?: number,
+        llmFirstToken?: number,
+        llmSentence?: number,
+        ttsFirstChunk?: number
+    };
+    messages: ConversationMessage[];
+    thought: string;
+    caption: string;
+    retrieval: string;
+    tool_call: {
+        name: string,
+        args: Record<string, any>
+    }
+} {
+    return {
+        connectionState: "disconnected",
+        streamState: "idle",
+        sessionId: null,
+        user: null,
+        latency: {},
+        messages: [],
+        thought: "",
+        caption: "",
+        retrieval: "",
+        tool_call: {
+            name: "",
+            args: {}
+        }
+    };
+}
+
+type ConversationState = ReturnType<typeof defaultConversation>;
+
+class Conversation {
+    private _state: ConversationState = defaultConversation();
+    private messagePrefixes: Array<string | undefined> = [];
+    private stateChangeCallbacks = new Set<(state: ConversationState) => void>();
+    private fullAudioChunkCallback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void = (_chunk, _sr) => { };
+
+    private notifyStateChange(): void {
+        for (const callback of this.stateChangeCallbacks) {
+            callback(this._state);
+        }
+    }
+
+    onStateChange(callback: (state: ConversationState) => void): void {
+        callback(this._state);
+        this.stateChangeCallbacks.add(callback);
+    }
+
+    onFullAudioChunk(
+        callback: (pcmChunkInt16: ArrayBuffer, sampleRate: number) => void
+    ): void {
+        this.fullAudioChunkCallback = callback;
+    }
+
+    get state(): ConversationState {
+        return new Proxy(this._state, {
+            set: (target, key: keyof ConversationState, value) => {
+                Reflect.set(target, key, value);
+                this.notifyStateChange();
+                return true;
+            },
+            get: (target, key: keyof ConversationState) => {
+                return key in target ? target[key] : undefined;
+            }
+        });
+    }
+
+    setUser(user: ConversationUser | null): void {
+        this._state.user = user;
+        this.notifyStateChange();
+    }
+
+    switch(sessionId: string | null, messages: ConversationMessage[]): void {
+        this._state.sessionId = sessionId;
+        this._state.messages = messages.map((message) => ({
+            ...message,
+            final: true,
+        }));
+        this.messagePrefixes = this._state.messages.map(() => undefined);
+        this._state.streamState = "idle";
+        this._state.thought = "";
+        this._state.caption = "";
+        this._state.retrieval = "";
+        this._state.tool_call = {
+            name: "",
+            args: {}
+        };
+        this._state.latency = {};
+        this.notifyStateChange();
+    }
+
+    appendMessage(message: ConversationMessage): void {
+        if (message.role === "info") {
+            this._state.messages.push(message);
+            this.messagePrefixes.push(undefined);
+            this.notifyStateChange();
+            return;
+        }
+
+        const final = message.final ?? false;
+        const lastIndex = this._state.messages.length - 1;
+        const lastMessage = this._state.messages[lastIndex];
+
+        if (lastMessage?.role === message.role && !lastMessage.final) {
+            const prefix = this.messagePrefixes[lastIndex];
+            if (prefix && message.content.startsWith(prefix)) {
+                lastMessage.content = message.content.slice(prefix.length);
+            } else {
+                lastMessage.content = message.content;
+                this.messagePrefixes[lastIndex] = undefined;
+            }
+            lastMessage.final = final;
+            this.notifyStateChange();
+            return;
+        }
+
+        const previousSameRole = this.findPreviousSameRoleMessage(message.role);
+        let content = message.content;
+        let prefix: string | undefined;
+
+        if (
+            previousSameRole &&
+            !previousSameRole.message.final &&
+            message.content.startsWith(previousSameRole.fullContent)
+        ) {
+            prefix = previousSameRole.fullContent;
+            content = message.content.slice(prefix.length);
+            if (final) {
+                previousSameRole.message.final = true;
+            }
+            if (!content) {
+                this.notifyStateChange();
+                return;
+            }
+        }
+
+        this._state.messages.push({
+            role: message.role,
+            content,
+            final,
+        });
+        this.messagePrefixes.push(prefix);
+        this.notifyStateChange();
+    }
+
+    private findPreviousSameRoleMessage(
+        role: Exclude<ConversationMessage["role"], "info">,
+    ): { message: ConversationMessage; fullContent: string } | undefined {
+        for (let i = this._state.messages.length - 1; i >= 0; i--) {
+            const message = this._state.messages[i];
+            if (message?.role === role) {
+                return {
+                    message,
+                    fullContent: `${this.messagePrefixes[i] ?? ""}${message.content}`,
+                };
+            }
+        }
+        return undefined;
+    }
+
+    updateLatency(latency: Conversation["state"]["latency"]): void {
+        this._state.latency = { ...latency };
+        this.notifyStateChange();
+    }
+
+    emitFullAudioChunk(pcmChunkInt16: ArrayBuffer, sampleRate: number): void {
+        this.fullAudioChunkCallback(pcmChunkInt16, sampleRate);
+    }
+}

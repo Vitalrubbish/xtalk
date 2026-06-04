@@ -14,6 +14,7 @@ dependencies    = [
   "langchain-core >=0.3.0, <0.4.0",
   "langchain-openai",
   "langchain-chroma",
+  "PyYAML",
   "fastapi",
   "numpy",
   "aiohttp"
@@ -22,8 +23,17 @@ dynamic         = ["version"]
 
 [project.optional-dependencies]
 dev  = ["pytest", "pytest-cov"]
+testing = [
+  "requests",
+  "soundfile",
+  "websockets",
+  "uvicorn[standard]",
+  "soxr",
+  "torch",
+]
 ali = [
-  "dashscope >=1.25.3"
+  "dashscope >=1.25.3",
+  "certifi"
 ]
 elevenlabs = [
   "websockets"
@@ -112,14 +122,21 @@ edge-tts = [
   "edge-tts"
 ]
 silero-vad = [
-  "torch",
+  "onnxruntime",
 ]
 rubberband = [
   "pyrubberband"
 ]
 pyannote = ["pyannote.audio","torchvision"]
+soulx-duplug = [
+  "websockets",
+]
 example = [
-  "pypdf"
+  "pypdf",
+  "fastapi==0.128.0",
+  "jinja2",
+  "python-multipart",
+  "uvicorn[standard]",
 ]
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -131,3 +148,6 @@ local_scheme   = "no-local-version"
 [tool.pytest.ini_options]
 addopts   = ["--import-mode=importlib", "-q"]
 testpaths = ["tests"]
+
+[tool.ruff]
+exclude = ["*_pb2.py", "*_pb2_grpc.py"]

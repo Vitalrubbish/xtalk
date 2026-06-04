@@ -1,255 +1,209 @@
 async function loadXtalk() {
     try {
+        console
         return await import("../../xtalk/index.js");
     } catch (e) {
+        console.log("Failed to load local xtalk-client, falling back to CDN:", e)
         return await import("https://unpkg.com/xtalk-client@latest/dist/index.js");
     }
 }
 
-const { createConversation } = await loadXtalk();
-
+const { createSession } = await loadXtalk();
 
 function getWebSocketURL() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const wsPath = new URL("./ws", window.location.href);
     wsPath.protocol = proto;
     wsPath.host = window.location.host;
-    return wsPath
+    return wsPath;
 }
 
-const convo = createConversation(getWebSocketURL());
+const session = createSession(getWebSocketURL());
 
-const $btnToggle = document.getElementById('btn-toggle');
-const $btnView = document.getElementById('btn-view');
-const $btnThought = document.getElementById('btn-thought');
-const $btnRestart = document.getElementById('btn-restart');
+const $btnStart = document.getElementById('btn-start');
 const $btnStop = document.getElementById('btn-stop');
-const $btnCaption = document.getElementById('btn-caption');
-const $btnRetrieval = document.getElementById('btn-retrieval');
-const $btnMic = document.getElementById('btn-mic');
+const $btnMute = document.getElementById('btn-mute');
+const $btnNewSession = document.getElementById('btn-new-session');
+const $btnRefreshSessions = document.getElementById('btn-refresh-sessions');
+const $voiceSelect = document.getElementById('voice-select');
 const $btnUploadFile = document.getElementById('btn-upload-file');
 const $fileInput = document.getElementById('file-input');
-const $messages = document.getElementById('messages');
-const $latNet = document.getElementById('latency-net');
-const $latASR = document.getElementById('latency-asr');
-const $latLLMToken = document.getElementById('latency-llm-token');
-const $latLLMSentence = document.getElementById('latency-llm-sentence');
-const $latTTS = document.getElementById('latency-tts');
-const $latE2E = document.getElementById('latency-e2e');
-const $streamingState = document.getElementById('streaming-state');
-const $speakerId = document.getElementById('speaker-id');
+const $sessionList = document.getElementById('session-list');
+const $sessionListEmpty = document.getElementById('session-list-empty');
+const $streamState = document.getElementById('stream-state');
+const $sessionId = document.getElementById('session-id');
 const $waveform = document.getElementById('waveform');
-const $waveformCard = document.getElementById('waveform-card');
-const $voiceSelect = document.getElementById('voice-select');
-const $speedSelect = document.getElementById('speed-select');
-const $ttsModelSelect = document.getElementById('tts-model-select');
-const $llmModelSelect = document.getElementById('llm-model-select');
-const $thoughtCard = document.getElementById('thought-card');
+const $messages = document.getElementById('messages');
 const $thoughtContent = document.getElementById('thought-content');
-const $captionCard = document.getElementById('caption-card');
 const $captionContent = document.getElementById('caption-content');
-const $retrievalCard = document.getElementById('retrieval-card');
 const $retrievalContent = document.getElementById('retrieval-content');
+const $panelThought = document.getElementById('panel-thought');
+const $panelCaption = document.getElementById('panel-caption');
+const $panelRetrieval = document.getElementById('panel-retrieval');
+const $btnToggleThought = document.getElementById('btn-toggle-thought');
+const $btnToggleCaption = document.getElementById('btn-toggle-caption');
+const $btnToggleRetrieval = document.getElementById('btn-toggle-retrieval');
+const $latencyNetwork = document.getElementById('latency-network');
+const $latencyAsr = document.getElementById('latency-asr');
+const $latencyLlmFirst = document.getElementById('latency-llm-first');
+const $latencyLlmSentence = document.getElementById('latency-llm-sentence');
+const $latencyTts = document.getElementById('latency-tts');
+const $latencyE2e = document.getElementById('latency-e2e');
+const $btnToggleRecentAudio = document.getElementById('btn-toggle-recent-audio');
+const $recentAudioCard = document.getElementById('recent-audio-card');
+const $recentAudioStatus = document.getElementById('recent-audio-status');
+const $recentAudioPlayer = document.getElementById('recent-audio-player');
 
-// Load available reference audio files
-let availableAudios = [];
-function syncVoiceSelectValue(targetName) {
-    if (!$voiceSelect) return;
-    const desired = targetName || convo.state.currentVoiceName || '';
-    if (!desired) return;
-    if ($voiceSelect.value === desired) return;
-    const hasOption = Array.from($voiceSelect.options).some(opt => opt.value === desired);
-    if (hasOption) {
-        $voiceSelect.value = desired;
-    }
-}
-async function loadReferenceAudios() {
-    try {
-        const response = await fetch('/api/voices');
-        const data = await response.json();
-        availableAudios = data.audios || [];
-
-        // Populate the dropdown
-        $voiceSelect.innerHTML = '<option value="" selected disabled hidden></option>';
-        availableAudios.forEach((audio, index) => {
-            const voiceName = audio.name || audio.path || `voice_${index}`;
-            const option = document.createElement('option');
-            option.value = voiceName;
-            option.textContent = voiceName;
-            option.dataset.path = audio.path || '';
-            $voiceSelect.appendChild(option);
-        });
-
-        // Enable the dropdown
-        $voiceSelect.disabled = false;
-    } catch (error) {
-        console.error('Failed to load reference audios:', error);
-        $voiceSelect.innerHTML = '<option value=\"\">Load failed</option>';
-    }
-}
-
-// Handle voice changes
-$voiceSelect.addEventListener('change', (e) => {
-    const selectedName = e.target.value;
-    const selectedAudio = availableAudios.find(a => (a.name || a.path) === selectedName);
-
-    if (selectedAudio) {
-        // Switch voices and let the frontend session announce it in the chat log
-        const voiceName = selectedAudio.name || selectedName;
-        convo.changeVoice(voiceName);
-        convo.state.currentVoiceName = voiceName;
-        convo.state.currentVoicePath = selectedAudio.path || null;
-        syncVoiceSelectValue(voiceName);
-    }
-});
-
-// Load available TTS models
-let availableTTSModels = [];
-async function loadTTSModels() {
-    try {
-        const response = await fetch('/api/available-tts-models');
-        const data = await response.json();
-        availableTTSModels = data.models || [];
-
-        // Populate the TTS dropdown
-        $ttsModelSelect.innerHTML = '';
-        if (availableTTSModels.length === 0) {
-            $ttsModelSelect.innerHTML = '<option value=\"\">No available models</option>';
-            return;
-        }
-        availableTTSModels.forEach((model, index) => {
-            const option = document.createElement('option');
-            option.value = model.type;
-            option.textContent = model.name || model.type;
-            option.dataset.config = JSON.stringify(model.config || {});
-            if (index === 0) {
-                option.selected = true;
-            }
-            $ttsModelSelect.appendChild(option);
-        });
-
-        $ttsModelSelect.disabled = false;
-    } catch (error) {
-        console.error('Failed to load TTS models:', error);
-        $ttsModelSelect.innerHTML = '<option value=\"\">Load failed</option>';
-    }
-}
-
-// Load available LLM models
-let availableLLMModels = [];
-async function loadLLMModels() {
-    try {
-        const response = await fetch('/api/available-llm-models');
-        const data = await response.json();
-        availableLLMModels = data.models || [];
-
-        // Populate the LLM dropdown
-        $llmModelSelect.innerHTML = '';
-        if (availableLLMModels.length === 0) {
-            $llmModelSelect.innerHTML = '<option value=\"\">No available models</option>';
-            return;
-        }
-        availableLLMModels.forEach((model, index) => {
-            const option = document.createElement('option');
-            option.value = model.model;
-            option.textContent = model.display_name || model.model;
-            option.dataset.baseUrl = model.base_url || '';
-            option.dataset.apiKey = model.api_key || '';
-            option.dataset.extraBody = JSON.stringify(model.extra_body || null);
-            if (index === 0) {
-                option.selected = true;
-            }
-            $llmModelSelect.appendChild(option);
-        });
-
-        $llmModelSelect.disabled = false;
-    } catch (error) {
-        console.error('Failed to load LLM models:', error);
-        $llmModelSelect.innerHTML = '<option value=\"\">Load failed</option>';
-    }
-}
-
-// Handle speech-speed changes
-$speedSelect.addEventListener('change', (e) => {
-    const speed = parseFloat(e.target.value);
-    if (!isNaN(speed) && speed >= 0.5 && speed <= 1.5) {
-        convo.changeTTSSpeed(speed);
-    }
-});
-
-// Handle TTS-model changes
-$ttsModelSelect.addEventListener('change', (e) => {
-    const selectedType = e.target.value;
-    const selectedOption = e.target.options[e.target.selectedIndex];
-    let config = {};
-    try {
-        config = JSON.parse(selectedOption.dataset.config || '{}');
-    } catch (_) { }
-
-    if (selectedType) {
-        convo.changeTTSModel(selectedType, config);
-    }
-});
-
-// Handle LLM-model changes
-$llmModelSelect.addEventListener('change', (e) => {
-    const selectedModelName = e.target.value;
-    const selectedOption = e.target.options[e.target.selectedIndex];
-    const baseUrl = selectedOption.dataset.baseUrl || '';
-    const apiKey = selectedOption.dataset.apiKey || '';
-    let extraBody = null;
-    try {
-        extraBody = JSON.parse(selectedOption.dataset.extraBody || 'null');
-    } catch (_) { }
-
-    if (selectedModelName) {
-        // Support the newer session API by forwarding extraBody
-        convo.changeLLMModel(selectedModelName, baseUrl, apiKey, extraBody);
-    }
-});
-
-// Fetch available audio and model lists on page load
-loadReferenceAudios();
-loadTTSModels();
-loadLLMModels();
-
-// Waveform drawing state
 let audioCtx = null;
-let analyser = null; // input analyser (microphone)
-let micStream = null;
-let sourceNode = null;
+let inputAnalyser = null;
+let outputAnalyser = null;
+let inputMonitorGain = null;
+let outputMonitorGain = null;
+let inputDataArray = null;
+let outputDataArray = null;
+let inputBufferLength = 0;
+let outputBufferLength = 0;
 let rafId = null;
-let dataArray = null;
-let bufferLength = 0;
-let waveformActive = false;
-let isStreaming = false;
+let isActive = false;
 let currentStreamState = 'idle';
+let recentAudioObjectUrl = null;
+let sessionsCache = [];
+let previousSessionId = null;
+let previousMessageCount = 0;
+let isSessionListLoading = false;
+let refreshSessionsTimer = null;
+let timelineSessionId = null;
+let toolCallCacheKey = '';
+let chatTimeline = [];
+let chatTimelineIndexByKey = new Map();
+let isStarting = false;
 
-// Output (TTS) analyser state
-let outAnalyser = null; // output analyser (TTS/audio elements)
-let outDataArray = null;
-let outBufferLength = 0;
-const attachedMediaElements = new WeakSet();
-let outAnalyserConnected = false;
-let silentGain = null; // zero-gain node to keep graph pulling without audible output
-
-const COLOR_IN = '#a7f3d0';
-const COLOR_OUT = '#93c5fd';
-
-// Status color mapping (adjust per theme)
-const STATE_COLORS = {
-    idle: '#6b7280',        // gray-500
-    listening: '#34d399',   // emerald-400
-    processing: '#fbbf24',  // amber-400
-    speaking: '#93c5fd'     // sky-300
-};
-
-function getWaveformColor() {
-    return STATE_COLORS[currentStreamState] || COLOR_IN;
-}
+const FULL_AUDIO_CHANNELS = 2;
+const FULL_AUDIO_BYTES_PER_SAMPLE = 2;
+const FULL_AUDIO_FRAME_BYTES = FULL_AUDIO_CHANNELS * FULL_AUDIO_BYTES_PER_SAMPLE;
+const MAX_RECENT_AUDIO_SECONDS = 60;
+let recentFullAudioSampleRate = 48000;
+let recentFullAudioChunks = [];
+let recentFullAudioTotalBytes = 0;
+let recentAudioSnapshotDirty = false;
 
 const canvasCtx = $waveform.getContext('2d');
 
+const STATE_COLORS = {
+    idle: '#6b7280',
+    listening: '#34d399',
+    processing: '#fbbf24',
+    speaking: '#93c5fd'
+};
+
+function setConnectionButtons(isConnected) {
+    const isReconnecting = session.state.connectionState === 'reconnecting';
+    const startDisabled = isStarting || isConnected || isReconnecting;
+    const stopDisabled = isStarting || (!isConnected && !isReconnecting);
+
+    $btnStart.disabled = startDisabled;
+    $btnStart.textContent = isStarting ? 'Starting...' : 'Start';
+    $btnStart.classList.toggle('is-loading', isStarting);
+
+    $btnStop.disabled = stopDisabled;
+}
+
+function resetRealtimeUI() {
+    stopVisualization();
+    isStarting = false;
+    setConnectionButtons(false);
+}
+
+function formatSessionTitle(item) {
+    const title = (item?.title || '').trim();
+    if (title) {
+        return title;
+    }
+    if (item?.session_id === session.state.sessionId) {
+        return 'Current Draft';
+    }
+    return `Session ${String(item?.session_id || '').slice(0, 8) || '--'}`;
+}
+
+function renderSessions() {
+    const activeSessionId = session.state.sessionId;
+    $sessionList.innerHTML = '';
+    $sessionListEmpty.style.display = sessionsCache.length === 0 ? '' : 'none';
+
+    for (const item of sessionsCache) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'session-item';
+        if (item.session_id === activeSessionId) {
+            button.classList.add('active');
+        }
+
+        const title = document.createElement('div');
+        title.className = 'session-title';
+        title.textContent = formatSessionTitle(item);
+
+        const meta = document.createElement('div');
+        meta.className = 'session-meta';
+        meta.textContent = item.session_id;
+
+        button.appendChild(title);
+        button.appendChild(meta);
+        button.addEventListener('click', async () => {
+            if (item.session_id === session.state.sessionId) {
+                return;
+            }
+            try {
+                resetRecentAudioBuffer();
+                resetRealtimeUI();
+                await session.switchSession(item.session_id);
+                renderSessions();
+            } catch (error) {
+                alert('Failed to switch session: ' + (error?.message || error));
+            }
+        });
+
+        $sessionList.appendChild(button);
+    }
+}
+
+async function refreshSessions({ preserveSelection = true } = {}) {
+    if (isSessionListLoading) {
+        return;
+    }
+    isSessionListLoading = true;
+    $btnRefreshSessions.disabled = true;
+    try {
+        const sessions = await session.getSessions();
+        sessionsCache = Array.isArray(sessions) ? sessions : [];
+        $sessionListEmpty.textContent = 'No sessions yet.';
+        renderSessions();
+        if (!preserveSelection && session.state.sessionId) {
+            const exists = sessionsCache.some((item) => item.session_id === session.state.sessionId);
+            if (!exists) {
+                await session.switchSession(null);
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load sessions:', error);
+        $sessionListEmpty.textContent = 'Failed to load sessions.';
+        $sessionListEmpty.style.display = '';
+    } finally {
+        isSessionListLoading = false;
+        $btnRefreshSessions.disabled = false;
+    }
+}
+
+function scheduleRefreshSessions() {
+    if (refreshSessionsTimer) {
+        clearTimeout(refreshSessionsTimer);
+    }
+    refreshSessionsTimer = setTimeout(() => {
+        refreshSessionsTimer = null;
+        refreshSessions().catch((error) => {
+            console.error('Failed to refresh sessions:', error);
+        });
+    }, 300);
+}
 
 function ensureAudioContext() {
     if (!audioCtx) {
@@ -257,6 +211,169 @@ function ensureAudioContext() {
         audioCtx = new AC();
     }
     return audioCtx;
+}
+
+function resetChatTimeline(sessionId) {
+    timelineSessionId = sessionId;
+    toolCallCacheKey = '';
+    chatTimeline = [];
+    chatTimelineIndexByKey = new Map();
+}
+
+function getConversationMessageKey(message, index) {
+    if (message.role === 'info') {
+        return `info:${index}`;
+    }
+    return `${message.role}:index:${index}`;
+}
+
+function syncConversationMessages(messages) {
+    messages.forEach((message, index) => {
+        const key = getConversationMessageKey(message, index);
+        const timelineIndex = chatTimelineIndexByKey.get(key);
+        if (timelineIndex != null) {
+            chatTimeline[timelineIndex] = {
+                ...chatTimeline[timelineIndex],
+                role: message.role,
+                content: message.content,
+                final: message.final,
+            };
+            return;
+        }
+
+        chatTimelineIndexByKey.set(key, chatTimeline.length);
+        chatTimeline.push({
+            kind: 'conversation',
+            key,
+            role: message.role,
+            content: message.content,
+            final: message.final,
+        });
+    });
+}
+
+function normalizeToolCall(toolCall) {
+    return {
+        name: typeof toolCall?.name === 'string' ? toolCall.name : '',
+        args: toolCall && typeof toolCall.args === 'object' && toolCall.args !== null
+            ? toolCall.args
+            : {},
+    };
+}
+
+function formatToolCallArgs(args) {
+    try {
+        return JSON.stringify(args ?? {}, null, 2);
+    } catch {
+        return String(args ?? '{}');
+    }
+}
+
+function buildToolCallCacheKey(toolCall) {
+    if (!toolCall.name) {
+        return '';
+    }
+    return `${toolCall.name}\n${formatToolCallArgs(toolCall.args)}`;
+}
+
+function appendToolCallMessage(toolCall) {
+    const argsText = formatToolCallArgs(toolCall.args);
+    chatTimeline.push({
+        kind: 'tool',
+        key: `tool:${chatTimeline.length}:${toolCall.name}`,
+        name: toolCall.name,
+        argsText,
+    });
+}
+
+function appendLocalInfoMessage(content) {
+    chatTimeline.push({
+        kind: 'conversation',
+        key: `local-info:${chatTimeline.length}`,
+        role: 'info',
+        content,
+    });
+}
+
+function renderChatTimeline() {
+    $messages.innerHTML = '';
+    for (const entry of chatTimeline) {
+        const el = document.createElement('div');
+        if (entry.kind === 'tool') {
+            el.className = 'message message-tool';
+
+            const label = document.createElement('div');
+            label.className = 'message-tool-label';
+            label.textContent = `Tool Call: ${entry.name}`;
+
+            const args = document.createElement('pre');
+            args.className = 'message-tool-args';
+            args.textContent = entry.argsText;
+
+            el.appendChild(label);
+            el.appendChild(args);
+        } else {
+            el.className = 'message message-' + entry.role;
+            el.textContent = entry.content;
+        }
+        $messages.appendChild(el);
+    }
+    $messages.scrollTop = $messages.scrollHeight;
+}
+
+function ensureInputAnalyser() {
+    ensureAudioContext();
+    if (!inputAnalyser) {
+        inputAnalyser = audioCtx.createAnalyser();
+        inputAnalyser.fftSize = 1024;
+        inputAnalyser.smoothingTimeConstant = 0.7;
+        inputBufferLength = inputAnalyser.fftSize;
+        inputDataArray = new Uint8Array(inputBufferLength);
+    }
+    if (!inputMonitorGain) {
+        inputMonitorGain = audioCtx.createGain();
+        inputMonitorGain.gain.value = 0;
+        inputAnalyser.connect(inputMonitorGain);
+        inputMonitorGain.connect(audioCtx.destination);
+    }
+    return inputAnalyser;
+}
+
+function ensureOutputAnalyser() {
+    ensureAudioContext();
+    if (!outputAnalyser) {
+        outputAnalyser = audioCtx.createAnalyser();
+        outputAnalyser.fftSize = 1024;
+        outputAnalyser.smoothingTimeConstant = 0.7;
+        outputBufferLength = outputAnalyser.fftSize;
+        outputDataArray = new Uint8Array(outputBufferLength);
+    }
+    if (!outputMonitorGain) {
+        outputMonitorGain = audioCtx.createGain();
+        outputMonitorGain.gain.value = 0;
+        outputAnalyser.connect(outputMonitorGain);
+        outputMonitorGain.connect(audioCtx.destination);
+    }
+    return outputAnalyser;
+}
+
+function playPcmChunkThroughAnalyser(pcmChunkInt16, sampleRate, analyser) {
+    const int16 = new Int16Array(pcmChunkInt16);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768;
+    }
+
+    const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
+    buffer.getChannelData(0).set(float32);
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(analyser);
+    source.onended = () => {
+        source.onended = null;
+        try { source.disconnect(); } catch { }
+    };
+    source.start();
 }
 
 function resizeCanvas() {
@@ -268,50 +385,18 @@ function resizeCanvas() {
         $waveform.width = width;
         $waveform.height = height;
     }
-    canvasCtx.setTransform(1, 0, 0, 1, 0, 0);
-}
-
-function clearCanvas() {
-    const { width, height } = $waveform;
-    canvasCtx.clearRect(0, 0, width, height);
-    // Baseline
-    canvasCtx.strokeStyle = '#1f2937';
-    canvasCtx.lineWidth = 1;
-    canvasCtx.beginPath();
-    canvasCtx.moveTo(0, height / 2);
-    canvasCtx.lineTo(width, height / 2);
-    canvasCtx.stroke();
-}
-
-function drawSeries(uint8Array, length, color) {
-    const w = $waveform.width;
-    const h = $waveform.height;
-    const sliceWidth = w / length;
-    canvasCtx.strokeStyle = color;
-    canvasCtx.lineWidth = 2;
-    canvasCtx.beginPath();
-    let x = 0;
-    for (let i = 0; i < length; i++) {
-        const v = uint8Array[i] / 128.0; // 0..255 -> ~0..2
-        const y = (v * h) / 2;
-        if (i === 0) canvasCtx.moveTo(x, y);
-        else canvasCtx.lineTo(x, y);
-        x += sliceWidth;
-    }
-    canvasCtx.lineTo(w, h / 2);
-    canvasCtx.stroke();
 }
 
 function drawWaveform() {
-    if (!waveformActive) return;
+    if (!isActive) return;
     rafId = requestAnimationFrame(drawWaveform);
 
-    // Background
     const w = $waveform.width;
     const h = $waveform.height;
+
     canvasCtx.fillStyle = '#0f172a';
     canvasCtx.fillRect(0, 0, w, h);
-    // Baseline
+
     canvasCtx.strokeStyle = '#1f2937';
     canvasCtx.lineWidth = 1;
     canvasCtx.beginPath();
@@ -319,452 +404,416 @@ function drawWaveform() {
     canvasCtx.lineTo(w, h / 2);
     canvasCtx.stroke();
 
-    // Only draw one series: speaking for output; else for input
-    let streamState = convo.state.streamState;
-    console.log('streamState:', streamState);
-    if (outAnalyser && outDataArray && outBufferLength && streamState === 'speaking') {
-        outAnalyser.getByteTimeDomainData(outDataArray);
-        drawSeries(outDataArray, outBufferLength, getWaveformColor());
+    const color = STATE_COLORS[currentStreamState] || '#6b7280';
+    let dataArray = null;
+    let bufferLength = 0;
+
+    if (currentStreamState === 'speaking' && outputAnalyser && outputDataArray) {
+        outputAnalyser.getByteTimeDomainData(outputDataArray);
+        dataArray = outputDataArray;
+        bufferLength = outputBufferLength;
+    } else if (inputAnalyser && inputDataArray) {
+        inputAnalyser.getByteTimeDomainData(inputDataArray);
+        dataArray = inputDataArray;
+        bufferLength = inputBufferLength;
     }
-    if (dataArray && bufferLength && analyser && streamState !== 'speaking') {
-        analyser.getByteTimeDomainData(dataArray);
-        drawSeries(dataArray, bufferLength, getWaveformColor());
+
+    if (dataArray && bufferLength) {
+        const sliceWidth = w / bufferLength;
+        canvasCtx.strokeStyle = color;
+        canvasCtx.lineWidth = 2;
+        canvasCtx.beginPath();
+        let x = 0;
+        for (let i = 0; i < bufferLength; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = (v * h) / 2;
+            if (i === 0) canvasCtx.moveTo(x, y);
+            else canvasCtx.lineTo(x, y);
+            x += sliceWidth;
+        }
+        canvasCtx.lineTo(w, h / 2);
+        canvasCtx.stroke();
     }
 }
 
-async function startWaveform() {
-    // If visualization exists but only lacks the input chain (e.g., output-only mode), upgrade to input + output
-    if (waveformActive) {
-        // When an output visualization exists and we are not muted, add the input chain
-        if ((!analyser || !sourceNode) && !convo.state?.micMuted) {
-            try {
-                ensureAudioContext();
-                await audioCtx.resume();
-
-                micStream = await navigator.mediaDevices.getUserMedia({
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                    video: false,
-                });
-                sourceNode = audioCtx.createMediaStreamSource(micStream);
-                analyser = audioCtx.createAnalyser();
-                analyser.fftSize = 1024;
-                analyser.smoothingTimeConstant = 0.7;
-                bufferLength = analyser.fftSize;
-                dataArray = new Uint8Array(bufferLength);
-                sourceNode.connect(analyser);
-            } catch (e) {
-                console.error('Waveform upgrade to input failed:', e);
-            }
-        }
-        return;
-    }
-    try {
-        ensureAudioContext();
-        await audioCtx.resume();
-
-        micStream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-            video: false,
-        });
-
-        sourceNode = audioCtx.createMediaStreamSource(micStream);
-        analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.7;
-        bufferLength = analyser.fftSize;
-        dataArray = new Uint8Array(bufferLength);
-
-        sourceNode.connect(analyser);
-
-        // Prepare output analyser if not exists (will be fed when an audio element/node is attached)
-        if (!outAnalyser) {
-            outAnalyser = audioCtx.createAnalyser();
-            outAnalyser.fftSize = 1024;
-            outAnalyser.smoothingTimeConstant = 0.7;
-            outBufferLength = outAnalyser.fftSize;
-            outDataArray = new Uint8Array(outBufferLength);
-        }
-
-        resizeCanvas();
-        clearCanvas();
-        waveformActive = true;
-        drawWaveform();
-    } catch (err) {
-        console.error('Waveform start failed:', err);
-    }
+function startVisualization() {
+    if (isActive) return;
+    ensureAudioContext();
+    resizeCanvas();
+    isActive = true;
+    drawWaveform();
 }
 
-// Waveform used for TTS-only visualization without opening the mic
-async function startWaveformOutputOnly() {
-    if (waveformActive) return;
-    try {
-        ensureAudioContext();
-        await audioCtx.resume();
-        // Do not create or connect input nodes; only keep the output analyzer alive
-        if (!outAnalyser) {
-            outAnalyser = audioCtx.createAnalyser();
-            outAnalyser.fftSize = 1024;
-            outAnalyser.smoothingTimeConstant = 0.7;
-            outBufferLength = outAnalyser.fftSize;
-            outDataArray = new Uint8Array(outBufferLength);
-        }
-        if (!outAnalyserConnected) {
-            if (!silentGain) {
-                silentGain = audioCtx.createGain();
-                silentGain.gain.value = 0;
-                silentGain.connect(audioCtx.destination);
-            }
-            outAnalyser.connect(silentGain);
-            outAnalyserConnected = true;
-        }
-        resizeCanvas();
-        clearCanvas();
-        waveformActive = true;
-        drawWaveform();
-    } catch (err) {
-        console.error('Waveform output-only start failed:', err);
-    }
-}
-
-async function stopWaveform() {
-    if (!waveformActive) return;
-    waveformActive = false;
+function stopVisualization() {
+    if (!isActive) return;
+    isActive = false;
     if (rafId) {
         cancelAnimationFrame(rafId);
         rafId = null;
     }
-    try {
-        if (sourceNode && analyser) {
-            try { sourceNode.disconnect(); } catch { }
-        }
-        if (micStream) {
-            micStream.getTracks().forEach(t => t.stop());
-        }
-        if (audioCtx) {
-            // keep audioCtx for quick resume
-        }
-    } finally {
-        clearCanvas();
-        sourceNode = null;
-        analyser = null;
-        micStream = null;
+    const w = $waveform.width;
+    const h = $waveform.height;
+    canvasCtx.fillStyle = '#0f172a';
+    canvasCtx.fillRect(0, 0, w, h);
+}
+
+function updateRecentAudioStatus(text) {
+    $recentAudioStatus.textContent = text;
+}
+
+function setRecentAudioVisible(visible) {
+    $recentAudioCard.classList.toggle('is-hidden', !visible);
+    $recentAudioCard.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    $btnToggleRecentAudio.textContent = visible ? 'Hide Recent Audio' : 'Recent 60s Audio';
+}
+
+function revokeRecentAudioUrl() {
+    if (recentAudioObjectUrl) {
+        URL.revokeObjectURL(recentAudioObjectUrl);
+        recentAudioObjectUrl = null;
     }
 }
 
-// Stop microphone input only while keeping waveform rendering and output analysis
-function stopInputCapture() {
-    try {
-        if (sourceNode && analyser) {
-            try { sourceNode.disconnect(); } catch { }
+function resetRecentAudioBuffer() {
+    recentFullAudioSampleRate = 48000;
+    recentFullAudioChunks = [];
+    recentFullAudioTotalBytes = 0;
+    recentAudioSnapshotDirty = false;
+    revokeRecentAudioUrl();
+    $recentAudioPlayer.removeAttribute('src');
+    $recentAudioPlayer.load();
+    updateRecentAudioStatus('Waiting for server full audio stream');
+}
+
+function trimRecentAudioBuffer(maxBytes) {
+    while (recentFullAudioTotalBytes > maxBytes && recentFullAudioChunks.length > 0) {
+        const overflowBytes = recentFullAudioTotalBytes - maxBytes;
+        const firstChunk = recentFullAudioChunks[0];
+        if (!firstChunk) {
+            break;
         }
-        if (micStream) {
-            micStream.getTracks().forEach(t => t.stop());
+        if (overflowBytes >= firstChunk.length) {
+            recentFullAudioChunks.shift();
+            recentFullAudioTotalBytes -= firstChunk.length;
+            continue;
         }
-    } finally {
-        sourceNode = null;
-        analyser = null;
-        micStream = null;
-        dataArray = null;
-        bufferLength = 0;
+        const bytesToDrop = overflowBytes - (overflowBytes % FULL_AUDIO_FRAME_BYTES);
+        if (bytesToDrop <= 0) {
+            break;
+        }
+        recentFullAudioChunks[0] = firstChunk.slice(bytesToDrop);
+        recentFullAudioTotalBytes -= bytesToDrop;
+        break;
     }
 }
 
-function attachOutputFromMediaElement(el) {
+function appendRecentFullAudioChunk(pcmChunkInt16, sampleRate) {
+    if (!(pcmChunkInt16 instanceof ArrayBuffer) || pcmChunkInt16.byteLength === 0) {
+        return;
+    }
+    if (recentFullAudioTotalBytes > 0 && sampleRate !== recentFullAudioSampleRate) {
+        resetRecentAudioBuffer();
+    }
+    recentFullAudioSampleRate = sampleRate;
+    const chunk = new Uint8Array(pcmChunkInt16.slice(0));
+    recentFullAudioChunks.push(chunk);
+    recentFullAudioTotalBytes += chunk.byteLength;
+    const maxBytes = sampleRate * MAX_RECENT_AUDIO_SECONDS * FULL_AUDIO_FRAME_BYTES;
+    trimRecentAudioBuffer(maxBytes);
+    recentAudioSnapshotDirty = true;
+    const bufferedSeconds = recentFullAudioTotalBytes / (sampleRate * FULL_AUDIO_FRAME_BYTES);
+    updateRecentAudioStatus(`Buffered ${Math.min(MAX_RECENT_AUDIO_SECONDS, bufferedSeconds).toFixed(1)}s of server full audio`);
+}
+
+function flattenRecentAudioBuffer() {
+    if (recentFullAudioTotalBytes <= 0) {
+        return new Uint8Array(0);
+    }
+    const merged = new Uint8Array(recentFullAudioTotalBytes);
+    let offset = 0;
+    for (const chunk of recentFullAudioChunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return merged;
+}
+
+function buildWavBlobFromPcm(pcmBytes, sampleRate, channels) {
+    const header = new ArrayBuffer(44);
+    const view = new DataView(header);
+    const byteRate = sampleRate * channels * FULL_AUDIO_BYTES_PER_SAMPLE;
+    const blockAlign = channels * FULL_AUDIO_BYTES_PER_SAMPLE;
+
+    view.setUint32(0, 0x52494646, false);
+    view.setUint32(4, 36 + pcmBytes.length, true);
+    view.setUint32(8, 0x57415645, false);
+    view.setUint32(12, 0x666d7420, false);
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, channels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    view.setUint32(36, 0x64617461, false);
+    view.setUint32(40, pcmBytes.length, true);
+
+    return new Blob([header, pcmBytes], { type: 'audio/wav' });
+}
+
+function refreshRecentAudioSnapshot(force = false) {
+    if (!force && !recentAudioSnapshotDirty) {
+        return;
+    }
+    if (recentFullAudioTotalBytes <= 0) {
+        updateRecentAudioStatus('Waiting for server full audio stream');
+        return;
+    }
+    const pcmBytes = flattenRecentAudioBuffer();
+    const wavBlob = buildWavBlobFromPcm(
+        pcmBytes,
+        recentFullAudioSampleRate,
+        FULL_AUDIO_CHANNELS
+    );
+    const nextObjectUrl = URL.createObjectURL(wavBlob);
+    const wasPlaying = !$recentAudioPlayer.paused && !$recentAudioPlayer.ended;
+    revokeRecentAudioUrl();
+    recentAudioObjectUrl = nextObjectUrl;
+    $recentAudioPlayer.src = recentAudioObjectUrl;
+    $recentAudioPlayer.load();
+    recentAudioSnapshotDirty = false;
+    if (wasPlaying) {
+        $recentAudioPlayer.play().catch(() => { });
+    }
+}
+
+session.onStateChange((state) => {
+    $streamState.textContent = state.streamState;
+    $sessionId.textContent = state.sessionId || '--';
+    currentStreamState = state.streamState;
+    setConnectionButtons(state.connectionState === 'connected');
+    renderSessions();
+
+    if (state.sessionId !== timelineSessionId) {
+        resetChatTimeline(state.sessionId);
+    }
+    syncConversationMessages(state.messages);
+    const nextToolCall = normalizeToolCall(state.tool_call);
+    const nextToolCallKey = buildToolCallCacheKey(nextToolCall);
+    if (nextToolCallKey && nextToolCallKey !== toolCallCacheKey) {
+        appendToolCallMessage(nextToolCall);
+    }
+    toolCallCacheKey = nextToolCallKey;
+    renderChatTimeline();
+
+    $thoughtContent.textContent = state.thought || '';
+    $captionContent.textContent = state.caption || '';
+    $retrievalContent.textContent = state.retrieval || '';
+
+    const l = state.latency || {};
+    $latencyNetwork.textContent = l.network ?? '--';
+    $latencyAsr.textContent = l.asr ?? '--';
+    $latencyLlmFirst.textContent = l.llmFirstToken ?? '--';
+    $latencyLlmSentence.textContent = l.llmSentence ?? '--';
+    $latencyTts.textContent = l.ttsFirstChunk ?? '--';
+    const e2eParts = [l.network, l.asr, l.llmSentence, l.ttsFirstChunk];
+    $latencyE2e.textContent = e2eParts.every(v => v != null) ? e2eParts.reduce((a, b) => a + b, 0) : '--';
+
+    if (state.sessionId !== previousSessionId) {
+        previousSessionId = state.sessionId;
+        scheduleRefreshSessions();
+    } else if (state.sessionId && state.messages.length !== previousMessageCount) {
+        scheduleRefreshSessions();
+    }
+    previousMessageCount = state.messages.length;
+});
+
+session.onInputAudioChunk((pcmChunkInt16, sampleRate) => {
     try {
-        ensureAudioContext();
-        if (!(el instanceof HTMLMediaElement)) return;
-        if (attachedMediaElements.has(el)) return;
-        const src = audioCtx.createMediaElementSource(el);
-        // connect to analyser only; do not alter playback path
-        if (!outAnalyser) {
-            outAnalyser = audioCtx.createAnalyser();
-            outAnalyser.fftSize = 1024;
-            outAnalyser.smoothingTimeConstant = 0.7;
-            outBufferLength = outAnalyser.fftSize;
-            outDataArray = new Uint8Array(outBufferLength);
-        }
-        // ensure silent pull chain: analyser -> silentGain(0) -> destination
-        if (!outAnalyserConnected) {
-            if (!silentGain) {
-                silentGain = audioCtx.createGain();
-                silentGain.gain.value = 0;
-                silentGain.connect(audioCtx.destination);
-            }
-            outAnalyser.connect(silentGain);
-            outAnalyserConnected = true;
-        }
-        src.connect(outAnalyser);
-        attachedMediaElements.add(el);
+        const analyser = ensureInputAnalyser();
+        playPcmChunkThroughAnalyser(pcmChunkInt16, sampleRate, analyser);
     } catch (e) {
-        // Creating MediaElementSource on same element more than once throws; guard above should avoid it
-        // Ignore if cannot attach
+        console.error('Input audio chunk error:', e);
     }
-}
+});
 
-function attachOutputFromAudioNode(node) {
+session.onOutputAudioChunk((pcmChunkInt16, sampleRate) => {
     try {
-        ensureAudioContext();
-        if (!node || typeof node.connect !== 'function') return;
-        if (!outAnalyser) {
-            outAnalyser = audioCtx.createAnalyser();
-            outAnalyser.fftSize = 1024;
-            outAnalyser.smoothingTimeConstant = 0.7;
-            outBufferLength = outAnalyser.fftSize;
-            outDataArray = new Uint8Array(outBufferLength);
-        }
-        // ensure silent pull chain
-        if (!outAnalyserConnected) {
-            if (!silentGain) {
-                silentGain = audioCtx.createGain();
-                silentGain.gain.value = 0;
-                silentGain.connect(audioCtx.destination);
-            }
-            outAnalyser.connect(silentGain);
-            outAnalyserConnected = true;
-        }
-        node.connect(outAnalyser);
+        const analyser = ensureOutputAnalyser();
+        playPcmChunkThroughAnalyser(pcmChunkInt16, sampleRate, analyser);
     } catch (e) {
-        // ignore attach errors
+        console.error('Output audio chunk error:', e);
     }
+});
+
+session.onFullAudioChunk((pcmChunkInt16, sampleRate) => {
+    appendRecentFullAudioChunk(pcmChunkInt16, sampleRate);
+    const canRefreshSnapshot = $recentAudioPlayer.ended
+        || ($recentAudioPlayer.paused && $recentAudioPlayer.currentTime === 0);
+    if (canRefreshSnapshot) {
+        refreshRecentAudioSnapshot();
+    }
+});
+
+$btnStart.addEventListener('click', async () => {
+    if (isStarting) {
+        return;
+    }
+
+    isStarting = true;
+    setConnectionButtons(false);
+    try {
+        resetRecentAudioBuffer();
+        await session.open();
+        startVisualization();
+        setConnectionButtons(true);
+        await refreshSessions();
+    } catch (e) {
+        alert('Failed to start: ' + (e?.message || e));
+    } finally {
+        isStarting = false;
+        setConnectionButtons(session.state.connectionState === 'connected');
+    }
+});
+
+$btnStop.addEventListener('click', async () => {
+    try {
+        await session.close();
+        resetRealtimeUI();
+    } catch (e) {
+        alert('Failed to stop: ' + (e?.message || e));
+    }
+});
+
+$btnMute.addEventListener('click', () => {
+    try {
+        session.muted = !session.muted;
+        $btnMute.textContent = session.muted ? 'Unmute' : 'Mute';
+    } catch (e) {
+        alert('Failed to toggle mute: ' + (e?.message || e));
+    }
+});
+
+function setupToggle(btn, panel) {
+    btn.addEventListener('click', () => {
+        const active = btn.classList.toggle('active');
+        panel.style.display = active ? '' : 'none';
+    });
 }
+setupToggle($btnToggleThought, $panelThought);
+setupToggle($btnToggleCaption, $panelCaption);
+setupToggle($btnToggleRetrieval, $panelRetrieval);
 
-// Auto-hook: whenever an <audio> element starts playing, try to attach for output visualization
-document.addEventListener('play', (ev) => {
-    const el = ev.target;
-    if (el instanceof HTMLAudioElement) {
-        attachOutputFromMediaElement(el);
+$btnToggleRecentAudio.addEventListener('click', () => {
+    const willOpen = $recentAudioCard.classList.contains('is-hidden');
+    setRecentAudioVisible(willOpen);
+    if (willOpen) {
+        refreshRecentAudioSnapshot(true);
     }
-}, true);
+});
 
-// Expose manual hooks for external TTS pipeline integration
-window.attachOutputMediaElement = attachOutputFromMediaElement;
-window.attachOutputAudioNode = attachOutputFromAudioNode;
+$btnRefreshSessions.addEventListener('click', async () => {
+    await refreshSessions();
+});
+
+$btnNewSession.addEventListener('click', async () => {
+    try {
+        const hadActiveSession = session.state.connectionState === 'connected'
+            || session.state.connectionState === 'reconnecting';
+        if (hadActiveSession) {
+            await session.close();
+        }
+        resetRealtimeUI();
+        await session.switchSession(null);
+        if (hadActiveSession) {
+            appendLocalInfoMessage('Previous session stopped.');
+            renderChatTimeline();
+        }
+        renderSessions();
+    } catch (error) {
+        alert('Failed to create draft session: ' + (error?.message || error));
+    }
+});
 
 window.addEventListener('resize', () => {
     resizeCanvas();
 });
 
-// Pause drawing when page not visible, resume if still streaming
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-        stopWaveform();
-    } else if (isStreaming) {
-        // Visualization policy: if muted but speaking, render output only; otherwise capture normally
-        if (convo.state?.micMuted && (convo.state?.streamState === 'speaking')) {
-            startWaveformOutputOnly();
-        } else if (!convo.state?.micMuted) {
-            startWaveform();
-        }
+window.addEventListener('beforeunload', () => {
+    if (refreshSessionsTimer) {
+        clearTimeout(refreshSessionsTimer);
+        refreshSessionsTimer = null;
     }
+    revokeRecentAudioUrl();
 });
 
-// Render callback for state changes (messages, metrics, waveforms, etc.)
-convo.subscribe((state) => {
-    $latNet.textContent = state.latency.network ?? '--';
-    $latASR.textContent = state.latency.asr ?? '--';
-    $latLLMToken.textContent = state.latency.llmFirstToken ?? '--';
-    $latLLMSentence.textContent = state.latency.llmSentence ?? '--';
-    $latTTS.textContent = state.latency.ttsFirstChunk ?? '--';
-    $latE2E.textContent = state.latency.asr + state.latency.llmSentence + state.latency.ttsFirstChunk ?? '--';
+setConnectionButtons(false);
+setRecentAudioVisible(false);
 
-    $messages.innerHTML = '';
-    for (const m of state.messages) {
-        const div = document.createElement('div');
-        div.className = `msg ${m.role}`;
-        const role = document.createElement('span');
-        role.className = 'role';
-        role.textContent = m.role;
-        const content = document.createElement('span');
-        content.textContent = '  ' + (m.content ?? '');
-        div.appendChild(role);
-        div.appendChild(content);
-        $messages.appendChild(div);
+let availableAudios = [];
+
+function syncVoiceSelectValue(targetName) {
+    if (!$voiceSelect) return;
+    const desired = targetName || session.state.currentVoiceName || '';
+    if (!desired) return;
+    if ($voiceSelect.value === desired) return;
+    const hasOption = Array.from($voiceSelect.options).some(opt => opt.value === desired);
+    if (hasOption) {
+        $voiceSelect.value = desired;
     }
+}
 
-    // After updating the message list, always scroll the chat container itself to the bottom
-    // Use rAF to wait for DOM writes before setting scrollTop
-    if (!$messages.classList.contains('hidden')) {
-        requestAnimationFrame(() => {
-            try { $messages.scrollTop = $messages.scrollHeight; } catch { }
+async function loadReferenceAudios() {
+    try {
+        const response = await fetch('./api/voices');
+        const data = await response.json();
+        availableAudios = data.audios || [];
+
+        $voiceSelect.innerHTML = '<option value="" selected disabled hidden></option>';
+        availableAudios.forEach((audio, index) => {
+            const voiceName = audio.name || audio.path || `voice_${index}`;
+            const option = document.createElement('option');
+            option.value = voiceName;
+            option.textContent = voiceName;
+            option.dataset.path = audio.path || '';
+            $voiceSelect.appendChild(option);
         });
+
+        $voiceSelect.disabled = false;
+    } catch (error) {
+        console.error('Failed to load reference audios:', error);
+        $voiceSelect.innerHTML = '<option value="">Load failed</option>';
     }
+}
 
-    // Update the Thought display while keeping card visibility
-    if ($thoughtContent) {
-        $thoughtContent.textContent = state.latestThought || '';
-    }
-    // Update the Caption display while keeping card visibility
-    if ($captionContent) {
-        $captionContent.textContent = state.latestCaption || '';
-    }
-    // Update the Retrieval display while keeping card visibility
-    if ($retrievalContent) {
-        $retrievalContent.textContent = state.latestRetrieval || '';
-    }
-
-    $btnToggle.textContent = state.loading ? 'Loading' : state.streaming ? '🛑 Stop' : '🎙️ Start';
-    $streamingState.textContent = state.streamState; // 'idle' | 'listening' | 'processing' | 'speaking'
-    if ($speakerId) $speakerId.textContent = state.currentSpeakerId || '--';
-
-    $btnMic.textContent = state.micMuted ? 'Unmute' : 'Mute';
-
-    currentStreamState = state.streamState ?? 'idle';
-    isStreaming = !!state.streaming;
-
-    // Start/stop waveform capture：
-    // - Not muted and streaming: input + output
-    // - Muted but "speaking": output only
-    // - Otherwise: stop everything
-    if (state.streaming && !state.micMuted) {
-        startWaveform();
-    } else if (state.streaming && state.micMuted && state.streamState === 'speaking') {
-        startWaveformOutputOnly();
-    } else {
-        stopWaveform();
-    }
-
-    // Keep the voice dropdown synced with the backend state
-    syncVoiceSelectValue(state.currentVoiceName);
-});
-
-convo.onNewAudioOutput((float32, sampleRate) => {
-    try {
-        ensureAudioContext();
-        if (!audioCtx) return;
-
-        // Ensure analyser exists and arrays are sized
-        if (!outAnalyser) {
-            outAnalyser = audioCtx.createAnalyser();
-            outAnalyser.fftSize = 1024;
-            outAnalyser.smoothingTimeConstant = 0.7;
-            outBufferLength = outAnalyser.fftSize;
-            outDataArray = new Uint8Array(outBufferLength);
-        }
-        // Ensure silent pull chain (no audible playback)
-        if (!outAnalyserConnected) {
-            if (!silentGain) {
-                silentGain = audioCtx.createGain();
-                silentGain.gain.value = 0;
-                silentGain.connect(audioCtx.destination);
-            }
-            outAnalyser.connect(silentGain);
-            outAnalyserConnected = true;
-        }
-
-        // Create and feed a BufferSource from raw PCM (silent due to zero-gain chain)
-        const buffer = audioCtx.createBuffer(1, float32.length, sampleRate);
-        buffer.getChannelData(0).set(float32);
-        const src = audioCtx.createBufferSource();
-        src.buffer = buffer;
-
-        // Connect: src -> analyser -> silentGain(0) -> destination
-        src.connect(outAnalyser);
-        src.start();
-        src.addEventListener('ended', () => {
-            try { src.disconnect(); } catch { }
-        });
-    } catch (e) {
-        console.log(e);
+$voiceSelect.addEventListener('change', (e) => {
+    const selectedName = e.target.value;
+    const selectedAudio = availableAudios.find(a => (a.name || a.path) === selectedName);
+    if (selectedAudio) {
+        const voiceName = selectedAudio.name || selectedName;
+        session.changeVoice(voiceName);
+        session.state.currentVoiceName = voiceName;
+        session.state.currentVoicePath = selectedAudio.path || null;
+        syncVoiceSelectValue(voiceName);
     }
 });
 
-$btnToggle.addEventListener('click', async () => {
-    try {
-        await convo.toggleStreaming();
-    } catch (e) {
-        alert('Failed to start: ' + (e?.message || e));
-    }
-});
-
-// Toggle microphone capture (mute/unmute)
-$btnMic.addEventListener('click', () => {
-    try {
-        const next = !convo.state.micMuted;
-        convo.toggleMicMute();
-        if (next) {
-            // When muting: if capturing input stop only the input; if speaking without visualization, enable output visualization
-            stopInputCapture();
-            if (!waveformActive && convo.state.streamState === 'speaking') {
-                startWaveformOutputOnly();
-            }
-        } else {
-            // When unmuting: if a session is active, restore full capture
-            if (convo.state.streaming) {
-                startWaveform();
-            }
-        }
-    } catch (e) {
-        alert('Failed to toggle mic: ' + (e?.message || e));
-    }
-});
-
-// Restart: clear history, reset metrics/thought/caption, and reconnect WebSocket
-$btnRestart.addEventListener('click', async () => {
-    try {
-        await convo.restart();
-    } catch (e) {
-        alert('Failed to restart: ' + (e?.message || e));
-    }
-});
-
-// Disconnect: stop streaming and close WebSocket
-$btnStop.addEventListener('click', async () => {
-    try {
-        // Stop audio capture and the session
-        if (convo.state.streaming) {
-            await convo.toggleStreaming();
-        }
-        // Clear the history
-        convo.clearHistory();
-    } catch (e) {
-        alert('Failed to disconnect: ' + (e?.message || e));
-    }
-});
-
-// The upload button triggers the hidden file input
 $btnUploadFile.addEventListener('click', () => {
     $fileInput.click();
 });
 
-// Handle file selection
 $fileInput.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-        await convo.uploadFile(file);
+        await session.uploadFile(file);
     } catch (err) {
         alert('Failed to upload file: ' + (err?.message || err));
     }
-    // Reset the input so the same file can be picked again
     $fileInput.value = '';
 });
 
-// Toggle chat history visibility
-$btnView.addEventListener('click', () => {
-    const hidden = $messages.classList.toggle('hidden');
-    $btnView.textContent = hidden ? 'Show chat history' : 'Hide chat history';
-    // When toggled to visible, only scroll the chat container to the bottom
-    if (!hidden) {
-        requestAnimationFrame(() => {
-            try { $messages.scrollTop = $messages.scrollHeight; } catch { }
-        });
-    }
-});
-
-// Toggle Thought box visibility (hidden by default)
-$btnThought.addEventListener('click', () => {
-    const hidden = $thoughtCard.classList.toggle('hidden');
-    $btnThought.textContent = hidden ? 'Show thought' : 'Hide thought';
-});
-
-// Toggle Caption box visibility (hidden by default)
-$btnCaption.addEventListener('click', () => {
-    const hidden = $captionCard.classList.toggle('hidden');
-    $btnCaption.textContent = hidden ? 'Show caption' : 'Hide caption';
-});
-
-// Toggle Retrieval box visibility (hidden by default)
-$btnRetrieval.addEventListener('click', () => {
-    const hidden = $retrievalCard.classList.toggle('hidden');
-    $btnRetrieval.textContent = hidden ? 'Show information' : 'Hide information';
+loadReferenceAudios();
+refreshSessions().catch((error) => {
+    console.error('Initial session load failed:', error);
 });

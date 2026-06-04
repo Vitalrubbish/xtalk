@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
+from collections import deque
 from typing import Optional, NamedTuple, Any
 
 from ...log_utils import logger
@@ -12,7 +13,9 @@ from ..events import (
     TTSPaused,
     TTSResumed,
     TTSFinished,
-    TTSChunkGenerated,
+    TTSTextSynthesized,
+    TTSChunkReady,
+    TTSChunkPlayed,
     ErrorOccurred,
     TTSVoiceChange,
     TTSEmotionChange,
@@ -36,6 +39,7 @@ class TTSQueueItem(NamedTuple):
     """Data model for queued TTS audio chunks."""
 
     audio_chunk: bytes
+    sample_rate: int
 
 
 class TTSManager(Manager):
@@ -43,6 +47,12 @@ class TTSManager(Manager):
 
     # Sentence delimiters for chunking
     SENTENCE_DELIMITERS = {"。", "，", "！", "!", "？", "?", ".", ",", "：", ":"}
+    # Maximum duration of each outbound PCM chunk in milliseconds.
+    TTS_CHUNK_MS = 100
+    # Maximum unacknowledged outbound audio budget in milliseconds.
+    MAX_OUTSTANDING_MS = 300
+    # Sentinel for marking end of TTS stream
+    _FLUSH_SENTINEL = object()
 
     def __init__(
         self,
@@ -66,15 +76,12 @@ class TTSManager(Manager):
         self.config: dict[str, Any] = config or {}
 
         # TTS state
-        self.is_paused = False
         self.pending_sentence_buffer: str = ""  # Pending sentence buffer
         self._first_sentence_ready = False
 
         # Queue for audio chunks fed to downstream consumers
-        self.tts_queue = asyncio.Queue()
+        self.tts_queue: asyncio.Queue[TTSQueueItem] = asyncio.Queue()
 
-        # Settings for sim_gen mode
-        self._sim_gen: bool = bool(self.config.get("sim_gen", False))
         self._segments_queue: Optional[asyncio.Queue] = None
         self._segments_task: Optional[asyncio.Task] = None
 
@@ -86,12 +93,12 @@ class TTSManager(Manager):
         self.speed_controller = self.pipeline.get_speed_controller()
         self.current_speed: float = 1.0
 
-        # Track chunk indices so the frontend can confirm playback
-        self._chunk_index_counter: int = 0
-
         self._resume_event = asyncio.Event()
         self._resume_event.set()
         self._last_chunk_sent_for_tts = False
+        self._outstanding_chunk_ms: deque[float] = deque()
+        self._outstanding_total_ms = 0.0
+        self._outstanding_condition = asyncio.Condition()
 
     def _ensure_segments_queue(self) -> asyncio.Queue:
         """Ensure a queue exists for sentence segments."""
@@ -118,26 +125,21 @@ class TTSManager(Manager):
     async def _handle_turn_tts_append(self, event: TurnTTSTextAppendRequested) -> None:
         """Append text segments for TTS (both sim-gen and regular modes)."""
         text = event.text
-        reason = event.reason
         if not text:
             return
         await self._ensure_segments_queue().put(text)
 
     @Manager.event_handler(TurnTTSFlushRequested, priority=98)
     async def _handle_turn_tts_flush(self, event: TurnTTSFlushRequested) -> None:
-        # Empty string marks flush
-        await self._ensure_segments_queue().put("")
+        # Use sentinel object to mark flush
+        await self._ensure_segments_queue().put(self._FLUSH_SENTINEL)
 
-    @Manager.event_handler(
-        TurnTTSResumeRequested,
-        priority=95,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TurnTTSResumeRequested, priority=95)
     async def _handle_turn_tts_resume(self, event: TurnTTSResumeRequested) -> None:
         """Resume TTS playback when mediator requests."""
         if not self._segments_task or self._segments_task.done():
             return
-        if not self.is_paused:
+        if self._resume_event.is_set():
             logger.warning("Try to resume TTS which is not paused")
             return
         await self._resume_tts()
@@ -146,11 +148,7 @@ class TTSManager(Manager):
         )
         await self.event_bus.publish(tts_resumed_event)
 
-    @Manager.event_handler(
-        TurnTTSPauseRequested,
-        priority=95,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TurnTTSPauseRequested, priority=95)
     async def _handle_turn_tts_pause(self, event: TurnTTSPauseRequested) -> None:
         """Pause TTS playback when mediator requests."""
         if not self._segments_task or self._segments_task.done():
@@ -162,15 +160,6 @@ class TTSManager(Manager):
     async def _handle_turn_tts_stop(self, event: TurnTTSStopRequested) -> None:
         """Stop TTS playback when mediator requests."""
         await self.reset_tts()
-        # Stop sim-gen producer
-        if self._segments_task and not self._segments_task.done():
-            self._segments_task.cancel()
-            try:
-                await self._segments_task
-            except asyncio.CancelledError:
-                pass
-        self._segments_task = None
-        self._segments_queue = None
         # Do not publish TTSStopped for playback_finished
         if event.reason == "playback_finished":
             return
@@ -183,7 +172,6 @@ class TTSManager(Manager):
         """Reset all TTS state and cancel consumers."""
 
         # Reset state flags
-        self.is_paused = False
         self._resume_event.set()
         self.pending_sentence_buffer = ""
         self._first_sentence_ready = False
@@ -191,22 +179,41 @@ class TTSManager(Manager):
 
         # Stop consumer
         await self._stop_consumer()
+        await self._reset_outstanding_audio()
+
+        # Cancel segments producer task
+        if self._segments_task and not self._segments_task.done():
+            self._segments_task.cancel()
+            try:
+                await self._segments_task
+            except asyncio.CancelledError:
+                pass
+        self._segments_task = None
 
         # Drain queue
-        while not self.tts_queue.empty():
+        while True:
             try:
                 self.tts_queue.get_nowait()
                 self.tts_queue.task_done()
             except asyncio.QueueEmpty:
                 break
 
+        # Clear segments queue
+        if self._segments_queue:
+            while True:
+                try:
+                    self._segments_queue.get_nowait()
+                    self._segments_queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+
     async def _segments_producer_loop(self) -> None:
         segments_queue = self._ensure_segments_queue()
         try:
             while True:
                 seg = await segments_queue.get()
-                # Empty segment signals flush
-                if seg == "":
+                # Sentinel object signals flush
+                if seg is self._FLUSH_SENTINEL:
                     await self._add_text_for_tts("", final=True)
                     continue
                 await self._add_text_for_tts(seg, final=False)
@@ -237,80 +244,134 @@ class TTSManager(Manager):
     async def _pause_tts(self) -> None:
         """Pause TTS by halting consumption while leaving the queue intact."""
 
-        if self.is_paused:
+        if not self._resume_event.is_set():
             return
 
-        self.is_paused = True
         self._resume_event.clear()
 
     async def _resume_tts(self) -> None:
         """Resume TTS and continue consuming queued audio."""
 
-        if not self.is_paused:
+        if self._resume_event.is_set():
             return
 
-        self.is_paused = False
         self._resume_event.set()
+
+    async def _reset_outstanding_audio(self) -> None:
+        """Clear all unacknowledged outbound audio tracking state."""
+        async with self._outstanding_condition:
+            self._outstanding_chunk_ms.clear()
+            self._outstanding_total_ms = 0.0
+            self._outstanding_condition.notify_all()
+
+    async def _wait_for_outstanding_budget(self) -> None:
+        """Wait until enough outbound audio budget is available."""
+        async with self._outstanding_condition:
+            while (
+                self._consumer_running
+                and self._outstanding_total_ms >= self.MAX_OUTSTANDING_MS
+            ):
+                await self._outstanding_condition.wait()
+
+    async def _track_outstanding_chunk(self, chunk_ms: float) -> None:
+        """Record a just-sent outbound chunk in the outstanding budget."""
+        async with self._outstanding_condition:
+            self._outstanding_chunk_ms.append(chunk_ms)
+            self._outstanding_total_ms += chunk_ms
+
+    def _chunk_duration_ms(self, audio_chunk: bytes, sample_rate: int) -> float:
+        """Return the PCM chunk duration in milliseconds."""
+        if not audio_chunk or sample_rate <= 0:
+            return 0.0
+        sample_count = len(audio_chunk) / 2
+        return sample_count * 1000.0 / sample_rate
+
+    def _split_audio_chunk(self, audio_chunk: bytes, sample_rate: int) -> list[bytes]:
+        """Split PCM audio into fixed-size chunks for outbound transport."""
+        if not audio_chunk or sample_rate <= 0:
+            return []
+        samples_per_chunk = max(1, round(sample_rate * self.TTS_CHUNK_MS / 1000))
+        bytes_per_chunk = samples_per_chunk * 2
+        return [
+            audio_chunk[offset : offset + bytes_per_chunk]
+            for offset in range(0, len(audio_chunk), bytes_per_chunk)
+            if audio_chunk[offset : offset + bytes_per_chunk]
+        ]
 
     async def _tts_consumer(self) -> None:
         """Consume queued TTS output and publish audio events."""
-        last_sent_text = ""  # Track last text to avoid duplicates
 
         try:
             while self._consumer_running:
                 # When paused, avoid consuming queue items or emitting events
-                if self.is_paused:
+                if not self._resume_event.is_set():
                     await self._resume_event.wait()
                     continue
+
+                item = None  # Track if we successfully got an item
                 try:
                     # Pull from the queue with a short timeout
                     item = await asyncio.wait_for(self.tts_queue.get(), timeout=0.1)
 
                     # Publish audio chunks (skip if paused)
-                    if item and item.audio_chunk:
-                        try:
-                            # Apply speed control when enabled
-                            processed_audio = item.audio_chunk
-                            if (
-                                self.speed_controller is not None
-                                and self.current_speed != 1.0
-                            ):
-                                processed_audio = (
-                                    await self.speed_controller.async_process(
-                                        item.audio_chunk, self.current_speed
-                                    )
-                                )
-
-                            # Generate chunk index for playback confirmation
-                            self._chunk_index_counter += 1
-                            chunk_index = self._chunk_index_counter
-
-                            # Publish to frontend with the chunk index
-                            event = TTSChunkGenerated(
-                                session_id=self.session_id,
-                                audio_chunk=processed_audio,
-                                chunk_index=chunk_index,
+                    if isinstance(item, TTSQueueItem) and item.audio_chunk:
+                        # Apply speed control when enabled
+                        processed_audio = item.audio_chunk
+                        if (
+                            self.speed_controller is not None
+                            and self.current_speed != 1.0
+                        ):
+                            processed_audio = await self.speed_controller.async_process(
+                                item.audio_chunk, self.current_speed
                             )
-                            # Ensure ordering by waiting for completion
+
+                        for chunk in self._split_audio_chunk(
+                            processed_audio, item.sample_rate
+                        ):
+                            await self._wait_for_outstanding_budget()
+                            if not self._consumer_running:
+                                break
+
+                            event = TTSChunkReady(
+                                session_id=self.session_id,
+                                audio_chunk=chunk,
+                                sample_rate=item.sample_rate,
+                            )
                             await self.event_bus.publish(
                                 event, wait_for_completion=True
                             )
-                            # Emit TTSFinished when the last chunk has drained
-                            if self._last_chunk_sent_for_tts and self.tts_queue.empty():
-                                await self.event_bus.publish(
-                                    TTSFinished(session_id=self.session_id),
-                                )
-                        except Exception as e:
-                            logger.error("Failed to publish TTS audio event: %s", e)
-
+                            await self._track_outstanding_chunk(
+                                self._chunk_duration_ms(chunk, item.sample_rate)
+                            )
+                    # Mark task as done after processing
                     self.tts_queue.task_done()
 
+                    # Check if the last chunk has been sent and the queue is empty
+                    if self._last_chunk_sent_for_tts and self.tts_queue.empty():
+                        self._last_chunk_sent_for_tts = False
+                        await self.event_bus.publish(
+                            TTSFinished(session_id=self.session_id),
+                        )
+
                 except asyncio.TimeoutError:
+                    # Also check when queue is empty — TTS may have produced
+                    # zero chunks (e.g. synthesis service failure), so the
+                    # finished condition would never be evaluated above.
+                    if self._last_chunk_sent_for_tts and self.tts_queue.empty():
+                        self._last_chunk_sent_for_tts = False
+                        await self.event_bus.publish(
+                            TTSFinished(session_id=self.session_id),
+                        )
                     continue
                 except Exception as e:
                     logger.error("TTS consumer error while handling audio: %s", e)
-                    if not self.tts_queue.empty():
-                        self.tts_queue.task_done()
+                    # If the item is not None, call task_done()
+                    if item is not None:
+                        try:
+                            self.tts_queue.task_done()
+                        except ValueError:
+                            # task_done() called too many times
+                            logger.warning("task_done() called without matching get()")
 
         except asyncio.CancelledError:
             pass
@@ -321,6 +382,17 @@ class TTSManager(Manager):
             await self._publish_error("tts_consumer_error", str(e))
         finally:
             self._consumer_running = False
+
+    @Manager.event_handler(TTSChunkPlayed, priority=100)
+    async def _handle_tts_chunk_played(self, event: TTSChunkPlayed) -> None:
+        """Release outstanding outbound budget after frontend playback confirmation."""
+        async with self._outstanding_condition:
+            if self._outstanding_chunk_ms:
+                self._outstanding_total_ms = max(
+                    0.0,
+                    self._outstanding_total_ms - self._outstanding_chunk_ms.popleft(),
+                )
+            self._outstanding_condition.notify_all()
 
     async def _publish_tts_started(self) -> None:
         """Publish TTSStarted event."""
@@ -344,7 +416,6 @@ class TTSManager(Manager):
                 session_id=self.session_id,
                 error_type=error_type,
                 error_message=message,
-                component="TTSManager",
             )
         )
 
@@ -354,7 +425,6 @@ class TTSManager(Manager):
 
     async def _add_text_for_tts(self, text: str, *, final: bool) -> None:
         """Generate TTS audio from text and enqueue sentence segments."""
-        text_len = len(text)
         self.pending_sentence_buffer += text
 
         sentences, remaining = self._split_text_by_delimiters(
@@ -369,14 +439,16 @@ class TTSManager(Manager):
             sentences.append(self.pending_sentence_buffer.strip())
             self.pending_sentence_buffer = ""
 
-        if final:
-            self._last_chunk_sent_for_tts = True
-
         if len(sentences) > 0 and not self._first_sentence_ready:
             self._first_sentence_ready = True
             await self.event_bus.publish(LLMFirstSentence(session_id=self.session_id))
         for sentence in sentences:
             await self._enqueue_sentence_stream(sentence)
+
+        # Set the flag AFTER all sentences have been enqueued to avoid a race
+        # where the consumer sees the flag before the last chunks are queued.
+        if final:
+            self._last_chunk_sent_for_tts = True
 
     async def _enqueue_sentence_stream(self, sentence: str) -> None:
         """Run streaming TTS for one sentence and enqueue resulting chunks."""
@@ -388,8 +460,22 @@ class TTSManager(Manager):
             return
 
         try:
+            sample_rate = int(getattr(tts_model, "sample_rate", 48000) or 48000)
+            synthesized_duration_ms = 0.0
+            speed = 1.0
+            if self.speed_controller is not None and self.current_speed != 1.0:
+                speed = max(0.01, float(self.current_speed or 1.0))
             async for ch in self._synthesize_stream_with_fallback(tts_model, sentence):
-                await self.tts_queue.put(TTSQueueItem(ch))
+                synthesized_duration_ms += self._chunk_duration_ms(ch, sample_rate)
+                await self.tts_queue.put(TTSQueueItem(ch, sample_rate))
+            await self.event_bus.publish(
+                TTSTextSynthesized(
+                    session_id=self.session_id,
+                    text=sentence,
+                    audio_duration=synthesized_duration_ms / speed,
+                ),
+                wait_for_completion=True,
+            )
 
         except asyncio.CancelledError:
             raise
@@ -460,32 +546,68 @@ class TTSManager(Manager):
 
     @Manager.event_handler(ToolCallOccurred, priority=100)
     async def _handle_tool_call_occurred(self, event: ToolCallOccurred):
+        """Handle tool call events for TTS control (speed, voice, emotion)."""
         name = event.name
         args = event.args
+
+        # Add parameter validation
         if name == "set_speed":
-            speed = float(args["speed"])
-            await self.event_bus.publish(
-                TTSSpeedChange(session_id=self.session_id, speed=speed)
-            )
+            if "speed" not in args:
+                logger.warning(
+                    "set_speed missing 'speed' parameter - session: %s",
+                    self.session_id,
+                )
+                return
+            try:
+                speed = float(args["speed"])
+                await self.event_bus.publish(
+                    TTSSpeedChange(session_id=self.session_id, speed=speed)
+                )
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    "Invalid speed value '%s': %s - session: %s",
+                    args.get("speed"),
+                    e,
+                    self.session_id,
+                )
+
         elif name == "set_voice":
+            if "name" not in args:
+                logger.warning(
+                    "set_voice missing 'name' parameter - session: %s",
+                    self.session_id,
+                )
+                return
             voice_name = str(args["name"])
+            if not voice_name:
+                logger.warning(
+                    "set_voice received empty voice name - session: %s",
+                    self.session_id,
+                )
+                return
             await self.event_bus.publish(
                 TTSVoiceChange(session_id=self.session_id, voice_name=voice_name)
             )
+
         elif name == "set_emotion":
             emotion_name = args.get("name", "")
+            emotion_vector = args.get("vector", None)
+            # Validate at least one parameter is valid
+            if not emotion_name and not emotion_vector:
+                logger.warning(
+                    "set_emotion received empty emotion_name and emotion_vector - session: %s",
+                    self.session_id,
+                )
+                return
             await self.event_bus.publish(
                 TTSEmotionChange(
                     session_id=self.session_id,
                     emotion_name=emotion_name,
+                    emotion_vector=emotion_vector,
                 )
             )
 
-    @Manager.event_handler(
-        TTSVoiceChange,
-        priority=100,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TTSVoiceChange, priority=100)
     async def _handle_voice_change(self, event: TTSVoiceChange) -> None:
         """Handle requests to change the reference voice."""
         voice_name = event.voice_name
@@ -499,32 +621,33 @@ class TTSManager(Manager):
                 self.session_id,
             )
 
-    @Manager.event_handler(
-        TTSEmotionChange,
-        priority=100,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TTSEmotionChange, priority=100)
     async def _handle_emotion_change(self, event: TTSEmotionChange) -> None:
         """Handle requests to change TTS emotion."""
         emotion_name = event.emotion_name
         emotion_vector = event.emotion_vector
+
+        # Validate parameters
+        if not emotion_name and not emotion_vector:
+            logger.warning(
+                "Both emotion_name and emotion_vector are empty - session: %s",
+                self.session_id,
+            )
+            return
 
         try:
             self.pipeline.get_tts_model().set_emotion(
                 emotion=emotion_name if emotion_name else emotion_vector
             )
         except Exception as e:
+            # Fix error message
             logger.error(
-                "Failed to change voice: %s - session: %s",
+                "Failed to change emotion: %s - session: %s",
                 e,
                 self.session_id,
             )
 
-    @Manager.event_handler(
-        TTSSpeedChange,
-        priority=100,
-        enabled_if=lambda mgr: not mgr._sim_gen,
-    )
+    @Manager.event_handler(TTSSpeedChange, priority=100)
     async def _handle_speed_changed(self, event: TTSSpeedChange) -> None:
         """Handle requests to adjust TTS speed."""
         speed = event.speed

@@ -64,10 +64,10 @@ try:
 except:
     pass
 
-# DashScope FunASR (remote)
+# History-correcting ASR wrapper
 try:
-    from .funasr import FunASR as FunASR
+    from .history_correcting_asr import HistoryCorrectingASR as HistoryCorrectingASR
 
-    __all__.append("FunASR")
+    __all__.append("HistoryCorrectingASR")
 except:
     pass

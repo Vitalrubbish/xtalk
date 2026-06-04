@@ -8,9 +8,8 @@ from ..event_bus import EventBus
 from ..interfaces import Manager
 from ...pipelines import Pipeline
 from ..events import (
+    EmbeddingStatusUpdated,
     TextForEmbeddingReady,
-    TurnLLMAgentStartRequested,
-    TurnLLMAgentStopRequested,
 )
 
 
@@ -31,43 +30,28 @@ class EmbeddingsManager(Manager):
     @Manager.event_handler(TextForEmbeddingReady, priority=70)
     async def _on_text_for_embedding_ready(self, event: TextForEmbeddingReady) -> None:
         """Handle text that needs to be embedded."""
-        text = getattr(event, "text", "") or ""
+        text = event.text or ""
         if not text.strip():
             return
-        # Update pipeline context so agent knows embedding is needed
-        ctx = self.pipeline.context
-        ctx["text_to_embed"] = text
-        ctx["embedding_status"] = "processing"
-        self.pipeline.context = ctx
-
-        # Notify turn manager/pipeline about embedding job
         await self.event_bus.publish(
-            TurnLLMAgentStopRequested(
+            EmbeddingStatusUpdated(
                 session_id=self.session_id,
-                reason="started_embedding",
-            )
-        )
-
-        db = await self._run_embedding_job(text)
-        # Write vector store back to context once embedding completes
-        ctx = self.pipeline.context
-        ctx["embedding_status"] = "finished"
-        ctx["vector_store_instance"] = db
-        self.pipeline.context = ctx
-
-        await self.event_bus.publish(
-            TurnLLMAgentStartRequested(
-                session_id=self.session_id,
-                text="",
+                status="processing",
+                text=text,
             ),
             wait_for_completion=True,
         )
 
-        # Clear embedding markers
-        ctx = self.pipeline.context
-        ctx["text_to_embed"] = None
-        ctx["embedding_status"] = "idle"
-        self.pipeline.context = ctx
+        db = await self._run_embedding_job(text)
+        await self.event_bus.publish(
+            EmbeddingStatusUpdated(
+                session_id=self.session_id,
+                status="finished",
+                text=text,
+                vector_store_instance=db,
+            ),
+            wait_for_completion=True,
+        )
 
     def _resolve_data_dir(self) -> str | None:
         """Resolve data_dir from config."""

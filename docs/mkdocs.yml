@@ -40,6 +40,8 @@ plugins:
             Quickstart: 快速开始
             Docs: 文档
             Developer: 开发者参考
+            Recipe: Recipe
+            Roadmap: 路线图
             # Tabs under Tutorial
             'Start the Service': 启动服务
             'Config the Service': 配置服务
@@ -77,4 +79,6 @@ nav:
   - API:
       - 'Client': api/client/globals.md
       - 'Server': api/server/index.md
-  - Developer: developer.md
+  - Developer:
+      - Recipe: developer/recipe.md
+      - Roadmap: developer/roadmap.md

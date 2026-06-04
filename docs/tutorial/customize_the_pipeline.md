@@ -1,3 +1,5 @@
+*Experimental API*
+
 > **Note**
 > See `examples/sample_app/custom_service.py` for details. A dummy `LLMOutputRefactorModel` is added to X-Talk to prepend `Assistant response: ` before the final LLM response text sent to the frontend.
     

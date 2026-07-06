@@ -53,7 +53,11 @@ async def get_reference_audios():
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    # Use the modern Starlette TemplateResponse(request, name, context) signature.
+    # The old "TemplateResponse(name, context)" form puts ``request`` into the
+    # context dict, and jinja2 tries to hash the cache key as ``(name, context)``
+    # which fails because ``request`` is an unhashable mapping. See issue #62.
+    return templates.TemplateResponse(request, "index.html", {})
 
 
 if __name__ == "__main__":

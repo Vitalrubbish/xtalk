@@ -50,6 +50,7 @@ class SherpaOnnxASR(ASR):
         # offline-mode parameters
         offline_payload_len: int = 10240,
         mock_window_size: int = 5,
+        mock_trigger_interval_sec: float = 2,
     ) -> None:
         """
         Initialize Sherpa-ONNX WebSocket ASR.
@@ -62,6 +63,10 @@ class SherpaOnnxASR(ASR):
             seconds_per_message: Optional delay after each streaming payload (0 disables).
             offline_payload_len: Max payload bytes per send for offline mode.
             mock_window_size: Window size used by MockStreamRecognizer in offline mode.
+            mock_trigger_interval_sec: Re-recognition trigger interval in seconds for
+                MockStreamRecognizer in offline mode. Set to a very large value to
+                suppress mid-utterance re-inference, so recognition happens once at
+                utterance end (true offline behavior).
         """
 
         if websockets is None:  # pragma: no cover - dependency missing
@@ -90,12 +95,15 @@ class SherpaOnnxASR(ASR):
         self.seconds_per_message = float(seconds_per_message)
         self.offline_payload_len = int(offline_payload_len)
         self.mock_window_size = int(mock_window_size)
+        self.mock_trigger_interval_sec = float(mock_trigger_interval_sec)
 
         # Offline mode uses MockStreamRecognizer to simulate streaming via async recognition
         self._mock_recognizer: Optional[MockStreamRecognizer]
         if self.mode == "offline":
             self._mock_recognizer = MockStreamRecognizer(
-                self._recognize_offline_async, window_size=self.mock_window_size
+                self._recognize_offline_async,
+                window_size=self.mock_window_size,
+                trigger_interval_sec=self.mock_trigger_interval_sec,
             )
         else:
             self._mock_recognizer = None
@@ -227,6 +235,7 @@ class SherpaOnnxASR(ASR):
             seconds_per_message=self.seconds_per_message,
             offline_payload_len=self.offline_payload_len,
             mock_window_size=self.mock_window_size,
+            mock_trigger_interval_sec=self.mock_trigger_interval_sec,
         )
 
     # ------------------------------------------------------------------

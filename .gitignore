@@ -185,3 +185,12 @@ examples/sample_server/node_modules/
 /logs/
 server_configs/
 /data/
+
+# User defined
+/.github
+/.hf_cache
+/.modelscope_cache
+/arXiv-2512.18706v1
+/models
+/image-use.md
+/index-tts-vllm/

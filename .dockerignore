@@ -1,0 +1,15 @@
+.git
+models
+.hf_cache
+.modelscope_cache
+arXiv-2512.18706v1
+logs
+build
+frontend/node_modules
+frontend/dist
+**/__pycache__
+*.egg-info
+.venv*
+image-use.md
+Dockerfile
+.dockerignore

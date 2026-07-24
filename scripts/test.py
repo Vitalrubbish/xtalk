@@ -935,7 +935,9 @@ class EmbeddedServer:
         )
         self._process.start()
 
-        deadline = time.monotonic() + 15.0
+        # 集群环境下嵌入式服务启动较慢（首次 modelscope AST 扫描约 16s，
+        # 加之 Xtalk 初始化），15s 默认值会误判超时，放宽到 300s。
+        deadline = time.monotonic() + 300.0
         while True:
             if self._is_port_open():
                 return self
@@ -1940,7 +1942,7 @@ async def run_test_mode(args: argparse.Namespace) -> None:
         finally:
             shutil.rmtree(temp_recording_root, ignore_errors=True)
 
-    eval_cases: dict[str, dict[str, bool]] = {}
+    eval_cases: dict[str, dict[str, object]] = {}
     latency_values_ms: list[float] = []
     for case_result in sorted(case_results, key=lambda item: item.case_name):
         passed = await evaluate_case_result(
@@ -1951,6 +1953,11 @@ async def run_test_mode(args: argparse.Namespace) -> None:
         eval_cases[case_result.case_name] = {"passed": passed}
         if case_result.error is None and case_result.output_path.exists():
             latency_values_ms.extend(case_result.latency_samples_ms)
+            if case_result.latency_samples_ms:
+                samples = case_result.latency_samples_ms
+                eval_cases[case_result.case_name]["latency_ms"] = (
+                    sum(samples) / float(len(samples))
+                )
 
     latency_ms = (
         sum(latency_values_ms) / float(len(latency_values_ms))

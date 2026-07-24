@@ -195,7 +195,7 @@ python scripts/test.py --config server_configs/sample_local.json --input logs/te
 测试结果目录中会包含：
 
 - `<case_name>.mp3`：该 case 的最终单声道录音。脚本会先基于双声道会话音频完成分析，再用高质量 MP3 编码压缩以节省空间
-- `eval.json`：整体延迟和每个 case 的通过/失败汇总
+- `eval.json`：整体延迟和每个 case 的汇总，包含通过/失败状态和平均 `latency_ms`（无有效延迟样本的 case 不含该字段）
 - `logs/<case_name>.asr.json`：期望文本、实际 ASR 事件以及可选的评判结果
 - `service_config.json`：本次运行使用的实际后端配置
 - `test_config.json`：本次运行使用的实际测试配置

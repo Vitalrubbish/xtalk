@@ -1,4 +1,7 @@
 # X-Talk
+
+**2026.10.3** Streaming dialogue turn detection model released at https://github.com/xcc-zach/xturnix. 🎉
+
 <img width="460" height="249" alt="xtalk-logo-new" src="https://github.com/user-attachments/assets/4e252ce8-7450-4335-b86a-4b9b26200792" />
 
 [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen?style=for-the-badge)](https://xtalk.sjtuxlance.com/)

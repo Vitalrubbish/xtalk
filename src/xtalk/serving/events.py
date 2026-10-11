@@ -19,6 +19,10 @@ class Event:
     ----------
     timestamp : float
         Unix timestamp recorded when the event instance is created.
+    monotonic_timestamp : float
+        Process-local monotonic timestamp recorded when the event is created.
+        It is suitable for ordering one session timeline and measuring elapsed
+        durations; it cannot be compared across process restarts.
     session_id : str
         Session identifier associated with the event.
     TYPE : str
@@ -26,11 +30,13 @@ class Event:
     """
 
     timestamp: float = field(init=False)
+    monotonic_timestamp: float = field(init=False)
     session_id: str
     TYPE: ClassVar[str] = "base"
 
     def __post_init__(self):
         self.timestamp = time.time()
+        self.monotonic_timestamp = time.monotonic()
 
     @property
     def event_type(self) -> str:
@@ -126,6 +132,8 @@ class ASRResultPartial(Event):
     origin: str = "asr"
     turn_id: int = 0
     segment_id: int = 0
+    prefix_version: int | None = None
+    request_id: str = ""
     gate_state: ASRGateState = ASRGateState.UNCHECKED
 
 
@@ -139,6 +147,8 @@ class ASRResultFinal(Event):
     origin: str = "asr"
     turn_id: int = 0
     segment_id: int = 0
+    prefix_version: int | None = None
+    request_id: str = ""
     gate_state: ASRGateState = ASRGateState.UNCHECKED
 
 
@@ -147,6 +157,11 @@ class LLMFirstChunk(Event):
     """Event for first LLM chunk/tool call (measure first token latency)."""
 
     TYPE: ClassVar[str] = "llm.first_chunk"
+    request_id: str = ""
+    response_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
 
 
 @dataclass
@@ -154,18 +169,39 @@ class LLMFirstSentence(Event):
     """Event for first synthesizable sentence (measure sentence latency)."""
 
     TYPE: ClassVar[str] = "llm.sentence_ready"
+    request_id: str = ""
+    response_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
 
 
 @dataclass
 class TTSStarted(Event):
+    """Mark the client-delivery boundary for one response."""
+
     TYPE: ClassVar[str] = "tts.started"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
 class TTSStopped(Event):
+    """Mark early termination of a response delivery."""
+
     TYPE: ClassVar[str] = "tts.stopped"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -180,15 +216,31 @@ class TTSResumed(Event):
 
 @dataclass
 class TTSFinished(Event):
+    """Mark synthesis completion for one response delivery."""
+
     TYPE: ClassVar[str] = "tts.finished"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
 class LLMAgentResponseUpdate(Event):
+    """Carry one cumulative generated response prefix."""
+
     TYPE: ClassVar[str] = "llm_agent.response_update"
     response_id: str = ""
     text: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -206,6 +258,12 @@ class LLMAgentResponseFinish(Event):
     TYPE: ClassVar[str] = "llm_agent.response_finish"
     response_id: str = ""
     text: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -223,6 +281,12 @@ class ResponseUpdate(Event):
     TYPE: ClassVar[str] = "response.update"
     response_id: str = ""
     text: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -240,6 +304,48 @@ class ResponseFinish(Event):
     TYPE: ClassVar[str] = "response.finish"
     response_id: str = ""
     text: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
+
+
+@dataclass
+class DuplexProtocolParsed(Event):
+    """Record one valid DuplexCascade system micro-turn.
+
+    The event is observational and does not request generation, cancellation,
+    or playback.
+    """
+
+    TYPE: ClassVar[str] = "duplex.protocol_parsed"
+    request_id: str = ""
+    response_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    response_text: str = ""
+    raw_output: str = ""
+    reason: str = ""
+
+
+@dataclass
+class DuplexProtocolError(Event):
+    """Record a malformed or unsupported DuplexCascade system micro-turn."""
+
+    TYPE: ClassVar[str] = "duplex.protocol_error"
+    request_id: str = ""
+    response_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    error_code: str = ""
+    raw_output: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -348,6 +454,12 @@ class TTSChunkReady(Event):
 
     TYPE: ClassVar[str] = "tts.chunk_ready"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
     audio_chunk: bytes = b""
     sample_rate: int = 48000
 
@@ -374,6 +486,12 @@ class TTSPlaybackStopped(Event):
 
     TYPE: ClassVar[str] = "tts.playback_stopped"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
     played_audio_ms: float = 0.0
 
 
@@ -381,6 +499,12 @@ class TTSPlaybackStopped(Event):
 class TTSPlaybackFinished(Event):
     TYPE: ClassVar[str] = "tts.playback_finished"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -468,6 +592,12 @@ class LatencyMetricsUpdated(Event):
 class TurnTTSStartRequested(Event):
     TYPE: ClassVar[str] = "turn.tts_start_requested"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -480,6 +610,12 @@ class TurnTTSDeliveryStartRequested(Event):
 
     TYPE: ClassVar[str] = "turn.tts_delivery_start_requested"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -496,6 +632,11 @@ class TurnTTSResumeRequested(Event):
 class TurnTTSStopRequested(Event):
     TYPE: ClassVar[str] = "turn.tts_stop_requested"
     response_id: str | None = None
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
     reason: str = ""  # e.g., verification_valid|playback_finished
 
 
@@ -503,6 +644,12 @@ class TurnTTSStopRequested(Event):
 class TurnTTSFlushRequested(Event):
     TYPE: ClassVar[str] = "turn.tts_flush_requested"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -520,6 +667,13 @@ class ConsumeLLMAgentGenerationRequested(Event):
     TYPE: ClassVar[str] = "llm_agent.consume_generation_requested"
     stream: AsyncIterator[AgentOutput]
     persistent: bool = False
+    request_id: str = ""
+    response_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -536,6 +690,12 @@ class TurnLLMAgentPauseRequested(Event):
 class TurnLLMAgentStopRequested(Event):
     TYPE: ClassVar[str] = "turn.llm_agent_stop_requested"
     reason: str = ""  # e.g., vad_start|verification_valid
+    request_id: str = ""
+    response_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
 
 
 @dataclass
@@ -668,6 +828,12 @@ class TurnTTSTextAppendRequested(Event):
     TYPE: ClassVar[str] = "turn.tts_text_append_requested"
     response_id: str = ""
     text: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -679,6 +845,12 @@ class TTSResponseClosed(Event):
 
     TYPE: ClassVar[str] = "tts.response_closed"
     response_id: str = ""
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
 
 
 # ==================== Speaker Notification (Frontend) ====================

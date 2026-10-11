@@ -185,7 +185,7 @@ VAD 侧信号。每次调用都应返回一个 `TurnDetectionResult`，表示当
 - `listening = True`：系统正在等待用户说完，应判断何时 `START_GENERATION`
 - `listening = False`：系统正在播放输出，应判断用户输入是否会触发 `STOP_SPEAKING`
 
-服务层中的 `TurnDetectorManager` 会在 TTS 开始播放时将 `listening` 置为 `False`，并在播放结束或被中断后恢复为 `True`。
+服务层的 TurnDetectorManager 在 TTSStarted 打开客户端交付门时将 listening 置为 False；TTSChunkReady 保持原监听状态。TTSPlaybackFinished 或 TTSStopped 恢复 True，提前停止同时报告 assistant_interrupted。音频输入继续接收。详见 [A1 可观测性](duplex_observability.zh.md)。
 
 ## 实现建议
 

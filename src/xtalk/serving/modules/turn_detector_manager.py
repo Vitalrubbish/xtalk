@@ -8,7 +8,7 @@ Subscribes to:
 - ASRResultPartial: feeds text to turn detector
 - ResponseUpdate: feeds cumulative played AI response text to turn detector
 - ResponseFinish: feeds final played AI response text to turn detector
-- TTSChunkGenerated: sets turn detector to non-listening
+- TTSStarted: sets turn detector to non-listening when delivery opens
 - TTSPlaybackFinished: resumes turn detector listening
 - TTSStopped: resumes listening and notifies the turn detector of interruption
 
@@ -34,7 +34,7 @@ from ..events import (
     EnhancedAudioFrameReceived,
     ResponseFinish,
     ResponseUpdate,
-    TTSChunkReady,
+    TTSStarted,
     TTSPlaybackFinished,
     TTSStopped,
     TurnDetectorStartGeneration,
@@ -143,10 +143,9 @@ class TurnDetectorManager(Manager):
             return
         await self.turn_detector.async_detect(assistant_text=event.text)
 
-    @Manager.event_handler(TTSChunkReady)
-    async def _on_tts_chunk_generated(self, event: TTSChunkReady) -> None:
-        # TODO: subscribe client audio start playing event for accurate control
-        """Set turn detector to non-listening when TTS starts producing audio."""
+    @Manager.event_handler(TTSStarted)
+    async def _on_tts_started(self, event: TTSStarted) -> None:
+        """Set turn detector to non-listening when client delivery opens."""
         if self.turn_detector is None:
             return
         # No lock needed: single bool assignment is atomic (GIL), no compound read-then-write

@@ -85,6 +85,7 @@ plugins:
             'Supported Models': 支持的模型
             'ASR Design': ASR设计
             'Local Qwen3-ASR Adapter': 本地Qwen3-ASR适配器
+            'DuplexCascade A1 Observability': DuplexCascade A1可观测性
             'TTS Design': TTS设计
             'Speech Enhancer Design': 语音增强设计
             'VAD Design': VAD设计
@@ -131,6 +132,7 @@ nav:
       - 'Supported Models': technical_reference/supported_models.md
       - 'ASR Design': technical_reference/asr_design.md
       - 'Local Qwen3-ASR Adapter': technical_reference/qwen3_asr_client.md
+      - 'DuplexCascade A1 Observability': technical_reference/duplex_observability.md
       - 'TTS Design': technical_reference/tts_design.md
       - 'Speech Enhancer Design': technical_reference/speech_enhancer_design.md
       - 'VAD Design': technical_reference/vad_design.md

@@ -139,6 +139,12 @@ class TTSManager(Manager):
         self._outstanding_condition = asyncio.Condition()
         self._tts_generation_failure: str | None = None
         self._response_id: str | None = None
+        self._request_id = ""
+        self._turn_id: int | None = None
+        self._segment_id: int | None = None
+        self._prefix_version: int | None = None
+        self._state_token = ""
+        self._reason = ""
         self._delivery_started = False
         self._pending_playback_events: list[
             TTSStreamingTextAccepted | TTSTextSynthesized
@@ -164,6 +170,18 @@ class TTSManager(Manager):
             and not self.consumer_task.done()
             and (not self.tts_queue.empty() or self._outstanding_total_ms > 0.0)
         )
+
+    def _correlation_kwargs(self) -> dict[str, Any]:
+        """Return the immutable correlation fields for outbound TTS events."""
+
+        return {
+            "request_id": self._request_id,
+            "turn_id": self._turn_id,
+            "segment_id": self._segment_id,
+            "prefix_version": self._prefix_version,
+            "state_token": self._state_token,
+            "reason": self._reason,
+        }
 
     async def _start_streaming_tts(self, tts_model: StreamingTextTTS) -> bool:
         """Start a live text-streaming TTS session and its audio reader."""
@@ -225,7 +243,12 @@ class TTSManager(Manager):
         )
         if not self._first_sentence_ready:
             self._first_sentence_ready = True
-            await self.event_bus.publish(LLMFirstSentence(session_id=self.session_id))
+            await self.event_bus.publish(LLMFirstSentence(
+                session_id=self.session_id,
+                response_id=self._response_id or "",
+                **{key: value for key, value in self._correlation_kwargs().items()
+                   if key not in {"state_token", "reason"}},
+            ))
 
     async def _flush_and_stop_streaming_tts(self) -> None:
         """Flush residual streaming text and stop the upstream live session."""
@@ -391,6 +414,12 @@ class TTSManager(Manager):
 
         await self.reset_tts()
         self._response_id = event.response_id
+        self._request_id = event.request_id
+        self._turn_id = event.turn_id
+        self._segment_id = event.segment_id
+        self._prefix_version = event.prefix_version
+        self._state_token = event.state_token
+        self._reason = event.reason
         self._delivery_started = False
 
         tts_model = self.models.get(TTS)
@@ -489,12 +518,15 @@ class TTSManager(Manager):
             return
         response_id = self._response_id
         was_delivering = self._delivery_started
+        correlation = self._correlation_kwargs()
+        correlation["reason"] = event.reason
         await self.reset_tts()
         if not was_delivering:
             return
         tts_stopped_event = TTSStopped(
             session_id=self.session_id,
             response_id=response_id,
+            **correlation,
         )
         await self.event_bus.publish(
             tts_stopped_event,
@@ -556,6 +588,12 @@ class TTSManager(Manager):
                     break
         self._segments_queue = None
         self._response_id = None
+        self._request_id = ""
+        self._turn_id = None
+        self._segment_id = None
+        self._prefix_version = None
+        self._state_token = ""
+        self._reason = ""
         self._delivery_started = False
 
     async def _segments_producer_loop(self) -> None:
@@ -723,6 +761,7 @@ class TTSManager(Manager):
                             event = TTSChunkReady(
                                 session_id=self.session_id,
                                 response_id=self._response_id or "",
+                                **self._correlation_kwargs(),
                                 audio_chunk=chunk,
                                 sample_rate=item.sample_rate,
                             )
@@ -744,6 +783,7 @@ class TTSManager(Manager):
                             TTSFinished(
                                 session_id=self.session_id,
                                 response_id=self._response_id or "",
+                                **self._correlation_kwargs(),
                             ),
                             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
                         )
@@ -758,6 +798,7 @@ class TTSManager(Manager):
                             TTSFinished(
                                 session_id=self.session_id,
                                 response_id=self._response_id or "",
+                                **self._correlation_kwargs(),
                             ),
                             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
                         )
@@ -800,6 +841,7 @@ class TTSManager(Manager):
         event = TTSStarted(
             session_id=self.session_id,
             response_id=self._response_id or "",
+            **self._correlation_kwargs(),
         )
         # Wait for completion to maintain ordering
         await self.event_bus.publish(
@@ -843,7 +885,12 @@ class TTSManager(Manager):
 
         if sentences and not self._first_sentence_ready:
             self._first_sentence_ready = True
-            await self.event_bus.publish(LLMFirstSentence(session_id=self.session_id))
+            await self.event_bus.publish(LLMFirstSentence(
+                session_id=self.session_id,
+                response_id=self._response_id or "",
+                **{key: value for key, value in self._correlation_kwargs().items()
+                   if key not in {"state_token", "reason"}},
+            ))
 
         for sentence in sentences:
             await self._enqueue_sentence_stream(sentence)

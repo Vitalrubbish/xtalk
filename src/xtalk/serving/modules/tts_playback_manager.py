@@ -121,6 +121,7 @@ class TTSPlaybackManager(Manager):
         self._pending_text = ""
         self._generated_text_by_response: dict[str, str] = {}
         self._finished_text_by_response: dict[str, str] = {}
+        self._correlation_by_response: dict[str, dict[str, Any]] = {}
         self._active_response_id: str | None = None
         self._segments: deque[_PlaybackSegment] = deque()
         self._started_waiting_for_preparation: deque[_PlaybackSegment] = deque()
@@ -172,6 +173,7 @@ class TTSPlaybackManager(Manager):
         if response_id is not None:
             self._generated_text_by_response.pop(response_id, None)
             self._finished_text_by_response.pop(response_id, None)
+            self._correlation_by_response.pop(response_id, None)
 
     def _matches_active_response(self, response_id: str) -> bool:
         """Return whether an event belongs to the active playback response."""
@@ -181,12 +183,37 @@ class TTSPlaybackManager(Manager):
             and (not response_id or response_id == self._active_response_id)
         )
 
+    @staticmethod
+    def _correlation_from_event(
+        event: LLMAgentResponseUpdate | LLMAgentResponseFinish | TTSStarted,
+    ) -> dict[str, Any]:
+        """Copy correlation fields without retaining the mutable event object."""
+
+        return {
+            "request_id": event.request_id,
+            "turn_id": event.turn_id,
+            "segment_id": event.segment_id,
+            "prefix_version": event.prefix_version,
+            "state_token": event.state_token,
+            "reason": event.reason,
+        }
+
+    def _active_correlation(self) -> dict[str, Any]:
+        """Return correlation metadata for the active response."""
+
+        if self._active_response_id is None:
+            return {}
+        return dict(self._correlation_by_response.get(self._active_response_id, {}))
+
     @Manager.event_handler(LLMAgentResponseUpdate, priority=20)
     async def _cache_response_update(self, event: LLMAgentResponseUpdate) -> None:
         """Track the active response text without emitting frontend-facing updates."""
 
         next_text = event.text or ""
         self._generated_text_by_response[event.response_id] = next_text
+        self._correlation_by_response.setdefault(
+            event.response_id, self._correlation_from_event(event),
+        )
         if event.response_id == self._active_response_id:
             self._current_response_text = next_text
 
@@ -209,6 +236,10 @@ class TTSPlaybackManager(Manager):
             return
         self._reset_playback_tracking()
         self._active_response_id = event.response_id
+        self._correlation_by_response.setdefault(
+            event.response_id,
+            self._correlation_from_event(event),
+        )
         self._current_response_text = self._generated_text_by_response.get(
             event.response_id,
             "",
@@ -1046,6 +1077,7 @@ class TTSPlaybackManager(Manager):
                 session_id=self.session_id,
                 response_id=self._active_response_id or "",
                 text=text,
+                **self._active_correlation(),
             ),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
         )
@@ -1057,6 +1089,9 @@ class TTSPlaybackManager(Manager):
         next_text = event.text or ""
         self._generated_text_by_response[event.response_id] = next_text
         self._finished_text_by_response[event.response_id] = next_text
+        self._correlation_by_response.setdefault(
+            event.response_id, self._correlation_from_event(event),
+        )
         if event.response_id == self._active_response_id:
             self._current_response_text = next_text
             self._pending_text = next_text
@@ -1194,6 +1229,7 @@ class TTSPlaybackManager(Manager):
                 session_id=self.session_id,
                 response_id=self._active_response_id or "",
                 text=text,
+                **self._active_correlation(),
             ),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
         )
@@ -1203,11 +1239,13 @@ class TTSPlaybackManager(Manager):
 
         if response_id != self._active_response_id:
             return
+        correlation = self._active_correlation()
         self._reset_all_state()
         await self.event_bus.publish(
             TTSResponseClosed(
                 session_id=self.session_id,
                 response_id=response_id,
+                **correlation,
             ),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
         )

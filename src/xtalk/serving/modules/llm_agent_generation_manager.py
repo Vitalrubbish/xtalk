@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
@@ -40,6 +40,12 @@ logger = logging.getLogger(__name__)
 class _ResponseOutputState:
     """Track one agent stream's current response output."""
 
+    request_id: str = ""
+    turn_id: int | None = None
+    segment_id: int | None = None
+    prefix_version: int | None = None
+    state_token: str = ""
+    reason: str = ""
     response_id: str | None = None
     accumulated_text: str = ""
     first_chunk_generated: bool = False
@@ -175,7 +181,15 @@ class LLMAgentConsumptionManager(Manager):
                 )
             )
             self._active_streams[task] = iterator
-            self._response_states[task] = _ResponseOutputState()
+            self._response_states[task] = _ResponseOutputState(
+                request_id=event.request_id or uuid4().hex,
+                turn_id=event.turn_id,
+                segment_id=event.segment_id,
+                prefix_version=event.prefix_version,
+                state_token=event.state_token,
+                reason=event.reason,
+                response_id=event.response_id or None,
+            )
             if event.persistent:
                 self._persistent_streams.add(task)
 
@@ -234,6 +248,11 @@ class LLMAgentConsumptionManager(Manager):
             TurnTTSStopRequested(
                 session_id=self.session_id,
                 response_id=None,
+                request_id=event.request_id,
+                turn_id=event.turn_id,
+                segment_id=event.segment_id,
+                prefix_version=event.prefix_version,
+                state_token=event.state_token,
                 reason=event.reason,
             ),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
@@ -303,8 +322,19 @@ class LLMAgentConsumptionManager(Manager):
                 return
 
             if not state.first_chunk_generated:
+                if not isinstance(item, dict) and state.response_id is None:
+                    state.response_id = uuid4().hex
                 state.first_chunk_generated = True
-                await self.event_bus.publish(LLMFirstChunk(session_id=self.session_id))
+                await self.event_bus.publish(
+                    LLMFirstChunk(
+                        session_id=self.session_id,
+                        request_id=state.request_id,
+                        response_id=state.response_id or "",
+                        turn_id=state.turn_id,
+                        segment_id=state.segment_id,
+                        prefix_version=state.prefix_version,
+                    )
+                )
 
             if isinstance(item, dict):
                 if "name" not in item:
@@ -331,12 +361,18 @@ class LLMAgentConsumptionManager(Manager):
             if should_start_tts:
                 state.tts_started = True
 
-            await self._publish_llm_response_update(response_id, accumulated_text)
+            await self._publish_llm_response_update(state, response_id, accumulated_text)
             if should_start_tts:
                 await self.event_bus.publish(
                     TurnTTSStartRequested(
                         session_id=self.session_id,
                         response_id=response_id,
+                        request_id=state.request_id,
+                        turn_id=state.turn_id,
+                        segment_id=state.segment_id,
+                        prefix_version=state.prefix_version,
+                        state_token=state.state_token,
+                        reason=state.reason,
                     ),
                     mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
                 )
@@ -352,6 +388,12 @@ class LLMAgentConsumptionManager(Manager):
                     session_id=self.session_id,
                     response_id=response_id,
                     text=chunk_text,
+                    request_id=state.request_id,
+                    turn_id=state.turn_id,
+                    segment_id=state.segment_id,
+                    prefix_version=state.prefix_version,
+                    state_token=state.state_token,
+                    reason=state.reason,
                 ),
                 mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
             )
@@ -418,6 +460,7 @@ class LLMAgentConsumptionManager(Manager):
         final_text = state.accumulated_text
         tts_started = state.tts_started
         has_text_output = bool(final_text) or tts_started
+        completed_state = replace(state)
         state.reset()
         if not has_text_output:
             return
@@ -434,10 +477,16 @@ class LLMAgentConsumptionManager(Manager):
                 TurnTTSFlushRequested(
                     session_id=self.session_id,
                     response_id=response_id,
+                    request_id=completed_state.request_id,
+                    turn_id=completed_state.turn_id,
+                    segment_id=completed_state.segment_id,
+                    prefix_version=completed_state.prefix_version,
+                    state_token=completed_state.state_token,
+                    reason=completed_state.reason,
                 ),
                 mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
             )
-        await self._publish_llm_response_finish(response_id, final_text)
+        await self._publish_llm_response_finish(completed_state, response_id, final_text)
 
     def _detach_interruptible_streams_locked(
         self,
@@ -503,9 +552,7 @@ class LLMAgentConsumptionManager(Manager):
             pass
 
     async def _publish_llm_response_update(
-        self,
-        response_id: str,
-        text: str,
+        self, state: _ResponseOutputState, response_id: str, text: str,
     ) -> None:
         """Publish an incremental update for one response."""
 
@@ -514,14 +561,18 @@ class LLMAgentConsumptionManager(Manager):
                 session_id=self.session_id,
                 response_id=response_id,
                 text=text,
+                request_id=state.request_id,
+                turn_id=state.turn_id,
+                segment_id=state.segment_id,
+                prefix_version=state.prefix_version,
+                state_token=state.state_token,
+                reason=state.reason,
             ),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
         )
 
     async def _publish_llm_response_finish(
-        self,
-        response_id: str,
-        text: str,
+        self, state: _ResponseOutputState, response_id: str, text: str,
     ) -> None:
         """Publish the final generated text for one response."""
 
@@ -530,6 +581,12 @@ class LLMAgentConsumptionManager(Manager):
                 session_id=self.session_id,
                 response_id=response_id,
                 text=text,
+                request_id=state.request_id,
+                turn_id=state.turn_id,
+                segment_id=state.segment_id,
+                prefix_version=state.prefix_version,
+                state_token=state.state_token,
+                reason=state.reason,
             ),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
         )

@@ -189,7 +189,7 @@ Common conventions are:
 - `listening = True`: the system is waiting for the user to finish, and the detector should decide when to emit `START_GENERATION`
 - `listening = False`: the system is playing output, and the detector should decide whether the user's input should trigger `STOP_SPEAKING`
 
-In the service layer, `TurnDetectorManager` sets `listening` to `False` when TTS starts playback, and restores it to `True` when playback finishes or is interrupted.
+TurnDetectorManager sets listening to False when TTSStarted opens client delivery. TTSChunkReady preserves the listening state. TTSPlaybackFinished or TTSStopped restores True, and early stop reports assistant_interrupted. Audio input continues. See [A1 observability](duplex_observability.md).
 
 ## Implementation Suggestions
 

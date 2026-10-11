@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from dataclasses import fields
 from typing import Any
+from uuid import uuid4
 
 from ...models import Agent, Models, SpeakerDiarization
 from ...models.agents import AgentContext
@@ -141,6 +142,8 @@ class LLMAgentContextManager(Manager):
         if self.llm_agent is None:
             return
 
+        source_fields = vars(event)
+        request_id = source_fields.get("request_id", "") or uuid4().hex
         context: AgentContext = {
             "type": context_type,
             "data": {
@@ -149,12 +152,24 @@ class LLMAgentContextManager(Manager):
                 if field.name not in _BASE_EVENT_FIELD_NAMES
             },
         }
+        # A request id is created at the context boundary so every downstream
+        # generation and playback event can be correlated with this input.
+        # Keep the identifier inside the agent context for stream adapters that
+        # construct their own generation request.
+        context["data"]["request_id"] = request_id
         try:
             await self.event_bus.publish(
                 ConsumeLLMAgentGenerationRequested(
                     session_id=self.session_id,
                     stream=self.llm_agent.async_accept(context),
                     persistent=context_type == "loop",
+                    request_id=request_id,
+                    # Playback feedback references a settled response; any new
+                    # output must receive its own response identifier.
+                    response_id="",
+                    turn_id=source_fields.get("turn_id"),
+                    segment_id=source_fields.get("segment_id"),
+                    prefix_version=source_fields.get("prefix_version"),
                 ),
                 mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
             )

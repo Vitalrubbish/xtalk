@@ -44,6 +44,7 @@ class TTSResponseCoordinator(Manager):
         self._preparing_response_id: str | None = None
         self._preparing_ready = False
         self._switch_lock = asyncio.Lock()
+        self._correlations: dict[str, dict[str, Any]] = {}
 
     @Manager.event_handler(TurnTTSStartRequested, priority=90)
     async def _handle_response_start(self, event: TurnTTSStartRequested) -> None:
@@ -59,6 +60,14 @@ class TTSResponseCoordinator(Manager):
         superseded_response_id: str | None = None
 
         async with self._switch_lock:
+            self._correlations.setdefault(response_id, {
+                "request_id": event.request_id,
+                "turn_id": event.turn_id,
+                "segment_id": event.segment_id,
+                "prefix_version": event.prefix_version,
+                "state_token": event.state_token,
+                "reason": event.reason,
+            })
             if response_id == self._delivering_response_id:
                 return
             if response_id == self._preparing_response_id:
@@ -83,17 +92,22 @@ class TTSResponseCoordinator(Manager):
                 TurnTTSStopRequested(
                     session_id=self.session_id,
                     response_id=superseded_response_id,
-                    reason="superseded",
+                    **{**self._correlations.get(superseded_response_id, {}),
+                       "reason": "superseded"},
                 ),
                 mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
             )
+
+        if superseded_response_id is not None:
+            self._correlations.pop(superseded_response_id, None)
 
         if stop_response_id is not None:
             await self.event_bus.publish(
                 TurnTTSStopRequested(
                     session_id=self.session_id,
                     response_id=stop_response_id,
-                    reason="response_preempted",
+                    **{**self._correlations.get(stop_response_id, {}),
+                       "reason": "response_preempted"},
                 ),
                 mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
             )
@@ -103,6 +117,7 @@ class TTSResponseCoordinator(Manager):
                 TurnTTSStartRequested(
                     session_id=self.session_id,
                     response_id=restart_response_id,
+                    **self._correlations.get(restart_response_id, {}),
                 ),
                 mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
             )
@@ -127,6 +142,7 @@ class TTSResponseCoordinator(Manager):
                 return
             if event.response_id not in (None, self._preparing_response_id):
                 return
+            self._correlations.pop(self._preparing_response_id, None)
             self._preparing_response_id = None
             self._preparing_ready = False
 
@@ -136,6 +152,7 @@ class TTSResponseCoordinator(Manager):
 
         delivery_response_id: str | None = None
         async with self._switch_lock:
+            self._correlations.pop(event.response_id, None)
             if event.response_id == self._delivering_response_id:
                 self._delivering_response_id = None
             if event.response_id == self._stopping_response_id:
@@ -166,6 +183,7 @@ class TTSResponseCoordinator(Manager):
             TurnTTSDeliveryStartRequested(
                 session_id=self.session_id,
                 response_id=response_id,
+                **self._correlations.get(response_id, {}),
             ),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE,
         )
@@ -178,3 +196,4 @@ class TTSResponseCoordinator(Manager):
             self._stopping_response_id = None
             self._preparing_response_id = None
             self._preparing_ready = False
+            self._correlations.clear()

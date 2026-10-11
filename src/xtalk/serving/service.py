@@ -7,6 +7,7 @@ from typing import Any, Callable, Coroutine, Type
 from fastapi import WebSocket
 
 from ..models import Agent, Models
+from ..duplex_control.timeline import DuplexTimelineRecorder
 from .event_bus import EventBus, EventDispatchMode
 from .events import Event, LLMAgentLoop
 from .interfaces import EventListenerMixin, EventOverrides, Manager
@@ -75,6 +76,9 @@ class Service:
         self.event_bus = EventBus(enable_history=False, max_history=0)
 
         self._manager_classes: list[Type[Manager]] = list(manager_classes or [])
+        if self.service_config.get("duplex_timeline_enabled") is True:
+            if DuplexTimelineRecorder not in self._manager_classes:
+                self._manager_classes.append(DuplexTimelineRecorder)
         if self._should_enable_persistence_manager():
             if PersistenceManager not in self._manager_classes:
                 self._manager_classes.append(PersistenceManager)
@@ -312,9 +316,17 @@ class Service:
 
     async def stop(self) -> None:
         """Stop the service and shut down all managers."""
+        recorders = [
+            manager
+            for manager in self._managers
+            if isinstance(manager, DuplexTimelineRecorder)
+        ]
         try:
+            # Keep the timeline open while producers shut down and dispatched
+            # events drain, so final settlement facts are retained.
             for manager in self._managers:
-                await manager.shutdown()
+                if not isinstance(manager, DuplexTimelineRecorder):
+                    await manager.shutdown()
             await self.event_bus.shutdown()
 
         except Exception as e:
@@ -323,6 +335,9 @@ class Service:
                 self.session_id,
                 e,
             )
+        finally:
+            for recorder in recorders:
+                await recorder.shutdown()
 
     def clone(
         self,

@@ -98,7 +98,11 @@ class Qwen3ASRClient(ASR):
         str
             Final cumulative transcript.
         """
-        return self.recognize_stream(audio, is_final=True)
+        temporary = self.clone()
+        try:
+            return temporary.recognize_stream(audio, is_final=True)
+        finally:
+            temporary.close()
 
     def recognize_stream(
         self,
@@ -134,19 +138,19 @@ class Qwen3ASRClient(ASR):
             "is_final": bool(is_final),
             **self.extra_params,
         }
-        text = str(self._post_json("/v1/recognize", payload).get("text", "")).strip()
-        if text:
-            self._confirmed_text = text
-            return text
+        response = self._post_json("/v1/recognize", payload)
+        if not isinstance(response, dict) or not isinstance(response.get("text"), str):
+            raise RuntimeError("ASR service must return a string text field")
+        self._confirmed_text = response["text"].strip()
         return self._confirmed_text
 
     def reset(self) -> None:
         """Release the current session and clear cached text."""
-        if self._session_id is None:
-            return
         session_id = self._session_id
         self._session_id = None
         self._confirmed_text = ""
+        if session_id is None:
+            return
         try:
             self.session.delete(
                 f"{self.base_url}/v1/session/{session_id}",

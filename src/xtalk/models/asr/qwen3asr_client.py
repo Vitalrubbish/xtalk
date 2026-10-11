@@ -1,12 +1,17 @@
-import base64
-import io
-import logging
-import os
-import re
-import wave
-from typing import Any, Dict, List, Optional
+"""HTTP adapter for the local Qwen3-ASR streaming service.
 
-import numpy as np
+The service keeps one streaming state per ``session_id``; this adapter only
+addresses sessions and forwards 16 kHz mono PCM16 audio. It conforms to the
+:class:`ASR` contract: byte input, cumulative text output, and independent
+per-session state through :meth:`clone`.
+"""
+
+from __future__ import annotations
+
+import base64
+import logging
+from typing import Any
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -16,152 +21,198 @@ from .interfaces import ASR
 
 logger = logging.getLogger(__name__)
 
+
 @model
 class Qwen3ASRClient(ASR):
+    """Streaming ASR adapter backed by a local Qwen3-ASR service.
+
+    Parameters
+    ----------
+    base_url : str, optional
+        Root URL of the ASR service, for example ``http://127.0.0.1:8005``.
+    timeout : float, optional
+        Per-request timeout in seconds.
+    sample_rate : int, optional
+        PCM sample rate; the service expects 16 kHz mono PCM16.
+    chunk_ms : int, optional
+        Preferred streaming chunk duration, used to size
+        :meth:`stream_chunk_bytes_hint`.
+    **kwargs : Any
+        Extra fields forwarded to every ``/v1/recognize`` request.
+    """
+
     TARGET_SAMPLE_RATE = 16000
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8001/v1/recognize",
-        timeout: float = 10.0,  # 缩短超时时间，配合重试机制提高流式响应性
-        **kwargs: Dict[str, Any],
-    ):
-        """
-        Qwen3 ASR 客户端优化版
-        """
+        base_url: str = "http://127.0.0.1:8005",
+        timeout: float = 15.0,
+        sample_rate: int = 16000,
+        chunk_ms: int = 600,
+        **kwargs: Any,
+    ) -> None:
+        if sample_rate != self.TARGET_SAMPLE_RATE:
+            raise ValueError("Qwen3-ASR expects 16 kHz audio")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self.kwargs = kwargs
-        
-        # 属性对齐：保持 0.6s 以降低首字延迟
-        self.chunk_secs = 0.6
-        
+        self.chunk_ms = chunk_ms
+        self.extra_params = kwargs
+        self._session_id: str | None = None
+        self._confirmed_text = ""
+
         self.session = requests.Session()
-        self.dup_punc_pattern = re.compile(r'([。，！？,.!?])\1+')
-        # 配置重试策略：仅针对网络抖动进行快速重试，不阻塞主流程
-        retry_strategy = Retry(
+        retry = Retry(
             total=2,
             backoff_factor=0.1,
             status_forcelist=[500, 502, 503, 504],
         )
-        
-        # 配置连接池：增加池大小以应对高并发的流式请求，避免连接等待
         adapter = HTTPAdapter(
-            pool_connections=20,
-            pool_maxsize=50,
-            max_retries=retry_strategy,
-            pool_block=False 
+            pool_connections=8,
+            pool_maxsize=32,
+            max_retries=retry,
+            pool_block=False,
         )
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
-        
-        self.punc_pattern = re.compile(r'[。，！？,.!?]$')
 
-    def __del__(self):
+    def stream_chunk_bytes_hint(self) -> int | None:
+        """Return the preferred chunk size in bytes for 16 kHz mono PCM16.
+
+        Returns
+        -------
+        int
+            ``sample_rate * 2 bytes * chunk_ms / 1000``.
+        """
+        return int(self.TARGET_SAMPLE_RATE * 2 * self.chunk_ms / 1000)
+
+    def recognize(self, audio: bytes) -> str:
+        """Recognize one complete audio buffer in a fresh turn.
+
+        Parameters
+        ----------
+        audio : bytes
+            PCM 16-bit mono 16 kHz audio bytes.
+
+        Returns
+        -------
+        str
+            Final cumulative transcript.
+        """
+        return self.recognize_stream(audio, is_final=True)
+
+    def recognize_stream(
+        self,
+        audio: bytes,
+        *,
+        is_final: bool = False,
+        chat_history: str | None = None,
+    ) -> str:
+        """Send incremental audio and return the service's cumulative text.
+
+        Parameters
+        ----------
+        audio : bytes
+            Incremental PCM 16-bit mono 16 kHz audio bytes.
+        is_final : bool, optional
+            Temporary boundary hint; the service flushes its tail but keeps the
+            session so later audio continues from the accumulated text.
+        chat_history : str | None, optional
+            Serialized chat history; currently not forwarded.
+
+        Returns
+        -------
+        str
+            Current cumulative transcript.
+        """
+        del chat_history
+        if not audio and not is_final:
+            return self._confirmed_text
+
+        payload = {
+            "session_id": self._ensure_session(),
+            "audio": base64.b64encode(bytes(audio)).decode("ascii"),
+            "is_final": bool(is_final),
+            **self.extra_params,
+        }
+        text = str(self._post_json("/v1/recognize", payload).get("text", "")).strip()
+        if text:
+            self._confirmed_text = text
+            return text
+        return self._confirmed_text
+
+    def reset(self) -> None:
+        """Release the current session and clear cached text."""
+        if self._session_id is None:
+            return
+        session_id = self._session_id
+        self._session_id = None
+        self._confirmed_text = ""
+        try:
+            self.session.delete(
+                f"{self.base_url}/v1/session/{session_id}",
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            logger.warning("Failed to release ASR session %s: %s", session_id, exc)
+
+    def clone(self) -> "Qwen3ASRClient":
+        """Return a new independent session with identical configuration.
+
+        Returns
+        -------
+        Qwen3ASRClient
+            Adapter instance with its own service session.
+        """
+        return Qwen3ASRClient(
+            base_url=self.base_url,
+            timeout=self.timeout,
+            chunk_ms=self.chunk_ms,
+            **self.extra_params,
+        )
+
+    def close(self) -> None:
+        """Release the session and the underlying HTTP connection pool."""
+        self.reset()
+        self.session.close()
+
+    def __del__(self) -> None:
         self.close()
 
-    def close(self):
-        """显式关闭资源"""
-        if hasattr(self, 'session'):
-            self.session.close()
+    def _ensure_session(self) -> str:
+        """Return the session id, registering one on first use.
 
-    def _post(self, payload: dict) -> dict:
-        """支持 Keep-Alive 并快速处理异常"""
-        try:
-            headers = {"Connection": "keep-alive"}
-            resp = self.session.post(
-                self.base_url, 
-                json=payload, 
-                headers=headers,
-                timeout=self.timeout
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            logger.error(f"Qwen3 Server 返回异常: {resp.status_code}")
-            return {}
-        except Exception as e:
-            logger.error(f"Qwen3 请求失败: {e}")
-            return {}
+        Returns
+        -------
+        str
+            Service-issued session identifier.
+        """
+        if self._session_id is None:
+            response = self._post_json("/v1/session", {})
+            session_id = str(response.get("session_id", ""))
+            if not session_id:
+                raise RuntimeError("ASR service did not return a session id")
+            self._session_id = session_id
+        return self._session_id
 
-    def _pcm_s16le_to_wav(self, pcm: np.ndarray, sample_rate: int) -> bytes:
-        if pcm.dtype != np.int16:
-            pcm = (pcm * 32768).clip(-32768, 32767).astype(np.int16)
-        
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(pcm.tobytes())
-        return buf.getvalue()
+    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST a JSON payload and return the decoded JSON response.
 
-    def recognize(self, audio: np.ndarray) -> str:
-        return self.recognize_stream(audio, {}, is_final=True)
+        Parameters
+        ----------
+        path : str
+            Service path such as ``/v1/recognize``.
+        payload : dict[str, Any]
+            JSON body.
 
-    def recognize_stream(self, audio: np.ndarray, cache: dict, is_final: bool) -> str:
-        try:
-            if audio is None or len(audio) == 0:
-                return ""
-            if "session_id" not in cache:
-                # 生成带时间戳或固定前缀的 ID，方便排查
-                cache["session_id"] = f"qwen_{os.urandom(8).hex()}"
-                cache["confirmed_len"] = 0 
-
-            # 音频编码
-            wav_bytes = self._pcm_s16le_to_wav(audio, self.TARGET_SAMPLE_RATE)
-            data_url = f"data:audio/wav;base64,{base64.b64encode(wav_bytes).decode('ascii')}"
-            
-            payload = {
-                "audio": data_url,
-                "session_id": cache["session_id"],
-                "is_final": is_final,
-                **self.kwargs
-            }
-            
-            resp_json = self._post(payload)
-            full_text = resp_json.get("text", "").strip()
-            full_text = self.dup_punc_pattern.sub(r'\1', full_text)
-            if not full_text:
-                return ""
-
-            confirmed_len = cache.get("confirmed_len", 0)
-            
-            # 过滤中间态标点，防止固化
-            processed_text = full_text
-            if not is_final:
-                processed_text = self.punc_pattern.sub('', full_text)
-
-            if len(processed_text) >= confirmed_len:
-                new_increment = processed_text[confirmed_len:]
-                cache["confirmed_len"] = len(processed_text)
-                return new_increment
-            else:
-                cache["confirmed_len"] = len(processed_text)
-                return processed_text
-            
-        except Exception as e:
-            logger.error(f"Qwen3 recognize_stream 异常: {e}")
-            return ""
-
-    def is_streaming(self) -> bool:
-        return True
-
-    def resample(self, audio: np.ndarray, ori_sampling_rate: int) -> np.ndarray:
-        if ori_sampling_rate == self.TARGET_SAMPLE_RATE:
-            return audio
-        import soxr
-        return soxr.resample(audio, ori_sampling_rate, self.TARGET_SAMPLE_RATE)
-
-    def get_chunks(self, audio: np.ndarray, ori_sampling_rate: int) -> List[np.ndarray]:
-        audio = self.resample(audio, ori_sampling_rate)
-        chunk_stride = int(self.chunk_secs * self.TARGET_SAMPLE_RATE)
-        
-        if len(audio) == 0:
-            return []
-            
-        chunks = []
-        for i in range(0, len(audio), chunk_stride):
-            chunk = audio[i : i + chunk_stride]
-            if len(chunk) > 0:
-                chunks.append(chunk)
-        return chunks
+        Returns
+        -------
+        dict[str, Any]
+            Decoded response body.
+        """
+        response = self.session.post(
+            f"{self.base_url}{path}",
+            json=payload,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()

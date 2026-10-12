@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import aiohttp
+from contextlib import aclosing
 from typing import Any
 from uuid import uuid4
 
@@ -84,29 +85,42 @@ class DuplexRuntimeAdapter(Manager):
                 parser = WireMicroTurnParser(continuation_allowed=bool(self._response_id))
                 finish_reason = "stop"
                 control_applied = False
+                interrupted = False
                 observed_response_id = self._response_id or self._playback_response_id
                 try:
-                    async for chunk in self.client.stream(self._prompt()):
-                        if isinstance(chunk, GenerationEnd):
-                            finish_reason = chunk.reason
-                            continue
-                        if not parser.raw_output:
-                            await self._publish(LLMFirstChunk, event, response_id=self._response_id)
-                        text = parser.feed(chunk)
-                        if parser.control is not None and not control_applied:
-                            control_applied = True
-                            if parser.control in (ControlToken.USER_IS_INTERRUPTING, ControlToken.USER_IS_SPEAKING):
-                                await self._stop_answer(parser.wire_token)
-                            elif parser.control is ControlToken.USER_IS_THINKING:
-                                await self._finish_answer()
-                        if text:
-                            await self._append_answer(event, text, parser.wire_token)
-                    parser.finish(finish_reason)
-                    self.history.append({"role": "assistant", "content": parser.raw_output})
+                    stream = self.client.stream(self._prompt())
+                    async with aclosing(stream):
+                        async for chunk in stream:
+                            if isinstance(chunk, GenerationEnd):
+                                finish_reason = chunk.reason
+                                continue
+                            if not parser.raw_output:
+                                await self._publish(LLMFirstChunk, event, response_id=self._response_id)
+                            text = parser.feed(chunk)
+                            if parser.control is not None and not control_applied:
+                                control_applied = True
+                                if parser.control is ControlToken.USER_IS_INTERRUPTING:
+                                    interrupted = True
+                                    await asyncio.gather(
+                                        stream.aclose(),
+                                        self._stop_answer(parser.wire_token),
+                                    )
+                                    break
+                                if parser.control is ControlToken.USER_IS_SPEAKING:
+                                    await self._stop_answer(parser.wire_token)
+                                elif parser.control is ControlToken.USER_IS_THINKING:
+                                    await self._finish_answer()
+                            if text:
+                                await self._append_answer(event, text, parser.wire_token)
+                    if interrupted:
+                        self.history.append({"role": "assistant", "content": self._closed_interruption_history(parser.raw_output)})
+                    else:
+                        parser.finish(finish_reason)
+                        self.history.append({"role": "assistant", "content": parser.raw_output})
                     await self._publish(DuplexProtocolParsed, event,
                         response_id=self._response_id or observed_response_id, state_token=parser.wire_token,
                         response_text=parser.text, raw_output=parser.raw_output,
-                        reason="continuation" if parser.control is None else "control")
+                        reason="interruption" if interrupted else ("continuation" if parser.control is None else "control"))
                 except ProtocolParseError as exc:
                     await self._error(event, exc.code, exc.raw_output, str(exc))
                     await self._stop_answer("protocol_error")
@@ -144,6 +158,18 @@ class DuplexRuntimeAdapter(Manager):
             pieces.append("<|im_start|>" + item["role"] + "\n" + item["content"])
         pieces.append("<|im_start|>assistant\n")
         return "".join(pieces)
+
+    @staticmethod
+    def _closed_interruption_history(raw_output: str) -> str:
+        """Close an interrupted wire fragment only in retained ChatML history.
+
+        The model stream may end immediately after the interruption marker. The
+        timeline must preserve that raw output, while the next raw ChatML prompt
+        still needs a completed assistant message.
+        """
+        if raw_output.endswith(WIRE_EOS):
+            return raw_output + "\n"
+        return raw_output + WIRE_EOS + "\n"
 
     async def _append_answer(self, event: DuplexMicroTurnReady, text: str, token: str) -> None:
         """Continue a response across micro-turn boundaries without restarting TTS."""

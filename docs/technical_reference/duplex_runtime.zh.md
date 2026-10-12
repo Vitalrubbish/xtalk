@@ -8,7 +8,7 @@
 
 首次非空 ASR 后等待一个 0.6 秒窗口，消费累计前缀的新增后缀。partial/pause/final 更新输入，时钟调用 LLM；空窗仍输入 no voice。串行生成，慢请求期间聚合最新文本，避免过时窗口排队。assistant 历史包含原始输出；回答后续 micro-turn 允许普通文本，预算截断保留 length 原因。ASR 修订更新已发 user 前缀，版本递增，保留 assistant 历史与独立已播事实，这是对官方 Word 流的累计前缀适配。
 
-一个回答 ID 与 TTS 流跨多个 micro-turn。finish talking 启动回答，普通文本继续回答，user backchannel 保持当前流，允许同一 micro-turn 在 token 后继续回答文本。thinking 结束 TTS 文本输入；interruption 停止未播音频。官方 demo 的 user is talking 在回答进行时也会停播，运行时对齐此行为。只有 ResponseUpdate/ResponseFinish 确认已播文本，TTSStarted 表示交付门已打开。
+一个回答 ID 与 TTS 流跨多个 micro-turn。finish talking 启动回答，普通文本继续回答，user backchannel 保持当前流，允许同一 micro-turn 在 token 后继续回答文本。thinking 结束 TTS 文本输入。完整的 <|user interruption|> 会立即结束当前 system micro-turn：适配器停止未播音频、关闭当前 DuplexCascade 请求，且不等待 <|im_end|>。它记录模型实际输出的 marker，仅在保留该回合的 prompt 历史时内部补入 ChatML 结束标记。官方 demo 的 user is talking 在回答进行时也会停播，运行时对齐此行为。只有 ResponseUpdate/ResponseFinish 确认已播文本，TTSStarted 表示交付门已打开。
 
 ## 注册与配置
 
@@ -36,4 +36,4 @@ conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_dup
 
 ## 验证结果（2026-10-12）
 
-本地 X-Talk 137 项（134 PASS、3 skipped），A2/A3 行为门禁 15/15。远端官方权重运行时冒烟 source snapshot=17fd22d55cc7、160 源文件校验通过、12 系统 micro-turn、errors=0、status=PASS。模型使用发布权重、Qwen2 slow tokenizer（旧 fast 格式兼容）与 BF16，q/v 基础权重键显式迁移后严格装载。脚本 ASR 前缀与模拟 PCM 不替代真实 ASR/MOSS、音频质量、长会话或 FDB。
+本地 X-Talk 138 项（135 PASS、3 skipped），A2/A3 行为门禁 16/16。新增 interruption 回归确认完整的 <|user interruption|> marker 会关闭模型流并结束当前 micro-turn，不等待 <|im_end|>。远端官方权重运行时冒烟 source snapshot=17fd22d55cc7、160 源文件校验通过、12 系统 micro-turn、errors=0、status=PASS。模型使用发布权重、Qwen2 slow tokenizer（旧 fast 格式兼容）与 BF16，q/v 基础权重键显式迁移后严格装载。脚本 ASR 前缀与模拟 PCM 不替代真实 ASR/MOSS、音频质量、长会话或 FDB。

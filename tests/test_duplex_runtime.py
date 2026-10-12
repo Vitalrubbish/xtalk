@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 from xtalk.duplex_control.micro_turn import MicroTurnAssembler
 from xtalk.duplex_control.model_client import GenerationEnd
-from xtalk.duplex_control.protocol import WireMicroTurnParser, ProtocolParseError
+from xtalk.duplex_control.protocol import WIRE_EOS, WireMicroTurnParser, ProtocolParseError
 from xtalk.duplex_control.runtime_adapter import DuplexRuntimeAdapter
 from xtalk.duplex_control.service import duplex_manager_classes
 from xtalk.models import Models, TTS
 from xtalk.serving.event_bus import EventBus, EventDispatchMode
 from xtalk.serving.events import (
-    ASRResultFinal, ASRResultPartial, DuplexMicroTurnReady, DuplexProtocolError,
+    ASRResultFinal, ASRResultPartial, DuplexMicroTurnReady, DuplexProtocolError, DuplexProtocolParsed,
     LLMAgentResponseFinish, LLMAgentResponseUpdate, ResponseUpdate, ResponseFinish,
     TurnTTSStartRequested, TurnTTSStopRequested, TurnTTSTextAppendRequested,
     TurnTTSFlushRequested, VADSpeechStart, TurnDetectorStopSpeaking,
@@ -317,31 +317,69 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(client.prompts), 1)
         self.assertEqual(self.events(DuplexProtocolError)[0].error_code, 'stale_prefix')
 
-    async def test_interruption_executes_before_the_model_emits_eos(self):
-        """The control marker alone releases stop; delayed EOS adds no stop latency."""
+    async def test_interruption_closes_stream_and_micro_turn_without_eos(self):
+        """An interruption marker cancels the live stream without waiting for EOS."""
         adapter, _ = self.adapter(['<|user finish talking|>Hello<|im_end|>'])
         await self.send('q')
         await self.assembler.flush()
-        marker = asyncio.Event()
-        release = asyncio.Event()
+        response_id = adapter._response_id
 
-        class DelayedEOS:
-            """Emit a decision marker before a deliberately stalled EOS."""
+        class StalledInterruption:
+            """Expose whether adapter closure reaches a stream stalled after its marker."""
 
-            async def stream(self, prompt):
-                """Block after the control marker has reached the adapter."""
-                yield '<|user interruption|>'
-                marker.set()
-                await release.wait()
-                yield '<|im_end|>'
+            def __init__(self):
+                self.closed = asyncio.Event()
+                self.waiting_after_partial = asyncio.Event()
+                self.marker_emitted = asyncio.Event()
+                self.release_partial = asyncio.Event()
+                self.release_after_marker = asyncio.Event()
+                self.resumed_after_marker = False
 
-        adapter.client = DelayedEOS()
+            def stream(self, prompt):
+                """Yield an interruption then wait forever unless the adapter closes it."""
+                async def output():
+                    try:
+                        yield '<|user inter'
+                        self.waiting_after_partial.set()
+                        await self.release_partial.wait()
+                        self.marker_emitted.set()
+                        yield 'ruption|>'
+                        self.resumed_after_marker = True
+                        await self.release_after_marker.wait()
+                        yield '<|im_end|>'
+                    finally:
+                        self.closed.set()
+
+                return output()
+
+        interrupted = StalledInterruption()
+        adapter.client = interrupted
         task = asyncio.create_task(self.assembler.flush())
-        await asyncio.wait_for(marker.wait(), 1)
-        self.assertEqual(len(self.events(TurnTTSStopRequested)), 1)
+        await asyncio.wait_for(interrupted.waiting_after_partial.wait(), 1)
+        self.assertFalse(self.events(TurnTTSStopRequested))
         self.assertFalse(task.done())
-        release.set()
-        await task
+        interrupted.release_partial.set()
+        await asyncio.wait_for(interrupted.marker_emitted.wait(), 1)
+        await asyncio.wait_for(task, 1)
+        await asyncio.wait_for(interrupted.closed.wait(), 1)
+        self.assertEqual(len(self.events(TurnTTSStopRequested)), 1)
+        self.assertEqual(self.events(TurnTTSStopRequested)[0].response_id, response_id)
+        self.assertFalse(interrupted.resumed_after_marker)
+        self.assertFalse(interrupted.release_after_marker.is_set())
+        self.assertFalse(task.cancelled())
+        parsed = self.events(DuplexProtocolParsed)[-1]
+        self.assertEqual(parsed.raw_output, '<|user interruption|>')
+        self.assertEqual(parsed.state_token, '<|user interruption|>')
+        self.assertEqual(parsed.response_id, response_id)
+        self.assertEqual(parsed.reason, 'interruption')
+        self.assertFalse(self.events(DuplexProtocolError))
+        self.assertEqual(adapter.history[-1], {
+            'role': 'assistant', 'content': '<|user interruption|>' + WIRE_EOS + '\n',
+        })
+        continuation = ScriptedClient(['<|user is talking|><|im_end|>'])
+        adapter.client = continuation
+        await self.assembler.flush()
+        self.assertIn('<|user interruption|><|im_end|>\n', continuation.prompts[0])
 
     async def test_user_backchannel_can_include_same_micro_turn_continuation(self):
         """Official backchannel markers preserve and continue the current answer."""

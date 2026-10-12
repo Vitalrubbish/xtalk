@@ -8,6 +8,6 @@
 conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_runtime -v
 ~~~
 
-新增分片打断测试：只有 control marker 时立即停播，延迟 EOS 不推迟动作。
+新增分片打断测试：只有 control marker 时立即停播、关闭模型流并完成 micro-turn；EOS 始终不可用也不推迟动作。测试同时检查协议观察保留原始 marker，而 prompt 历史补入必要的 ChatML 闭合符。
 
 新增 user backchannel + 同一 micro-turn 回答续写测试，验证 marker 分片与单一 response/TTS；控制等待状态在活动回答期间缺失 EOS 仍拒绝。

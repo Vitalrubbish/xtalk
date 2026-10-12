@@ -7,3 +7,7 @@
 ## 公开符号
 
 NO_VOICE、EOS、ControlToken、ParsedSystemMicroTurn、ProtocolParseError、DuplexCorrelation；serialize_user_micro_turn、parse_system_micro_turn、observe_system_micro_turn。
+
+## A2/A3 更新
+
+新增导出 WIRE_EOS、WIRE_NO_VOICE、WIRE_CONTROLS、WireMicroTurnParser 与 PrefixSnapshot。A1 论文格式 API 保留，在线模式使用官方实际 token。

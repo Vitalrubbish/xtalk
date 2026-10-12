@@ -1,6 +1,6 @@
 # DuplexCascade A1：协议与可观测性
 
-A1 提供完整输出协议解析、原始成功/错误事件、请求与响应关联字段传递、JSONL 时间线和 TTSStarted 交付边界。LLM/TTS/播放复用原生 manager；观察函数尚未接入在线模型流。A2 的窗口调度与版本生成、A3 的在线 token 执行和 A4 的远端验收仍在后续阶段。
+A1 提供完整输出协议解析、原始成功/错误事件、请求与响应关联字段传递、JSONL 时间线和 TTSStarted 交付边界。LLM/TTS/播放复用原生 manager；A1 观察函数保留完整片段语义；A2/A3 在线路径见 [Duplex 运行时](duplex_runtime.zh.md)，A4 远端验收仍待完成。
 
 ## 配置与日志
 

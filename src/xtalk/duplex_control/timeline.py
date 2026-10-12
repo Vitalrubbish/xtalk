@@ -12,6 +12,7 @@ from typing import Any, TextIO
 from xtalk.serving.event_bus import EventBus
 from xtalk.serving.events import (
     ASRResultFinal,
+    DuplexMicroTurnReady,
     ASRResultPartial,
     DuplexProtocolError,
     DuplexProtocolParsed,
@@ -139,6 +140,7 @@ class DuplexTimelineRecorder(Manager):
         self.path = directory / f"{session_id}.jsonl"
         self._output: TextIO = self.path.open("a", encoding="utf-8")
 
+    @Manager.event_handler(DuplexMicroTurnReady, priority=-200)
     @Manager.event_handler(ASRResultPartial, priority=-200)
     @Manager.event_handler(ASRResultFinal, priority=-200)
     @Manager.event_handler(DuplexProtocolParsed, priority=-200)

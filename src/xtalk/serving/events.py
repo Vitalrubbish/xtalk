@@ -313,6 +313,23 @@ class ResponseFinish(Event):
 
 
 @dataclass
+class DuplexMicroTurnReady(Event):
+    """Publish an immutable visible ASR snapshot at a duplex inference boundary."""
+
+    TYPE: ClassVar[str] = "duplex.micro_turn_ready"
+    turn_id: int
+    segment_id: int
+    prefix_version: int
+    text: str
+    previous_text: str
+    delta_text: str
+    revision_kind: str
+    speech_state: str
+    received_monotonic: float
+    request_id: str
+
+
+@dataclass
 class DuplexProtocolParsed(Event):
     """Record one valid DuplexCascade system micro-turn.
 

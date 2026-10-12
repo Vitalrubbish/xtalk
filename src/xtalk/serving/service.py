@@ -76,6 +76,10 @@ class Service:
         self.event_bus = EventBus(enable_history=False, max_history=0)
 
         self._manager_classes: list[Type[Manager]] = list(manager_classes or [])
+        if self.service_config.get("duplex_enabled") is True:
+            from ..duplex_control.service import duplex_manager_classes
+
+            self._manager_classes = duplex_manager_classes(self._manager_classes)
         if self.service_config.get("duplex_timeline_enabled") is True:
             if DuplexTimelineRecorder not in self._manager_classes:
                 self._manager_classes.append(DuplexTimelineRecorder)

@@ -7,3 +7,7 @@
 ## 类设计与事实边界
 
 Event.__post_init__ 初始化两类时间，event_type 返回 TYPE，create_event_class 创建兼容事件子类。ASRResultPartial/Final 表示输入前缀；LLMAgentResponseUpdate/Finish 表示生成文本；TTSStarted 是客户端交付门打开；ResponseUpdate/Finish 是确认已播文本。DuplexProtocolParsed/Error 表示协议观测，不发出播放或语义动作。所有新增字段提供默认值供原生发布者兼容使用。
+
+## A2/A3 更新
+
+新增 DuplexMicroTurnReady 事件，保留不可变输入窗口的 prefix/turn/segment/request、delta 和修订信息。

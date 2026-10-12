@@ -1,6 +1,6 @@
 # DuplexCascade A1: protocol and observability
 
-A1 provides complete-output protocol parsing, raw success/error observations, request/response correlation propagation, a JSONL timeline, and the TTSStarted delivery boundary. LLM/TTS/playback reuse native managers. The protocol observer awaits online stream integration. A2 scheduling/version allocation, A3 online token execution, and A4 remote acceptance remain future stages.
+A1 provides complete-output protocol parsing, raw success/error observations, request/response correlation propagation, a JSONL timeline, and the TTSStarted delivery boundary. LLM/TTS/playback reuse native managers. A2/A3 online scheduling and execution are now documented in [Duplex runtime](duplex_runtime.md). A4 remote acceptance remains pending.
 
 ## Configuration and timeline
 

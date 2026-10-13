@@ -6,9 +6,9 @@
 
 ## 调度、历史和播放
 
-首次非空 ASR 后等待一个 0.6 秒窗口，消费累计前缀的新增后缀。partial/pause/final 更新输入，时钟调用 LLM；空窗仍输入 no voice。串行生成，慢请求期间聚合最新文本，避免过时窗口排队。assistant 历史包含原始输出；回答后续 micro-turn 允许普通文本，预算截断保留 length 原因。ASR 修订更新已发 user 前缀，版本递增，保留 assistant 历史与独立已播事实，这是对官方 Word 流的累计前缀适配。
+首次非空 ASR 后等待一个 0.6 秒窗口，消费累计前缀的新增后缀。partial/pause/final 更新输入，时钟调用 LLM；空窗仍输入 no voice。串行生成，慢请求期间聚合最新文本，避免过时窗口排队。历史同时保存 user 文本与模型服务返回的 assistant token id，下一条 prompt 直接复现官方 token 序列；实测解码文本无法反推生成 id（随机序列约 52% 不一致），因此保留 id。ASR 修订更新已发 user 前缀，版本递增，保留 assistant 历史与独立已播事实，这是对官方 Word 流的累计前缀适配。
 
-一个回答 ID 与 TTS 流跨多个 micro-turn。finish talking 启动回答，普通文本继续回答，user backchannel 保持当前流，允许同一 micro-turn 在 token 后继续回答文本。thinking 结束 TTS 文本输入。完整的 <|user interruption|> 会立即结束当前 system micro-turn：适配器停止未播音频、关闭当前 DuplexCascade 请求，且不等待 <|im_end|>。它记录模型实际输出的 marker，仅在保留该回合的 prompt 历史时内部补入 ChatML 结束标记。官方 demo 的 user is talking 在回答进行时也会停播，运行时对齐此行为。只有 ResponseUpdate/ResponseFinish 确认已播文本，TTSStarted 表示交付门已打开。
+一个回答 ID 与 TTS 流跨多个 micro-turn。finish talking 打开"正在播报"窗口，普通文本继续回答，user backchannel 保持当前流，允许同一 micro-turn 在 token 后继续回答文本。thinking 结束 TTS 文本输入，其后文本开启新的合成会话，因为 MOSS 客户端在 flush 后即终结该流。适配器始终解码到 <|im_end|>，不截断模型流。user is talking 与 user interruption 仅在"正在播报"窗口内停止未播音频，对齐官方 tts_speaking_flag 门控；停播会结束播放与合成会话，同一 micro-turn 的后续文本另起 response 与会话，与官方 reset 后重连 TTS 的行为一致。送 TTS 的文本去掉 ASCII 句点，前端转写保留句点，对齐官方 filter_period_for_tts。只有 ResponseUpdate/ResponseFinish 确认已播文本，TTSStarted 表示交付门已打开。
 
 ## 注册与配置
 
@@ -34,6 +34,6 @@ conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_dup
 
 本地模拟门禁不能证明官方权重的语义质量或 A4 通过。远端需记录 tokenizer/权重、真实音频、打断延迟、长会话与 FDB；模型服务严格拒绝超长上下文，不静默截断。
 
-## 验证结果（2026-10-12）
+## 验证结果（2026-10-13）
 
-本地 X-Talk 138 项（135 PASS、3 skipped），A2/A3 行为门禁 16/16。新增 interruption 回归确认完整的 <|user interruption|> marker 会关闭模型流并结束当前 micro-turn，不等待 <|im_end|>。远端官方权重运行时冒烟 source snapshot=17fd22d55cc7、160 源文件校验通过、12 系统 micro-turn、errors=0、status=PASS。模型使用发布权重、Qwen2 slow tokenizer（旧 fast 格式兼容）与 BF16，q/v 基础权重键显式迁移后严格装载。脚本 ASR 前缀与模拟 PCM 不替代真实 ASR/MOSS、音频质量、长会话或 FDB。
+X-Talk 全量 142 项（139 PASS、3 skipped），A2/A3 行为门禁 34/34。interruption 回归确认：marker 仅在"正在播报"窗口内停止未播音频，模型流仍解码到 <|im_end|>，assistant id 原样进入下一条 prompt。远端官方权重冒烟沿用 2026-10-12 的 source snapshot=17fd22d55cc7、160 源文件校验通过、12 系统 micro-turn、errors=0。模型使用发布权重、fast Qwen2 tokenizer 与 BF16，q/v 基础权重键显式迁移后严格装载。脚本 ASR 前缀与模拟 PCM 不替代真实 ASR/MOSS、音频质量、长会话或 FDB。

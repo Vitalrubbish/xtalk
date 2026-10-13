@@ -8,6 +8,8 @@
 conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_runtime -v
 ~~~
 
-新增分片打断测试：只有 control marker 时立即停播、关闭模型流并完成 micro-turn；EOS 始终不可用也不推迟动作。测试同时检查协议观察保留原始 marker，而 prompt 历史补入必要的 ChatML 闭合符。
+新增打断对齐测试：仅在"正在播报"窗口开启时 reset 未播音频，模型流仍解码到 `<|im_end|>`；assistant 生成 token id 原样进入下一条 prompt；窗口未开启时的 interruption 不改变播放。另检查协议观察保留原始 marker。历史以 user 文本 + assistant token id 保存，`_request_history` 生成线上结构。
 
 新增 user backchannel + 同一 micro-turn 回答续写测试，验证 marker 分片与单一 response/TTS；控制等待状态在活动回答期间缺失 EOS 仍拒绝。
+
+ScriptedClient 在脚本片段不含 `GenerationEnd` 时补一条 stop 结束记录，与真实服务始终上报生成 id 的行为一致。

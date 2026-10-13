@@ -18,7 +18,7 @@ from xtalk.serving.events import (
 )
 from xtalk.serving.interfaces import Manager
 from .model_client import DuplexModelClient, GenerationEnd
-from .protocol import ControlToken, ProtocolParseError, WIRE_EOS, WIRE_NO_VOICE, WireMicroTurnParser
+from .protocol import ControlToken, ProtocolParseError, WireControl, WireMicroTurnParser
 
 
 class DuplexRuntimeAdapter(Manager):
@@ -57,10 +57,13 @@ class DuplexRuntimeAdapter(Manager):
         self._playback_response_id = ""
         self._playback_meta: dict[str, Any] = {}
         self._answered_prefixes: dict[tuple[int, int], str] = {}
+        # Official ``tts_speaking_flag``: `<|user finish talking|>` opens the
+        # window in which speaking/interruption markers may reset audio.
+        self._speaking = False
 
     @Manager.event_handler(DuplexMicroTurnReady)
     async def _handle_micro_turn(self, event: DuplexMicroTurnReady) -> None:
-        """Run one official system micro-turn, retaining incoming ASR for the next tick."""
+        """Run one official system micro-turn, applying every control token it emits."""
         if event.session_id != self.session_id or self._closed:
             return
         task = asyncio.current_task()
@@ -82,45 +85,33 @@ class DuplexRuntimeAdapter(Manager):
                 self._last_prefix_version = event.prefix_version
                 self._seen_requests.add(event.request_id)
                 self._append_user(event)
-                parser = WireMicroTurnParser(continuation_allowed=bool(self._response_id))
+                parser = WireMicroTurnParser()
                 finish_reason = "stop"
-                control_applied = False
-                interrupted = False
+                token_ids: tuple[int, ...] = ()
                 observed_response_id = self._response_id or self._playback_response_id
                 try:
-                    stream = self.client.stream(self._prompt())
+                    stream = self.client.stream(self._request_history())
                     async with aclosing(stream):
                         async for chunk in stream:
                             if isinstance(chunk, GenerationEnd):
                                 finish_reason = chunk.reason
+                                token_ids = chunk.token_ids
                                 continue
                             if not parser.raw_output:
                                 await self._publish(LLMFirstChunk, event, response_id=self._response_id)
-                            text = parser.feed(chunk)
-                            if parser.control is not None and not control_applied:
-                                control_applied = True
-                                if parser.control is ControlToken.USER_IS_INTERRUPTING:
-                                    interrupted = True
-                                    await asyncio.gather(
-                                        stream.aclose(),
-                                        self._stop_answer(parser.wire_token),
-                                    )
-                                    break
-                                if parser.control is ControlToken.USER_IS_SPEAKING:
-                                    await self._stop_answer(parser.wire_token)
-                                elif parser.control is ControlToken.USER_IS_THINKING:
-                                    await self._finish_answer()
-                            if text:
-                                await self._append_answer(event, text, parser.wire_token)
-                    if interrupted:
-                        self.history.append({"role": "assistant", "content": self._closed_interruption_history(parser.raw_output)})
-                    else:
-                        parser.finish(finish_reason)
-                        self.history.append({"role": "assistant", "content": parser.raw_output})
-                    await self._publish(DuplexProtocolParsed, event,
-                        response_id=self._response_id or observed_response_id, state_token=parser.wire_token,
-                        response_text=parser.text, raw_output=parser.raw_output,
-                        reason="interruption" if interrupted else ("continuation" if parser.control is None else "control"))
+                            for item in parser.feed(chunk):
+                                if isinstance(item, WireControl):
+                                    await self._apply_control(event, parser, item, observed_response_id)
+                                else:
+                                    await self._append_answer(event, item.text, item.wire_token)
+                    parser.finish(finish_reason)
+                    # The released server decodes until <|im_end|> and appends the
+                    # generated ids verbatim; it never truncates on interruption.
+                    if not token_ids:
+                        raise ProtocolParseError("missing_generation", parser.raw_output,
+                                                 "model service ended without generated token ids")
+                    self.history.append({"role": "assistant", "token_ids": list(token_ids),
+                                         "text": parser.raw_output})
                 except ProtocolParseError as exc:
                     await self._error(event, exc.code, exc.raw_output, str(exc))
                     await self._stop_answer("protocol_error")
@@ -134,8 +125,69 @@ class DuplexRuntimeAdapter(Manager):
             if task is not None:
                 self._tasks.discard(task)
 
+    async def _apply_control(
+        self,
+        event: DuplexMicroTurnReady,
+        parser: WireMicroTurnParser,
+        item: WireControl,
+        observed_response_id: str,
+    ) -> None:
+        """Execute one control token in arrival order and observe it.
+
+        Every control token the official weights emit is executed, matching the
+        released server that reacts to each marker it decodes.
+
+        Parameters
+        ----------
+        event : DuplexMicroTurnReady
+            Originating micro-turn identity.
+        parser : WireMicroTurnParser
+            Parser holding the raw output observed so far.
+        item : WireControl
+            Control token to execute.
+        observed_response_id : str
+            Response identity captured before this action, for observation only.
+        """
+
+        response_id = self._response_id or self._playback_response_id or observed_response_id
+        reason = "control"
+        if item.control is ControlToken.USER_FINISH_SPEAKING:
+            self._speaking = True
+        elif item.control is ControlToken.USER_IS_INTERRUPTING:
+            reason = "interruption"
+            await self._reset_speaking(item.wire_token)
+        elif item.control is ControlToken.USER_IS_SPEAKING:
+            await self._reset_speaking(item.wire_token)
+        elif item.control is ControlToken.USER_IS_THINKING:
+            await self._finish_answer()
+        await self._publish(DuplexProtocolParsed, event,
+            response_id=response_id, state_token=item.wire_token,
+            response_text="", raw_output=parser.raw_output, reason=reason)
+
+    async def _reset_speaking(self, reason: str) -> None:
+        """Reset audio only while the official speaking window is open.
+
+        The released server gates `<|user is talking|>` and
+        `<|user interruption|>` on ``tts_speaking_flag``, which only
+        `<|user finish talking|>` opens. Interruptions that arrive before the
+        model has taken its turn therefore leave playback untouched.
+
+        Parameters
+        ----------
+        reason : str
+            Wire token that triggered the reset.
+        """
+        if not self._speaking:
+            return
+        self._speaking = False
+        await self._stop_answer(reason)
+
     def _append_user(self, event: DuplexMicroTurnReady) -> None:
-        """Preserve delta inputs; repair already emitted user prefixes on ASR rewrite."""
+        """Preserve delta inputs; repair already emitted user prefixes on ASR rewrite.
+
+        Only the user text is stored: the model service renders the official
+        headers, end-of-message ids and silence marker from its own tokenizer.
+        """
         scope = (event.turn_id, event.segment_id)
         delta = event.delta_text
         if event.revision_kind == "REWRITE":
@@ -145,31 +197,30 @@ class DuplexRuntimeAdapter(Manager):
                 count = len(item["source_text"]) if index < len(entries) - 1 else len(remaining)
                 replacement, remaining = remaining[:count], remaining[count:]
                 item["source_text"] = replacement
-                item["content"] = (replacement or WIRE_NO_VOICE) + WIRE_EOS + "\n"
+                item["text"] = replacement
             # Old emitted content has been repaired; current window contains any remainder.
             delta = remaining
-        self.history.append({"role": "user", "content": (delta if delta.strip() else WIRE_NO_VOICE) + WIRE_EOS + "\n",
+        self.history.append({"role": "user", "text": delta,
                              "scope": scope, "source_text": delta})
 
-    def _prompt(self) -> str:
-        """Build exactly the official raw ChatML headers without a system prompt."""
-        pieces = []
+    def _request_history(self) -> list[dict[str, Any]]:
+        """Return the wire history: user text and assistant generated token ids."""
+        history: list[dict[str, Any]] = []
         for item in self.history:
-            pieces.append("<|im_start|>" + item["role"] + "\n" + item["content"])
-        pieces.append("<|im_start|>assistant\n")
-        return "".join(pieces)
+            if item["role"] == "user":
+                history.append({"role": "user", "text": item.get("text", "")})
+            else:
+                history.append({"role": "assistant", "token_ids": list(item.get("token_ids") or [])})
+        return history
 
     @staticmethod
-    def _closed_interruption_history(raw_output: str) -> str:
-        """Close an interrupted wire fragment only in retained ChatML history.
+    def _filter_for_tts(text: str) -> str:
+        """Return the spoken form of answer text.
 
-        The model stream may end immediately after the interruption marker. The
-        timeline must preserve that raw output, while the next raw ChatML prompt
-        still needs a completed assistant message.
+        The released server removes periods from speech while keeping them for
+        the frontend transcript.
         """
-        if raw_output.endswith(WIRE_EOS):
-            return raw_output + "\n"
-        return raw_output + WIRE_EOS + "\n"
+        return text.replace(".", "")
 
     async def _append_answer(self, event: DuplexMicroTurnReady, text: str, token: str) -> None:
         """Continue a response across micro-turn boundaries without restarting TTS."""
@@ -194,7 +245,7 @@ class DuplexRuntimeAdapter(Manager):
             response_id=self._response_id, text=self._response_text, **self._response_meta),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
         await self.event_bus.publish(TurnTTSTextAppendRequested(session_id=self.session_id,
-            response_id=self._response_id, text=text, **self._response_meta),
+            response_id=self._response_id, text=self._filter_for_tts(text), **self._response_meta),
             mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
 
     async def _finish_answer(self) -> None:

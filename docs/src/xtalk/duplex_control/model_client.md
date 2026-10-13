@@ -2,7 +2,7 @@
 
 ## Purpose, classes, and core methods
 
-DuplexModelClient posts raw ChatML prompts to /generate with aiohttp and reads NDJSON while preserving special tokens. GenerationEnd preserves stop/length reasons instead of inventing EOS at the official token limit. stream propagates HTTP, timeout and model errors; cancellation closes the connection.
+DuplexModelClient posts the micro-turn history to /generate with aiohttp and reads NDJSON while preserving special tokens. The history alternates user text with the assistant token ids returned by previous calls. GenerationEnd preserves the stop/length reason and the exact generated ids instead of inventing EOS at the official token limit. stream propagates HTTP, timeout and model errors; cancellation closes the connection.
 
 ## Usage and boundaries
 

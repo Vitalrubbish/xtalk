@@ -2,7 +2,7 @@
 
 ## 功能、类与核心方法
 
-DuplexModelClient 使用 aiohttp 发送原始 ChatML prompt 到 /generate，读取逐行 NDJSON，保留 special token。GenerationEnd 保存 stop/length 原因，防止把官方 max_new_tokens 截断伪造为 EOS。stream 传递 HTTP、超时与模型错误；会话取消关闭连接。
+DuplexModelClient 使用 aiohttp 把 micro-turn 历史发送到 /generate，历史在 user 文本与既往返回的 assistant token id 之间交替，读取逐行 NDJSON 并保留 special token。GenerationEnd 保存 stop/length 原因与实际生成的 token id，防止把官方 max_new_tokens 截断伪造为 EOS。stream 传递 HTTP、超时与模型错误；会话取消关闭连接。
 
 ## 使用与边界
 

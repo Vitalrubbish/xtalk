@@ -191,6 +191,7 @@ async def observe_system_micro_turn(
 
 WIRE_EOS = "<|im_end|>"
 WIRE_NO_VOICE = "<|no voice|>"
+WIRE_IM_START = "<|im_start|>"
 WIRE_CONTROLS = {
     "<|user is talking|>": ControlToken.USER_IS_SPEAKING,
     "<|user finish talking|>": ControlToken.USER_FINISH_SPEAKING,
@@ -198,29 +199,64 @@ WIRE_CONTROLS = {
     "<|user backchannel|>": ControlToken.USER_BACKCHANNEL,
     "<|user is thinking|>": ControlToken.USER_IS_THINKING,
 }
+# Released markers that never become speech or a semantic decision.
+_WIRE_SKIP = (WIRE_NO_VOICE, WIRE_IM_START)
+_WIRE_TOKENS = tuple(sorted((WIRE_EOS, *_WIRE_SKIP, *WIRE_CONTROLS), key=len, reverse=True))
+_INCOMPLETE = object()
 
 
-class WireMicroTurnParser:
-    """Validate streamed official-weight output and hold fragmented special tokens.
+@dataclass(frozen=True)
+class WireControl:
+    """One control token observed in the streamed assistant output.
 
     Parameters
     ----------
-    continuation_allowed : bool
-        Whether an existing answer can accept a plain-text system micro-turn.
+    control : ControlToken
+        Semantic state selected by the official weights.
+    wire_token : str
+        Exact released spelling that produced the state.
     """
 
-    def __init__(self, continuation_allowed: bool = False) -> None:
-        self.continuation_allowed = continuation_allowed
+    control: ControlToken
+    wire_token: str
+
+
+@dataclass(frozen=True)
+class WireText:
+    """One plain-text fragment safe to forward to the existing TTS chain.
+
+    Parameters
+    ----------
+    text : str
+        Text between control tokens.
+    wire_token : str
+        Most recent control spelling, empty before the first control token.
+    """
+
+    text: str
+    wire_token: str
+
+
+class WireMicroTurnParser:
+    """Tokenize streamed official-weight output into ordered control and text events.
+
+    The official server reacts to every control token it decodes and forwards
+    all remaining text to speech; it never validates message structure. This
+    parser mirrors that behavior: repeated, adjacent or out-of-order control
+    tokens are applied in arrival order and are never raised as errors.
+    """
+
+    def __init__(self) -> None:
         self.raw_output = ""
+        self.text = ""
         self.control: ControlToken | None = None
         self.wire_token = ""
-        self.text = ""
-        self._pending = ""
-        self._header_done = False
         self.ended = False
+        self.finish_reason = "stop"
+        self._pending = ""
 
-    def feed(self, chunk: str) -> str:
-        """Consume a raw fragment and return only newly validated answer text.
+    def feed(self, chunk: str) -> list[WireControl | WireText]:
+        """Consume a raw fragment and return its ordered control and text events.
 
         Parameters
         ----------
@@ -229,86 +265,73 @@ class WireMicroTurnParser:
 
         Returns
         -------
-        str
-            Incremental text safe to forward to the existing TTS chain.
+        list[WireControl | WireText]
+            Newly completed control tokens and answer text, in arrival order.
         """
+
         self.raw_output += chunk
         self._pending += chunk
-        if self.ended:
-            if self._pending.strip():
-                self._fail("trailing_output")
-            self._pending = ""
-            return ""
-        if not self._header_done:
-            if not self._pending:
-                return ""
-            if self._pending.startswith("<"):
-                if ">" not in self._pending:
-                    return ""
-                end = self._pending.index(">") + 1
-                marker = self._pending[:end]
-                self.control = WIRE_CONTROLS.get(marker)
-                if self.control is None:
-                    # An empty continuation still needs a valid active answer.
-                    if marker == WIRE_EOS and self.continuation_allowed:
-                        self._header_done = True
-                    else:
-                        self._fail("unknown_control_token")
+        events: list[WireControl | WireText] = []
+        while self._pending and not self.ended:
+            index = self._pending.find("<")
+            if index < 0:
+                self._emit_text(events, self._pending)
+                self._pending = ""
+                break
+            if index > 0:
+                self._emit_text(events, self._pending[:index])
+                self._pending = self._pending[index:]
+                continue
+            match = self._match(self._pending)
+            if match is _INCOMPLETE:
+                break
+            if match is None:
+                # Not a released marker: official weights render it as plain text.
+                end = self._pending.find(">")
+                if end >= 0:
+                    self._emit_text(events, self._pending[: end + 1])
+                    self._pending = self._pending[end + 1 :]
                 else:
-                    self.wire_token = marker
-                    self._pending = self._pending[end:]
-                    self._header_done = True
-            elif self.continuation_allowed:
-                self._header_done = True
-            else:
-                self._fail("missing_control_token")
-        answer = self.control is ControlToken.USER_FINISH_SPEAKING or (
-            self.control in (None, ControlToken.USER_BACKCHANNEL) and self.continuation_allowed)
-        if not answer:
-            if WIRE_EOS.startswith(self._pending):
-                if self._pending == WIRE_EOS:
-                    self.ended = True
-                    self._pending = ""
-                return ""
-            if self._pending.startswith(WIRE_EOS) and not self._pending[len(WIRE_EOS):].strip():
+                    self._emit_text(events, "<")
+                    self._pending = self._pending[1:]
+                continue
+            self._pending = self._pending[len(match) :]
+            if match in _WIRE_SKIP:
+                continue
+            if match == WIRE_EOS:
                 self.ended = True
-                self._pending = ""
-                return ""
-            self._fail("unexpected_response_text")
-        start = self._pending.find("<")
-        if start < 0:
-            output, self._pending = self._pending, ""
-        else:
-            output, self._pending = self._pending[:start], self._pending[start:]
-            if self._pending.startswith(WIRE_EOS):
-                tail = self._pending[len(WIRE_EOS):]
-                if tail.strip():
-                    self._fail("trailing_output")
-                self.ended = True
-                self._pending = ""
-            elif not WIRE_EOS.startswith(self._pending):
-                self._fail("unexpected_token")
-        self.text += output
-        return output
+                break
+            control = WIRE_CONTROLS[match]
+            self.control = control
+            self.wire_token = match
+            events.append(WireControl(control, match))
+        if self.ended:
+            self._pending = ""
+        return events
 
     def finish(self, finish_reason: str = "stop") -> None:
-        """Validate a complete micro-turn or an official token-budget truncation.
+        """Record the service termination reason without rejecting the output.
 
         Parameters
         ----------
         finish_reason : str
-            Service termination reason; length permits an unfinished answer only.
+            ``stop`` when the model emitted ``<|im_end|>``; ``length`` when the
+            per-micro-turn token budget ended first. Both are valid endings.
         """
-        if self._pending or not self._header_done:
-            self._fail("missing_eos")
-        if not self.ended and not (
-            finish_reason == "length" and bool(self.text) and (
-                self.control is ControlToken.USER_FINISH_SPEAKING or
-                self.control in (None, ControlToken.USER_BACKCHANNEL) and self.continuation_allowed)):
-            self._fail("missing_eos")
-        if self.control is ControlToken.USER_FINISH_SPEAKING and not self.text.strip():
-            self._fail("missing_response_text")
 
-    def _fail(self, code: str) -> None:
-        """Raise an error preserving the complete raw output seen so far."""
-        raise ProtocolParseError(code, self.raw_output, code)
+        self.finish_reason = finish_reason
+
+    def _emit_text(self, events: list[WireControl | WireText], text: str) -> None:
+        """Append answer text and expose it with the current control context."""
+        self.text += text
+        events.append(WireText(text, self.wire_token))
+
+    @staticmethod
+    def _match(pending: str) -> object:
+        """Return a released marker, ``_INCOMPLETE``, or ``None`` for plain text."""
+        for token in _WIRE_TOKENS:
+            if pending.startswith(token):
+                return token
+        if any(token.startswith(pending) for token in _WIRE_TOKENS):
+            return _INCOMPLETE
+        return None

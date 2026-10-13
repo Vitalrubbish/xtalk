@@ -14,4 +14,4 @@ serialize_user_micro_turn 只把空字符串编码为静默，空白字符串保
 
 ## A2/A3 更新
 
-WireMicroTurnParser.feed 缓存分片 marker，只输出合法回答文本；finish 检查 EOS、空回答和服务 stop/length 原因。运行时在 finish 前将完整 interruption marker 视为即时终止边界：取消流、保留原始 marker 供观测，只对 prompt 历史形式内部补入闭合符。后续回答 micro-turn 允许普通文本；user backchannel 后也可接续写文本并保留当前回答；speaking/thinking 禁止文本，系统附和拒绝。模型预算截断仅对回答片段接受，历史保留原始截断文本。WIRE_CONTROLS 将实际 tokenizer 字符串映射到五个论文语义。
+WireMicroTurnParser.feed 缓存分片 marker，返回按到达顺序排列的 WireControl 与 WireText 事件列表。WireControl 同时保存实际 spelling 与对应论文语义；WireText 保存回答文本并携带其前面的控制上下文。每个实际 marker 都按到达顺序执行，相邻、重复或乱序的控制 token 均保持有效。未知尖括号 spelling 作为普通语音文本处理，未结束片段同样保留为文本。WIRE_EOS 结束当前 micro-turn；WIRE_NO_VOICE 与 WIRE_IM_START 不进入语音。finish 记录 stop 或 length 终止原因。WIRE_CONTROLS 将实际 tokenizer 字符串映射到五个论文语义；A1 完整输出解析器保留严格错误码，作为论文格式校验的参照。

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from xtalk.duplex_control.micro_turn import MicroTurnAssembler
 from xtalk.duplex_control.model_client import GenerationEnd
-from xtalk.duplex_control.protocol import WIRE_EOS, WireMicroTurnParser, ProtocolParseError
+from xtalk.duplex_control.protocol import WireControl, WireMicroTurnParser, WireText
 from xtalk.duplex_control.runtime_adapter import DuplexRuntimeAdapter
 from xtalk.duplex_control.service import duplex_manager_classes
 from xtalk.models import Models, TTS
@@ -19,12 +19,20 @@ from xtalk.serving.events import (
     TTSChunkPlayed, TTSChunkReady, TTSFinished, TTSPlaybackFinished,
 )
 from xtalk.serving.service import DefaultService, Service
+from xtalk.serving.modules.asr_manager import ASRManager
+from xtalk.serving.modules.direct_audio_manager import DirectAudioManager
 from xtalk.serving.modules.llm_agent_context_manager import LLMAgentContextManager
+from xtalk.serving.modules.llm_agent_generation_manager import LLMAgentConsumptionManager
+from xtalk.serving.modules.multi_speaker_turn_context_manager import MultiSpeakerTurnContextManager
+from xtalk.serving.modules.tts_manager import TTSManager
+from xtalk.serving.modules.tts_playback_manager import TTSPlaybackManager
+from xtalk.serving.modules.turn_detector_manager import TurnDetectorManager
 from xtalk.serving.modules.turn_taking_manager import TurnTakingManager
+from xtalk.serving.modules.vad_manager import VADManager
 
 
 class ScriptedClient:
-    """Supply raw official output fragments and capture exact inference prompts."""
+    """Supply raw official output fragments and capture exact inference history."""
 
     def __init__(self, *outputs):
         self.outputs = list(outputs)
@@ -34,9 +42,9 @@ class ScriptedClient:
         self.entered = asyncio.Event()
         self.release = None
 
-    async def stream(self, prompt):
+    async def stream(self, history):
         """Yield one scripted result with optional blocked inference."""
-        self.prompts.append(prompt)
+        self.prompts.append(history)
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         self.entered.set()
@@ -49,53 +57,74 @@ class ScriptedClient:
             for fragment in output:
                 yield fragment
                 await asyncio.sleep(0)
+            # The real service always reports the generated ids it decoded.
+            if not any(isinstance(fragment, GenerationEnd) for fragment in output):
+                yield GenerationEnd('stop', (151645,))
         finally:
             self.active -= 1
 
 
 class WireParserTests(unittest.TestCase):
-    """Validate actual released token spelling and fragmented wire output."""
+    """Validate released token spelling and official-tolerant wire output."""
+
+    @staticmethod
+    def _text(events):
+        """Concatenate answer text from ordered wire events."""
+        return ''.join(event.text for event in events if isinstance(event, WireText))
 
     def test_every_character_split_and_continuation(self):
         """Never leak markers to speech across arbitrary transport boundaries."""
         raw = '<|user finish talking|>Hello world.<|im_end|>'
         for split in range(len(raw) + 1):
             parser = WireMicroTurnParser()
-            self.assertEqual(parser.feed(raw[:split]) + parser.feed(raw[split:]), 'Hello world.')
-            parser.finish()
-        parser = WireMicroTurnParser(True)
-        self.assertEqual(parser.feed(' more<|im_end|>'), ' more')
+            events = parser.feed(raw[:split]) + parser.feed(raw[split:])
+            self.assertEqual(self._text(events), 'Hello world.')
+            self.assertTrue(parser.ended)
+        parser = WireMicroTurnParser()
+        self.assertEqual(self._text(parser.feed(' more<|im_end|>')), ' more')
         parser.finish()
         self.assertIsNone(parser.control)
 
-    def test_control_only_and_forbidden_outputs(self):
-        """Wait states contain no speech; beta and missing EOS are rejected."""
+    def test_control_only_and_repeated_markers_are_tolerated(self):
+        """Wait states carry no speech and repeats apply in order, never as errors."""
         for token in ('user is talking', 'user interruption', 'user backchannel', 'user is thinking'):
             parser = WireMicroTurnParser()
-            self.assertEqual(parser.feed(f'<|{token}|><|im_end|>'), '')
-            parser.finish()
-        for raw in ('<|assistant_backchannel|><|im_end|>', 'Hello<|im_end|>',
-                    '<|user backchannel|>oops<|im_end|>', '<|user finish talking|><|im_end|>'):
-            with self.assertRaises(ProtocolParseError):
-                parser = WireMicroTurnParser()
-                parser.feed(raw)
-                parser.finish()
+            events = parser.feed(f'<|{token}|><|im_end|>')
+            self.assertEqual(self._text(events), '')
+            self.assertTrue(parser.ended)
+        parser = WireMicroTurnParser()
+        events = parser.feed('<|user finish talking|><|user finish talking|>')
+        self.assertEqual(
+            [event.wire_token for event in events if isinstance(event, WireControl)],
+            ['<|user finish talking|>', '<|user finish talking|>'],
+        )
+        self.assertEqual(self._text(events), '')
+
+    def test_unknown_marker_and_missing_eos_are_plain_text(self):
+        """Unknown spellings and unfinished turns are text, matching the release."""
+        parser = WireMicroTurnParser()
+        self.assertEqual(
+            self._text(parser.feed('<|assistant_backchannel|>')), '<|assistant_backchannel|>')
+        parser = WireMicroTurnParser()
+        events = parser.feed('<|user backchannel|>oops<|im_end|>')
+        self.assertEqual(self._text(events), 'oops')
         parser = WireMicroTurnParser()
         parser.feed('<|user is talking|>')
-        with self.assertRaises(ProtocolParseError):
-            parser.finish()
+        parser.finish()
+        self.assertFalse(parser.ended)
 
     def test_budget_limit_preserves_answer_only(self):
         """Official max-token cuts continue history without invented EOS."""
         parser = WireMicroTurnParser()
-        parser.feed('<|user finish talking|>unfinished')
+        events = parser.feed('<|user finish talking|>unfinished')
         parser.finish('length')
+        self.assertEqual(self._text(events), 'unfinished')
         self.assertFalse(parser.ended)
-        for active in (False, True):
-            parser = WireMicroTurnParser(active)
-            parser.feed('<|user is talking|>')
-            with self.assertRaises(ProtocolParseError):
-                parser.finish('length')
+        parser = WireMicroTurnParser()
+        events = parser.feed('<|user is talking|>')
+        parser.finish('length')
+        self.assertEqual(self._text(events), '')
+        self.assertFalse(parser.ended)
 
 
 class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -136,10 +165,9 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await self.send('Hi there', final=True)
         await self.assembler.flush()
         await self.assembler.flush()
-        users = [x['content'] for x in adapter.history if x['role'] == 'user']
-        self.assertEqual(users, ['Hi<|im_end|>\n', ' there<|im_end|>\n',
-                                 '<|no voice|><|im_end|>\n', '<|no voice|><|im_end|>\n'])
-        self.assertEqual(client.prompts[0], '<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n')
+        users = [x['text'] for x in adapter.history if x['role'] == 'user']
+        self.assertEqual(users, ['Hi', ' there', '', ''])
+        self.assertEqual(client.prompts[0], [{'role': 'user', 'text': 'Hi'}])
         self.assertEqual(len(self.events(DuplexMicroTurnReady)), 4)
 
     async def test_clock_starts_after_text_and_does_not_event_flush(self):
@@ -172,8 +200,7 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         client.release.set()
         await asyncio.gather(first, second)
         self.assertEqual(client.max_active, 1)
-        self.assertIn('BC<|im_end|>', client.prompts[1])
-        self.assertNotIn('ABC<|im_end|>', client.prompts[1])
+        self.assertEqual(client.prompts[1][-1], {'role': 'user', 'text': 'BC'})
 
     async def test_response_continues_and_backchannel_does_not_restart_tts(self):
         """One response and one synthesis stream span answer and user backchannel."""
@@ -214,23 +241,40 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await self.send('Meet Tuesday')
         snapshot = await self.assembler.flush()
         self.assertEqual(snapshot.revision_kind, 'REWRITE')
-        self.assertNotIn('Monday', client.prompts[-1])
-        self.assertIn('Meet Tuesday', client.prompts[-1])
+        last_history = client.prompts[-1]
+        user_text = ''.join(turn['text'] for turn in last_history if turn['role'] == 'user')
+        self.assertNotIn('Monday', user_text)
+        self.assertIn('Meet Tuesday', user_text)
         self.assertEqual(len([x for x in adapter.history if x['role'] == 'assistant']), 2)
         await self.send('Meet Tuesday at noon')
         await self.assembler.flush()
-        self.assertIn(' at noon<|im_end|>', client.prompts[-1])
+        self.assertEqual(client.prompts[-1][-1], {'role': 'user', 'text': ' at noon'})
 
-    async def test_malformed_output_stops_unplayed_audio(self):
-        """Malformed output exposes raw evidence and creates no substitute decision."""
+    async def test_unknown_marker_is_spoken_without_stopping_audio(self):
+        """An unknown spelling is plain answer text, matching the released server."""
         adapter, _ = self.adapter(['<|user finish talking|>Hello<|im_end|>'],
                                    ['<|assistant_backchannel|><|im_end|>'])
         await self.send('q')
         await self.assembler.flush()
         await self.assembler.flush()
-        self.assertEqual(self.events(DuplexProtocolError)[0].error_code, 'unknown_control_token')
-        self.assertEqual(len(self.events(TurnTTSStopRequested)), 1)
-        self.assertEqual(len(self.events(TurnTTSStartRequested)), 1)
+        self.assertFalse(self.events(DuplexProtocolError))
+        self.assertEqual([x.text for x in self.events(TurnTTSTextAppendRequested)],
+                         ['Hello', '<|assistant_backchannel|>'])
+        self.assertFalse(self.events(TurnTTSStopRequested))
+
+    async def test_repeated_control_tokens_apply_without_protocol_error(self):
+        """Every released marker is applied in order instead of aborting the turn."""
+        adapter, _ = self.adapter(['<|user finish talking|>Hello<|im_end|>'],
+                                   ['<|user finish talking|><|user finish talking|>more<|im_end|>'])
+        await self.send('q')
+        await self.assembler.flush()
+        await self.assembler.flush()
+        parsed = [x for x in self.events(DuplexProtocolParsed)
+                  if x.state_token == '<|user finish talking|>']
+        self.assertEqual(len(parsed), 3)
+        self.assertFalse(self.events(DuplexProtocolError))
+        self.assertEqual([x.text for x in self.events(TurnTTSTextAppendRequested)],
+                         ['Hello', 'more'])
 
     async def test_duplicate_request_and_shutdown_cancel_generation(self):
         """Duplicate inputs do not infer twice and shutdown releases blocked inference."""
@@ -250,15 +294,48 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(pending.cancelled())
         self.assertEqual(client.active, 0)
 
+    async def test_duplex_mode_removes_every_bypass_manager(self):
+        """Every native semantic or direct-audio bypass is dropped in duplex mode."""
+        retained = [ASRManager, TTSManager, TTSPlaybackManager, VADManager]
+        bypass = [
+            DirectAudioManager,
+            LLMAgentContextManager,
+            LLMAgentConsumptionManager,
+            TurnTakingManager,
+            TurnDetectorManager,
+            MultiSpeakerTurnContextManager,
+        ]
+        filtered = duplex_manager_classes(retained + bypass)
+        self.assertIn(MicroTurnAssembler, filtered)
+        self.assertIn(DuplexRuntimeAdapter, filtered)
+        for manager in bypass:
+            self.assertNotIn(manager, filtered)
+        for manager in retained:
+            self.assertIn(manager, filtered)
+        self.assertEqual(duplex_manager_classes(filtered), filtered)
+
     async def test_service_disables_native_semantic_paths(self):
         """The service filters native semantic triggers and retains its TTS owner."""
-        prototype = DefaultService(models=Models(), service_config={'duplex_enabled': True})
-        classes = prototype._manager_classes
-        self.assertIn(MicroTurnAssembler, classes)
-        self.assertIn(DuplexRuntimeAdapter, classes)
-        self.assertNotIn(LLMAgentContextManager, classes)
-        self.assertNotIn(TurnTakingManager, classes)
-        self.assertEqual(duplex_manager_classes(classes), classes)
+        classes = [
+            ASRManager, TTSManager, TTSPlaybackManager, VADManager,
+            DirectAudioManager, LLMAgentContextManager, LLMAgentConsumptionManager,
+            TurnTakingManager, TurnDetectorManager, MultiSpeakerTurnContextManager,
+        ]
+        prototype = DefaultService(
+            models=Models(),
+            service_config={'duplex_enabled': True},
+            manager_classes=list(classes),
+        )
+        registered = prototype._manager_classes
+        self.assertIn(MicroTurnAssembler, registered)
+        self.assertIn(DuplexRuntimeAdapter, registered)
+        self.assertIn(TTSPlaybackManager, registered)
+        for manager in (
+            DirectAudioManager, LLMAgentContextManager, LLMAgentConsumptionManager,
+            TurnTakingManager, TurnDetectorManager, MultiSpeakerTurnContextManager,
+        ):
+            self.assertNotIn(manager, registered)
+        self.assertEqual(duplex_manager_classes(registered), registered)
         original = DefaultService(models=Models())
         self.assertIn(LLMAgentContextManager, original._manager_classes)
 
@@ -317,69 +394,44 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(client.prompts), 1)
         self.assertEqual(self.events(DuplexProtocolError)[0].error_code, 'stale_prefix')
 
-    async def test_interruption_closes_stream_and_micro_turn_without_eos(self):
-        """An interruption marker cancels the live stream without waiting for EOS."""
-        adapter, _ = self.adapter(['<|user finish talking|>Hello<|im_end|>'])
+    async def test_interruption_resets_audio_and_consumes_the_full_stream(self):
+        """An interruption resets audio while the official decode continues to EOS."""
+        adapter, client = self.adapter(
+            ['<|user finish talking|>Hello<|im_end|>',
+             GenerationEnd('stop', (151648, 9707, 151645))],
+            ['<|user interruption|>', '<|im_end|>',
+             GenerationEnd('stop', (151650, 151645))],
+        )
         await self.send('q')
         await self.assembler.flush()
         response_id = adapter._response_id
-
-        class StalledInterruption:
-            """Expose whether adapter closure reaches a stream stalled after its marker."""
-
-            def __init__(self):
-                self.closed = asyncio.Event()
-                self.waiting_after_partial = asyncio.Event()
-                self.marker_emitted = asyncio.Event()
-                self.release_partial = asyncio.Event()
-                self.release_after_marker = asyncio.Event()
-                self.resumed_after_marker = False
-
-            def stream(self, prompt):
-                """Yield an interruption then wait forever unless the adapter closes it."""
-                async def output():
-                    try:
-                        yield '<|user inter'
-                        self.waiting_after_partial.set()
-                        await self.release_partial.wait()
-                        self.marker_emitted.set()
-                        yield 'ruption|>'
-                        self.resumed_after_marker = True
-                        await self.release_after_marker.wait()
-                        yield '<|im_end|>'
-                    finally:
-                        self.closed.set()
-
-                return output()
-
-        interrupted = StalledInterruption()
-        adapter.client = interrupted
-        task = asyncio.create_task(self.assembler.flush())
-        await asyncio.wait_for(interrupted.waiting_after_partial.wait(), 1)
-        self.assertFalse(self.events(TurnTTSStopRequested))
-        self.assertFalse(task.done())
-        interrupted.release_partial.set()
-        await asyncio.wait_for(interrupted.marker_emitted.wait(), 1)
-        await asyncio.wait_for(task, 1)
-        await asyncio.wait_for(interrupted.closed.wait(), 1)
-        self.assertEqual(len(self.events(TurnTTSStopRequested)), 1)
-        self.assertEqual(self.events(TurnTTSStopRequested)[0].response_id, response_id)
-        self.assertFalse(interrupted.resumed_after_marker)
-        self.assertFalse(interrupted.release_after_marker.is_set())
-        self.assertFalse(task.cancelled())
-        parsed = self.events(DuplexProtocolParsed)[-1]
-        self.assertEqual(parsed.raw_output, '<|user interruption|>')
-        self.assertEqual(parsed.state_token, '<|user interruption|>')
-        self.assertEqual(parsed.response_id, response_id)
-        self.assertEqual(parsed.reason, 'interruption')
-        self.assertFalse(self.events(DuplexProtocolError))
-        self.assertEqual(adapter.history[-1], {
-            'role': 'assistant', 'content': '<|user interruption|>' + WIRE_EOS + '\n',
-        })
-        continuation = ScriptedClient(['<|user is talking|><|im_end|>'])
-        adapter.client = continuation
+        self.assertTrue(response_id)
         await self.assembler.flush()
-        self.assertIn('<|user interruption|><|im_end|>\n', continuation.prompts[0])
+        stops = self.events(TurnTTSStopRequested)
+        self.assertEqual(len(stops), 1)
+        self.assertEqual(stops[0].response_id, response_id)
+        self.assertFalse(self.events(DuplexProtocolError))
+        parsed = self.events(DuplexProtocolParsed)[-1]
+        self.assertEqual(parsed.state_token, '<|user interruption|>')
+        self.assertEqual(parsed.reason, 'interruption')
+        # The stream was consumed to EOS instead of being aborted at the marker.
+        self.assertEqual(adapter.history[-1], {
+            'role': 'assistant',
+            'token_ids': [151650, 151645],
+            'text': '<|user interruption|><|im_end|>',
+        })
+        # Released ids travel verbatim; the text is never re-encoded into the prompt.
+        self.assertEqual(client.prompts[-1][1], {
+            'role': 'assistant', 'token_ids': [151648, 9707, 151645]})
+
+    async def test_interruption_before_finish_talking_does_not_stop_audio(self):
+        """The released speaking window must be open before a reset is honored."""
+        adapter, _ = self.adapter(['Hello<|im_end|>'], ['<|user interruption|><|im_end|>'])
+        await self.send('q')
+        await self.assembler.flush()
+        self.assertTrue(adapter._response_id)
+        await self.assembler.flush()
+        self.assertFalse(self.events(TurnTTSStopRequested))
 
     async def test_user_backchannel_can_include_same_micro_turn_continuation(self):
         """Official backchannel markers preserve and continue the current answer."""

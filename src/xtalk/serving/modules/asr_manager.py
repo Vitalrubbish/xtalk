@@ -139,6 +139,9 @@ class AudioConsumer:
     async def pause(self):
         # Stop consumer, do one recognition and publish
         async with self._lifecycle_lock:
+            if self._asr_model.continuous_audio:
+                # Native causal streams need silence and preserve their caches.
+                return
             # Break pause-once invariance warning
             if self._paused:
                 logger.warning("AudioConsumer paused repeatedly; do early return")
@@ -214,6 +217,9 @@ class AudioConsumer:
         except asyncio.CancelledError:
             pass
 
+        if self._asr_model.continuous_audio:
+            await asyncio.to_thread(self._asr_model.reset)
+
     # Helpers
     def _consumer_running(self):
         return self._consumer_running_event.is_set()
@@ -242,11 +248,14 @@ class AudioConsumer:
         recognition_generation = self._recognition_generation
         recognized_text = self._recognized_text
         if len(audio) > 0 or is_final_chunk:
-            recognized_text = await self._asr_model.async_recognize_stream(
-                audio,
-                is_final=is_final_chunk,
-                chat_history=self._turn_chat_history,
-            )
+            if is_asr_end and self._asr_model.continuous_audio:
+                recognized_text = await self._asr_model.async_finish_stream(audio)
+            else:
+                recognized_text = await self._asr_model.async_recognize_stream(
+                    audio,
+                    is_final=is_final_chunk,
+                    chat_history=self._turn_chat_history,
+                )
         if recognition_generation != self._recognition_generation:
             return
         if (

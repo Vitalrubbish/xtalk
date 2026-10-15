@@ -138,3 +138,6 @@ Asynchronously recognize incremental audio input.
 
 - `str`
   Current recognition result.
+# Continuous streaming
+
+continuous_audio defaults to false. Continuous adapters consume silence across pauses. finish_stream and async_finish_stream close actual input, independently of temporary is_final hints.

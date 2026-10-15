@@ -10,6 +10,38 @@ from ..registry import model_type
 class ASR(ABC):
     """Abstract interface for automatic speech recognition."""
 
+    continuous_audio = False
+
+    def finish_stream(self, audio: bytes = b"") -> str:
+        """Close actual input and drain final online text.
+
+        Parameters
+        ----------
+        audio : bytes
+            Remaining PCM16 input.
+
+        Returns
+        -------
+        str
+            Final cumulative transcript.
+        """
+        return self.recognize_stream(audio, is_final=True)
+
+    async def async_finish_stream(self, audio: bytes = b"") -> str:
+        """Drain actual input without blocking the event loop.
+
+        Parameters
+        ----------
+        audio : bytes
+            Remaining PCM16 input.
+
+        Returns
+        -------
+        str
+            Final cumulative transcript.
+        """
+        return await asyncio.get_running_loop().run_in_executor(None, self.finish_stream, audio)
+
     def _get_mock_recognizer(self) -> MockStreamRecognizer:
         """Create the fallback streaming recognizer on first use.
 

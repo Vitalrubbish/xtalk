@@ -2,7 +2,7 @@
 
 ## Purpose, classes, and core methods
 
-Defines TimelineRecord and DuplexTimelineRecorder. The recorder observes ASR, protocol, generation, TTS, playback, and played-text settlement events, writing correlation, raw output, error codes, event and recording timestamps, and a session sequence to JSONL. Configuration supports duplex_timeline_dir and duplex_timeline_history. shutdown unsubscribes idempotently. Missing IDs are never inferred and audio bytes are excluded.
+Defines TimelineRecord and DuplexTimelineRecorder. The recorder observes ASR, protocol, generation, TTS, playback, and played-text settlement events, writing correlation, raw output, error codes, the ASR pause flag (the segment boundary that releases the decoder's held-back tail), event and recording timestamps, and a session sequence to JSONL. Configuration supports duplex_timeline_dir and duplex_timeline_history. shutdown unsubscribes idempotently. Missing IDs are never inferred and audio bytes are excluded.
 
 ## Methods and configuration
 

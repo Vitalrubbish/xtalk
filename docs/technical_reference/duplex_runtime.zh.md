@@ -12,7 +12,7 @@
 
 ## 注册与配置
 
-Service 在 duplex_enabled=true 时替换原生语义控制 manager，保留 ASR/TTS/coordinator/playback，关闭 DefaultAgent、VAD/TurnSense 与系统附和语义旁路。LLMAgentLoop 启动持续 ASR；窗口不依赖 VAD 端点。当前范围为单用户，长期会话和模型上下文上限需远端验证。
+Service 在 duplex_enabled=true 时替换原生语义控制 manager，保留 ASR/TTS/coordinator/playback，关闭 DefaultAgent、VAD/TurnSense 的语义轮次控制与系统附和旁路。LLMAgentLoop 启动持续 ASR，窗口不依赖 VAD 端点。运行时配了后端 VAD，因此声学语音结束能在最后一个语音帧后 `vad_redemption_ms`（600ms）被检出，仅作为 ASR 片段边界使用——释放解码器扣住的词，绝不参与轮次判定；不配该模型时 `VADManager` 会自我禁用，边界只剩 input gateway 在音频流结束时代发的那个。当前范围为单用户，长期会话和模型上下文上限需远端验证。
 
 ~~~json
 {"service_config": {"duplex_enabled": true, "duplex_model_url": "http://127.0.0.1:8006", "duplex_micro_turn_seconds": 0.6, "duplex_max_new_tokens": 64, "duplex_timeline_enabled": true}}

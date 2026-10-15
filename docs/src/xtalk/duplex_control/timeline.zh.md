@@ -2,7 +2,7 @@
 
 ## 功能、类与核心方法
 
-定义 TimelineRecord 和 DuplexTimelineRecorder。记录器订阅 ASR、协议、生成、TTS、播放和已播结算事件，保存关联字段、原始输出、错误码、事件时间、记录时间和 session 内序号到 JSONL。配置支持 duplex_timeline_dir 与 duplex_timeline_history。shutdown 取消订阅并可重复调用。记录器不猜测缺失 ID，也不保存音频字节。
+定义 TimelineRecord 和 DuplexTimelineRecorder。记录器订阅 ASR、协议、生成、TTS、播放和已播结算事件，保存关联字段、原始输出、错误码、ASR 暂停标记（释放解码器扣住尾巴的片段边界）、事件时间、记录时间和 session 内序号到 JSONL。配置支持 duplex_timeline_dir 与 duplex_timeline_history。shutdown 取消订阅并可重复调用。记录器不猜测缺失 ID，也不保存音频字节。
 
 ## 方法与配置
 

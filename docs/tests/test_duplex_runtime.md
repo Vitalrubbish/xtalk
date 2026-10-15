@@ -2,7 +2,7 @@
 
 ## Purpose, classes, and core methods
 
-WireMicroTurnParser and DuplexRuntimeTests cover arbitrary marker splits, control semantics, continuation, token-budget termination, first-text clock start, silence, deltas, final deduplication, slow inference, rewrites, heard facts on interruption, errors, shutdown cancellation, stale-version rejection, native TTS/playback settlement and the single service control path. Uses a real EventBus and deterministic model service.
+WireMicroTurnParser and DuplexRuntimeTests cover arbitrary marker splits, control semantics, continuation, token-budget termination, first-text clock start, silence, deltas, final deduplication, slow inference, rewrites, heard facts on interruption, errors, shutdown cancellation, stale-version rejection, native TTS/playback settlement, the single service control path and the ASR segment boundaries (one pause per acoustic speech end, resume on speech start, no pause for synthetic text input or before the consumer started). Uses a real EventBus and deterministic model service.
 
 ~~~bash
 conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_runtime -v

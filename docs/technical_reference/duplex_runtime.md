@@ -12,7 +12,7 @@ One answer ID and TTS stream span multiple micro-turns. finish talking opens the
 
 ## Registration and configuration
 
-With duplex_enabled=true, Service replaces native semantic managers and retains ASR/TTS/coordinator/playback. DefaultAgent, VAD/TurnSense semantic control and system backchannel paths are disabled. LLMAgentLoop starts continuous ASR without VAD endpointing. The current scope is one user; long sessions and model context limits require remote validation.
+With duplex_enabled=true, Service replaces native semantic managers and retains ASR/TTS/coordinator/playback. DefaultAgent, VAD/TurnSense semantic turn control and system backchannel paths are disabled. LLMAgentLoop starts continuous ASR without VAD endpointing. A backend VAD is configured so the acoustic speech end is detected `vad_redemption_ms` (600 ms) after the last speech frame; it is used only as the ASR segment boundary that releases the words the decoder holds back, never as a turn decision. Without that model `VADManager` disables itself and the only boundary is the input gateway at the end of the audio stream. The current scope is one user; long sessions and model context limits require remote validation.
 
 ~~~json
 {"service_config": {"duplex_enabled": true, "duplex_model_url": "http://127.0.0.1:8006", "duplex_micro_turn_seconds": 0.6, "duplex_max_new_tokens": 64, "duplex_timeline_enabled": true}}

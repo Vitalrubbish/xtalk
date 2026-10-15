@@ -13,9 +13,10 @@ from xtalk.models import Models, TTS
 from xtalk.serving.event_bus import EventBus, EventDispatchMode
 from xtalk.serving.events import (
     ASRResultFinal, ASRResultPartial, DuplexMicroTurnReady, DuplexProtocolError, DuplexProtocolParsed,
-    LLMAgentResponseFinish, LLMAgentResponseUpdate, ResponseUpdate, ResponseFinish,
+    LLMAgentLoop, LLMAgentResponseFinish, LLMAgentResponseUpdate, ResponseUpdate, ResponseFinish,
+    TurnASRPauseRequested, TurnASRStartRequested,
     TurnTTSStartRequested, TurnTTSStopRequested, TurnTTSTextAppendRequested,
-    TurnTTSFlushRequested, VADSpeechStart, TurnDetectorStopSpeaking,
+    TurnTTSFlushRequested, VADSpeechEnd, VADSpeechStart, TurnDetectorStopSpeaking,
     TTSChunkPlayed, TTSChunkReady, TTSFinished, TTSPlaybackFinished,
 )
 from xtalk.serving.service import DefaultService, Service
@@ -184,6 +185,45 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.01)
         self.assertFalse(ready.is_set())
         await asyncio.wait_for(ready.wait(), 0.2)
+
+    async def test_speech_end_asks_the_asr_to_finalize(self):
+        """Acoustic speech end releases the words the ASR decoder holds back.
+
+        Duplex control replaces ``TurnTakingManager``, the released publisher of
+        ``TurnASRPauseRequested``, so without this handler the runtime only ever
+        sees the transcript minus the decoder's revision window.
+        """
+        await self.bus.publish(LLMAgentLoop(session_id='session'),
+                               mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        await self.bus.publish(VADSpeechEnd(session_id='session', origin='server'),
+                               mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        self.assertEqual(len(self.events(TurnASRStartRequested)), 1)
+        self.assertEqual(len(self.events(TurnASRPauseRequested)), 1)
+        # Duplicate ends (no speech in between) must not pile up requests.
+        await self.bus.publish(VADSpeechEnd(session_id='session', origin='server'),
+                               mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        self.assertEqual(len(self.events(TurnASRPauseRequested)), 1)
+        # Speech start puts the consumer back to work so no audio is dropped.
+        await self.bus.publish(VADSpeechStart(session_id='session', origin='server'),
+                               mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        self.assertEqual(len(self.events(TurnASRStartRequested)), 2)
+        await self.bus.publish(VADSpeechStart(session_id='session', origin='server'),
+                               mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        self.assertEqual(len(self.events(TurnASRStartRequested)), 2)
+
+    async def test_synthetic_text_end_never_pauses_microphone_audio(self):
+        """A text turn must not finalize the acoustic ASR segment."""
+        await self.bus.publish(LLMAgentLoop(session_id='session'),
+                               mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        await self.bus.publish(VADSpeechEnd(session_id='session', origin='text'),
+                               mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        self.assertFalse(self.events(TurnASRPauseRequested))
+
+    async def test_speech_end_before_audio_start_does_not_request_a_pause(self):
+        """Nothing to finalize before the continuous ASR consumer started."""
+        await self.bus.publish(VADSpeechEnd(session_id='session', origin='server'),
+                               mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        self.assertFalse(self.events(TurnASRPauseRequested))
 
     async def test_slow_model_aggregates_input_without_parallel_calls(self):
         """Incoming revisions remain available while previous inference is running."""

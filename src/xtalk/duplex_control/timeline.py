@@ -65,6 +65,7 @@ class TimelineRecord:
     text: str
     raw_output: str
     error_code: str
+    speech_pause: bool = False
 
     @classmethod
     def from_event(cls, event: Event, sequence: int = 0) -> TimelineRecord:
@@ -101,6 +102,9 @@ class TimelineRecord:
             text=payload.get("response_text", payload.get("text", "")),
             raw_output=payload.get("raw_output", ""),
             error_code=payload.get("error_code", ""),
+            # Marks the ASR segment boundary that releases the decoder's held-back
+            # tail; without it the runtime's release path is invisible in reports.
+            speech_pause=bool(payload.get("speech_pause", False)),
         )
 
 

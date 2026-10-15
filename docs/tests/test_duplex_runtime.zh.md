@@ -2,7 +2,7 @@
 
 ## 功能、类与核心方法
 
-测试 WireMicroTurnParser 与 DuplexRuntimeTests：逐字符分片、控制含义、回答续写、预算截断、首次文本启动、空窗口、增量、final 去重、慢推理聚合、修订、打断保留已播事实、错误、关闭取消、过期版本拒绝、原生 TTS/播放结算和 Service 单一控制链路。使用真实 EventBus，模型服务为确定性模拟。
+测试 WireMicroTurnParser 与 DuplexRuntimeTests：逐字符分片、控制含义、回答续写、预算截断、首次文本启动、空窗口、增量、final 去重、慢推理聚合、修订、打断保留已播事实、错误、关闭取消、过期版本拒绝、原生 TTS/播放结算、Service 单一控制链路，以及 ASR 片段边界（声学语音结束只发一次 pause、语音开始恢复、合成文本输入或消费者未启动时不发 pause）。使用真实 EventBus，模型服务为确定性模拟。
 
 ~~~bash
 conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_runtime -v

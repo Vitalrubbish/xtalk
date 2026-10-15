@@ -10,7 +10,16 @@ from typing import Any
 from uuid import uuid4
 
 from xtalk.serving.event_bus import EventBus, EventDispatchMode
-from xtalk.serving.events import ASRResultFinal, ASRResultPartial, DuplexMicroTurnReady, LLMAgentLoop, TurnASRStartRequested
+from xtalk.serving.events import (
+    ASRResultFinal,
+    ASRResultPartial,
+    DuplexMicroTurnReady,
+    LLMAgentLoop,
+    TurnASRPauseRequested,
+    TurnASRStartRequested,
+    VADSpeechEnd,
+    VADSpeechStart,
+)
 from xtalk.serving.interfaces import Manager
 from .state import PrefixSnapshot
 
@@ -48,6 +57,7 @@ class MicroTurnAssembler(Manager):
         self._task: asyncio.Task | None = None
         self._flush_lock = asyncio.Lock()
         self._audio_started = False
+        self._audio_paused = False
 
     @Manager.event_handler(LLMAgentLoop)
     async def _start_audio(self, event: LLMAgentLoop) -> None:
@@ -57,6 +67,34 @@ class MicroTurnAssembler(Manager):
         self._audio_started = True
         await self.event_bus.publish(TurnASRStartRequested(session_id=self.session_id),
                                      mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+
+    @Manager.event_handler(VADSpeechEnd)
+    async def _pause_audio(self, event: VADSpeechEnd) -> None:
+        """Finalize the current user segment when the user stops speaking.
+
+        The released server learns about a pause through the ASR word stream; the
+        acoustic speech end is what tells our ASR to hand over the words its
+        decoder still holds back (its revision window). Duplex control has no
+        other publisher of ``TurnASRPauseRequested`` -- the released
+        ``TurnTakingManager``, which also publishes it exactly here, is replaced
+        by this module -- so without it the runtime only ever sees the transcript
+        minus that window. ASR state is preserved: the user may keep talking, and
+        the next micro-turn carries ``speech_state="PAUSING"``.
+        """
+        if event.session_id != self.session_id or self._closed or self._audio_paused:
+            return
+        if event.origin == "text" or not self._audio_started:
+            return
+        self._audio_paused = True
+        await self.event_bus.publish(TurnASRPauseRequested(session_id=self.session_id))
+
+    @Manager.event_handler(VADSpeechStart)
+    async def _resume_audio(self, event: VADSpeechStart) -> None:
+        """Resume the ASR consumer after a pause so no audio is dropped."""
+        if event.session_id != self.session_id or self._closed or not self._audio_paused:
+            return
+        self._audio_paused = False
+        await self.event_bus.publish(TurnASRStartRequested(session_id=self.session_id))
 
     @Manager.event_handler(ASRResultPartial)
     @Manager.event_handler(ASRResultFinal)

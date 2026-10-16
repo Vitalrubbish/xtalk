@@ -11,3 +11,6 @@ Service 持有模型 clone、EventBus、manager 和 gateway；DefaultService 使
 ## A2/A3 更新
 
 duplex_enabled 严格为 True 时调用 duplex_manager_classes 替换语义控制链路；原型只登记，clone 后为会话创建 assembler、adapter。模型地址由 duplex_model_url 指定；stop 按 assembler、adapter、原生 TTS 顺序关闭，记录器最后关闭。
+
+
+X2 duplex 的会话能力 `acoustic_vad_enabled=false` 由服务端按连续 ASR 能力确定。禁用声学 VAD 检测、声学开始/结束信号及 pause/resume 调度；保持会话级连续 PCM 与每拍文本读取。浏览器在握手后创建关闭 VAD 的输入设备，旧客户端声学信号在网关被忽略。Qwen 与内部文本提交边界保持原行为。验证覆盖残留 VAD 信号不触发 ASR 控制、静音和播放期间连续输入、同一解码会话及握手能力。

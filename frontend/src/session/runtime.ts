@@ -64,16 +64,14 @@ function createSessionRuntimeController(
         const closeState = { expected: false };
         websocket = createWebSocket(wsURL);
         activeCloseState = closeState;
-        inputAudioSession = createInputAudioSession(inputConfig);
         outputAudioSession = createOutputAudioSession(outputConfig);
         observerTaskScheduler?.dispose();
         observerTaskScheduler = createDeferredTaskScheduler();
         const currentWebSocket = websocket;
-        const currentInputAudioSession = inputAudioSession;
         const currentOutputAudioSession = outputAudioSession;
         const currentObserverTaskScheduler = observerTaskScheduler;
-        currentInputAudioSession.muted = preferredMuted;
 
+        let acousticVadEnabled = true;
         let rejectAttached: ((reason?: unknown) => void) | null = null;
         const actionAttachedPromise = actionHandler.waitForAction("session_attached");
         const attachedPromise = new Promise<void>((resolve, reject) => {
@@ -101,6 +99,10 @@ function createSessionRuntimeController(
             async (event: BaseWebSocketMessageEvent) => {
                 if (typeof event.data === "string") {
                     const message: { action: string; data: unknown } = JSON.parse(event.data);
+                    if (message.action === "session_attached") {
+                        acousticVadEnabled = (message.data as { acoustic_vad_enabled?: boolean })
+                            ?.acoustic_vad_enabled !== false;
+                    }
                     await actionHandler.handleAction(
                         message.action,
                         message.data,
@@ -114,6 +116,18 @@ function createSessionRuntimeController(
             },
         );
 
+        await openPromise;
+        currentWebSocket.sendJson({
+            action: "attach_session",
+            session_id: conversation.state.sessionId,
+        });
+        await attachedPromise;
+        inputAudioSession = createInputAudioSession(acousticVadEnabled ? inputConfig : {
+            ...inputConfig, enableVAD: false, autoEmitVad: false,
+        });
+        const currentInputAudioSession = inputAudioSession;
+        currentInputAudioSession.muted = preferredMuted;
+
         currentInputAudioSession.onFrame(async (audioChunk) => {
             if (currentWebSocket.ready()) {
                 currentWebSocket.sendAudioChunk(audioChunk);
@@ -123,28 +137,30 @@ function createSessionRuntimeController(
                 callback(audioChunk, inputConfig.sampleRate);
             });
         });
-        currentInputAudioSession.onSpeechStart(async () => {
-            if (currentWebSocket.ready()) {
-                await actionHandler.handleAction(
-                    "client_speech_start",
-                    null,
-                    currentWebSocket,
-                    conversation,
-                    currentOutputAudioSession,
-                );
-            }
-        });
-        currentInputAudioSession.onSpeechEnd(async () => {
-            if (currentWebSocket.ready()) {
-                await actionHandler.handleAction(
-                    "client_speech_end",
-                    null,
-                    currentWebSocket,
-                    conversation,
-                    currentOutputAudioSession,
-                );
-            }
-        });
+        if (acousticVadEnabled) {
+            currentInputAudioSession.onSpeechStart(async () => {
+                if (currentWebSocket.ready()) {
+                    await actionHandler.handleAction(
+                        "client_speech_start",
+                        null,
+                        currentWebSocket,
+                        conversation,
+                        currentOutputAudioSession,
+                    );
+                }
+            });
+            currentInputAudioSession.onSpeechEnd(async () => {
+                if (currentWebSocket.ready()) {
+                    await actionHandler.handleAction(
+                        "client_speech_end",
+                        null,
+                        currentWebSocket,
+                        conversation,
+                        currentOutputAudioSession,
+                    );
+                }
+            });
+        }
 
         currentOutputAudioSession.onChunkStarted(async (responseId, audioChunk) => {
             const callback = outputAudioChunkCallback;
@@ -184,12 +200,6 @@ function createSessionRuntimeController(
             }
         });
 
-        await openPromise;
-        currentWebSocket.sendJson({
-            action: "attach_session",
-            session_id: conversation.state.sessionId,
-        });
-        await attachedPromise;
         await currentOutputAudioSession.open();
         await currentInputAudioSession.open();
     }

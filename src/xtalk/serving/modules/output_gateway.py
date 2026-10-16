@@ -183,7 +183,10 @@ class OutputGateway(EventListenerMixin):
 
     async def send_session_attached(self) -> None:
         """Send the attached session identifier to the frontend."""
-        await self._forward("session_attached", {"session_id": self.session_id})
+        await self._forward("session_attached", {
+            "session_id": self.session_id,
+            "acoustic_vad_enabled": self.config.get("acoustic_vad_enabled", True),
+        })
 
     # ── Event handlers ──────────────────────────────────────────────
 
@@ -316,13 +319,13 @@ class OutputGateway(EventListenerMixin):
 
     @EventListenerMixin.event_handler(VADSpeechStart, priority=5)
     async def _send_vad_start_signal(self, event: VADSpeechStart) -> None:
-        if event.origin == "client":
+        if event.origin == "client" or not self.config.get("acoustic_vad_enabled", True):
             return
         await self._forward("vad_speech_start", {"origin": event.origin})
 
     @EventListenerMixin.event_handler(VADSpeechEnd, priority=5)
     async def _send_vad_end_signal(self, event: VADSpeechEnd) -> None:
-        if event.origin == "client":
+        if event.origin == "client" or not self.config.get("acoustic_vad_enabled", True):
             return
         await self._forward("vad_speech_end", {"origin": event.origin})
 

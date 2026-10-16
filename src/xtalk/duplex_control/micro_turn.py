@@ -73,17 +73,13 @@ class MicroTurnAssembler(Manager):
 
     @Manager.event_handler(VADSpeechEnd)
     async def _pause_audio(self, event: VADSpeechEnd) -> None:
-        """Finalize the current user segment when the user stops speaking.
+        """Release buffered decoder text only for ASR paths using acoustic VAD.
 
-        The released server learns about a pause through the ASR word stream; the
-        acoustic speech end is what tells our ASR to hand over the words its
-        decoder still holds back (its revision window). Duplex control has no
-        other publisher of ``TurnASRPauseRequested`` -- the released
-        ``TurnTakingManager``, which also publishes it exactly here, is replaced
-        by this module -- so without it the runtime only ever sees the transcript
-        minus that window. ASR state is preserved: the user may keep talking, and
-        the next micro-turn carries ``speech_state="PAUSING"``.
+        Continuous X2 input ignores acoustic boundaries. Buffered ASR backends
+        retain pause finalization without treating a pause as semantic handover.
         """
+        if not self.config.get("acoustic_vad_enabled", True):
+            return
         if event.session_id != self.session_id or self._closed or self._audio_paused:
             return
         if event.origin == "text" or not self._audio_started:
@@ -94,6 +90,8 @@ class MicroTurnAssembler(Manager):
     @Manager.event_handler(VADSpeechStart)
     async def _resume_audio(self, event: VADSpeechStart) -> None:
         """Resume the ASR consumer after a pause so no audio is dropped."""
+        if not self.config.get("acoustic_vad_enabled", True):
+            return
         if event.session_id != self.session_id or self._closed or not self._audio_paused:
             return
         self._audio_paused = False

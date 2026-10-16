@@ -179,7 +179,7 @@ class MicroTurnReadTests(unittest.IsolatedAsyncioTestCase):
         self.client.session = self.http
         self.manager = ASRManager(self.bus, 's', Models({ASR: self.client}))
         self.addAsyncCleanup(self.manager.shutdown)
-        self.assembler = MicroTurnAssembler(self.bus, 's', {'duplex_auto_tick': False})
+        self.assembler = MicroTurnAssembler(self.bus, 's', {'duplex_auto_tick': False, 'acoustic_vad_enabled': False})
         self.addAsyncCleanup(self.assembler.shutdown)
         self.model = _WaitingModel()
         self.adapter = DuplexRuntimeAdapter(self.bus, 's', {'duplex_model_client': self.model})
@@ -196,6 +196,62 @@ class MicroTurnReadTests(unittest.IsolatedAsyncioTestCase):
         self.http.post_returned.clear()
         await self.manager._audio_consumer.accept_audio_frame(audio)
         self.assertTrue(await asyncio.to_thread(self.http.post_returned.wait, 1))
+
+    async def test_vad_signals_never_control_continuous_input(self):
+        """Stale acoustic signals cannot pause or restart the X2 stream."""
+        from xtalk.serving.events import (
+            VADSpeechEnd, VADSpeechStart, TurnASRStartRequested,
+            TurnASRPauseRequested, TTSStarted, AudioFrameReceived,
+        )
+        from xtalk.serving.modules.input_gateway import TextMsgHandler
+        from xtalk.serving.modules.output_gateway import OutputGateway
+        from xtalk.serving.modules.vad_manager import VADManager
+        from xtalk.serving.service import Service
+
+        service = Service(models=Models({ASR: X2StreamingClient()}),
+                          service_config={'duplex_enabled': True},
+                          manager_classes=[ASRManager, VADManager])
+        self.assertFalse(service.service_config['acoustic_vad_enabled'])
+        self.assertNotIn(VADManager, service._manager_classes)
+        messages = []
+
+        class Socket:
+            """Capture handshake messages without a network connection."""
+
+            async def send_text(self, text):
+                """Store the outbound JSON envelope."""
+                import json
+                messages.append(json.loads(text))
+
+        socket = Socket()
+        output = OutputGateway(self.bus, 's', socket, service.service_config)
+        await output.send_session_attached()
+        self.assertFalse(messages[-1]['data']['acoustic_vad_enabled'])
+        gateway = TextMsgHandler(self.bus, 's', socket, service.service_config)
+        await gateway._handle_vad_speech_start({})
+        await gateway._handle_vad_speech_end({})
+        self.assertFalse(self.bus.get_history(event_type=VADSpeechStart.TYPE))
+        self.assertFalse(self.bus.get_history(event_type=VADSpeechEnd.TYPE))
+        await self.start_session()
+        await self.send_audio()
+        for event in [VADSpeechEnd(session_id='s', origin='server'),
+                      VADSpeechStart(session_id='s', origin='client'),
+                      TTSStarted(session_id='s', response_id='answer')]:
+            await self.bus.publish(event, mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        await self.bus._wait_for_all_handlers()
+        self.http.post_returned.clear()
+        await self.bus.publish(AudioFrameReceived(session_id='s',
+                              audio_data=b'\x00\x00' * 1280),
+                              mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        self.assertTrue(await asyncio.to_thread(self.http.post_returned.wait, 1))
+        self.http.text = 'heard during playback'
+        self.assertEqual((await self.assembler.flush()).delta_text, 'heard during playback')
+        self.assertEqual(len(self.bus.get_history(event_type=TurnASRStartRequested.TYPE)), 1)
+        self.assertFalse(self.bus.get_history(event_type=TurnASRPauseRequested.TYPE))
+        self.assertEqual(self.http.n, 1)
+        self.assertFalse(self.http.deleted)
+        self.assertTrue(self.manager._audio_consumer._consumer_running())
+        self.assertFalse(any(c['is_final'] or c['end_stream'] for c in self.http.calls))
 
     async def test_each_tick_reads_latest_delta_without_more_audio(self):
         """New text enters the same tick; unchanged text becomes an empty user turn."""

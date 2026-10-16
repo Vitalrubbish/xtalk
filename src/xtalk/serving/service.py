@@ -6,7 +6,7 @@ from typing import Any, Callable, Coroutine, Type
 
 from fastapi import WebSocket
 
-from ..models import Agent, Models
+from ..models import ASR, Agent, Models
 from ..duplex_control.timeline import DuplexTimelineRecorder
 from .event_bus import EventBus, EventDispatchMode
 from .events import Event, LLMAgentLoop
@@ -80,6 +80,15 @@ class Service:
             from ..duplex_control.service import duplex_manager_classes
 
             self._manager_classes = duplex_manager_classes(self._manager_classes)
+            asr = models.get(ASR)
+            self.service_config["acoustic_vad_enabled"] = not (
+                asr is not None and asr.continuous_audio
+            )
+            if not self.service_config["acoustic_vad_enabled"]:
+                self._manager_classes = [
+                    cls for cls in self._manager_classes
+                    if not issubclass(cls, VADManager)
+                ]
         if self.service_config.get("duplex_timeline_enabled") is True:
             if DuplexTimelineRecorder not in self._manager_classes:
                 self._manager_classes.append(DuplexTimelineRecorder)

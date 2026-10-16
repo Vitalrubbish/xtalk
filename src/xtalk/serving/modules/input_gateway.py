@@ -71,6 +71,7 @@ class TextMsgHandler(EventListenerMixin):
         event_bus: EventBus,
         session_id: str,
         websocket: WebSocket,
+        config: dict[str, Any] | None = None,
     ):
         """
         Initialize handler.
@@ -84,6 +85,7 @@ class TextMsgHandler(EventListenerMixin):
         self.websocket = websocket
         self.event_bus = event_bus
         self._text_turn_lock = asyncio.Lock()
+        self._acoustic_vad_enabled = (config or {}).get("acoustic_vad_enabled", True)
 
         # Build dispatch table: message type -> handler callable
         self._dispatch: dict[str, Callable[[dict[str, Any]], Any]] = {
@@ -207,12 +209,16 @@ class TextMsgHandler(EventListenerMixin):
 
     async def _handle_vad_speech_start(self, message_data: dict) -> None:
         """Handle VAD speech-start signal."""
+        if not self._acoustic_vad_enabled:
+            return
         await self._publish(
             VADSpeechStart(session_id=self.session_id, origin="client")
         )
 
     async def _handle_vad_speech_end(self, message_data: dict) -> None:
         """Handle VAD speech-end signal after flushing higher-priority listeners."""
+        if not self._acoustic_vad_enabled:
+            return
         await self.event_bus.publish(
             VADSpeechEnd(
                 session_id=self.session_id,
@@ -390,7 +396,7 @@ class InputGateway(EventListenerMixin):
         self.input_sample_rate = _resolve_input_sample_rate(self.config)
         self._pending_text_tasks: set[asyncio.Task[None]] = set()
 
-        self.text_msg_handler = TextMsgHandler(event_bus, session_id, websocket)
+        self.text_msg_handler = TextMsgHandler(event_bus, session_id, websocket, self.config)
 
     async def handle_connection(self, already_accepted: bool = False) -> None:
         """

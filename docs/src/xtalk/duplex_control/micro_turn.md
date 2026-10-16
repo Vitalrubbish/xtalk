@@ -2,7 +2,7 @@
 
 ## Purpose, classes, and core methods
 
-MicroTurnAssembler stores cumulative and emitted prefixes and starts its clock after first nonblank text. _accept_asr updates prefix state/version; flush creates an immutable snapshot, sends the delta and awaits inference while reception continues. _clock follows the official serialized tick; shutdown cancels pending work. LLMAgentLoop starts continuous ASR; an acoustic VADSpeechEnd asks the ASR to finalize the current user segment (`TurnASRPauseRequested`, ASR state preserved) and VADSpeechStart resumes it, because this module replaces the released `TurnTakingManager`, the only other publisher of those boundaries.
+MicroTurnAssembler stores cumulative and emitted prefixes. LLMAgentLoop starts continuous ASR and the single clock. Each flush awaits `TurnASRReadRequested` before snapshotting the latest prefix, sending only its delta and awaiting inference. Empty deltas, including windows before the first recognized word, become `<|no voice|>` in the model service. There is no separate result-polling clock. Text-only injection can still start the clock on its first text. VAD boundaries preserve their existing request path; X2 continues consuming across pauses without closing its stream. Shutdown cancels pending ticks.
 
 ## Usage and boundaries
 

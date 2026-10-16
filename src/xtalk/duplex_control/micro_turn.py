@@ -16,6 +16,7 @@ from xtalk.serving.events import (
     DuplexMicroTurnReady,
     LLMAgentLoop,
     TurnASRPauseRequested,
+    TurnASRReadRequested,
     TurnASRStartRequested,
     VADSpeechEnd,
     VADSpeechStart,
@@ -67,6 +68,8 @@ class MicroTurnAssembler(Manager):
         self._audio_started = True
         await self.event_bus.publish(TurnASRStartRequested(session_id=self.session_id),
                                      mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        if self._task is None and self.config.get("duplex_auto_tick", True):
+            self._task = asyncio.create_task(self._clock())
 
     @Manager.event_handler(VADSpeechEnd)
     async def _pause_audio(self, event: VADSpeechEnd) -> None:
@@ -128,10 +131,14 @@ class MicroTurnAssembler(Manager):
         Returns
         -------
         PrefixSnapshot | None
-            Immutable input, or None before first recognized text / after shutdown.
+            Immutable input, or None before session input starts / after shutdown.
         """
         async with self._flush_lock:
-            if self._closed or not self._seen_text:
+            if self._closed or not (self._seen_text or self._audio_started):
+                return None
+            await self.event_bus.publish(TurnASRReadRequested(session_id=self.session_id),
+                                         mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+            if self._closed:
                 return None
             previous = self._sent_prefix
             rewritten = not self._prefix.startswith(previous)

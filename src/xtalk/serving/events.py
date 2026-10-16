@@ -737,6 +737,13 @@ class TurnASRStartRequested(Event):
 
 
 @dataclass
+class TurnASRReadRequested(Event):
+    """Read existing online ASR output before a micro-turn snapshot."""
+
+    TYPE: ClassVar[str] = "turn.asr_read_requested"
+
+
+@dataclass
 class TurnASREndRequested(Event):
     """
     Indicates hard turn end. ASR model state is reset. Turn moves to next.

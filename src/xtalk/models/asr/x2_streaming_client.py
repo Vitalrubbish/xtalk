@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import threading
 import requests
 
 from .interfaces import ASR
@@ -33,6 +34,7 @@ class X2StreamingClient(ASR):
         self.chunk_ms = chunk_ms
         self.session = requests.Session()
         self._session_id = None
+        self._request_lock = threading.RLock()
 
     def stream_chunk_bytes_hint(self) -> int:
         """Return the preferred PCM16 byte count.
@@ -46,14 +48,20 @@ class X2StreamingClient(ASR):
 
     def _request(self, audio: bytes, *, pause: bool = False, end: bool = False) -> str:
         """Append audio once and read online cumulative text."""
-        if self._session_id is None:
-            response = self.session.post(self.base_url + "/v1/session", timeout=self.timeout)
+        with self._request_lock:
+            if self._session_id is None:
+                response = self.session.post(self.base_url + "/v1/session", timeout=self.timeout)
+                response.raise_for_status()
+                self._session_id = response.json()["session_id"]
+            response = self.session.post(self.base_url + "/v1/recognize", json={
+                "session_id": self._session_id, "audio": base64.b64encode(audio).decode(),
+                "is_final": pause, "end_stream": end}, timeout=self.timeout)
             response.raise_for_status()
-            self._session_id = response.json()["session_id"]
-        response = self.session.post(self.base_url + "/v1/recognize", json={
-            "session_id": self._session_id, "audio": base64.b64encode(audio).decode(),
-            "is_final": pause, "end_stream": end}, timeout=self.timeout)
-        response.raise_for_status()
+            return self._text(response)
+
+    @staticmethod
+    def _text(response) -> str:
+        """Validate online text without revision filtering."""
         text = response.json()["text"]
         if not isinstance(text, str):
             raise RuntimeError("X2 service must return text")
@@ -66,7 +74,7 @@ class X2StreamingClient(ASR):
         Parameters
         ----------
         audio : bytes
-            Incremental PCM16 at 16 kHz.
+            Incremental PCM16 at 16 kHz. Empty non-final input reads existing output.
         is_final : bool
             Temporary pause hint.
         chat_history : str | None
@@ -77,7 +85,16 @@ class X2StreamingClient(ASR):
         str
             Online transcript without filtering.
         """
-        return self._request(audio, pause=is_final)
+        with self._request_lock:
+            if not audio and not is_final:
+                if self._session_id is None:
+                    return ""
+                response = self.session.get(
+                    self.base_url + f"/v1/session/{self._session_id}/result",
+                    timeout=self.timeout)
+                response.raise_for_status()
+                return self._text(response)
+            return self._request(audio, pause=is_final)
 
     def finish_stream(self, audio: bytes = b"") -> str:
         """Close actual input and drain online text.
@@ -115,11 +132,12 @@ class X2StreamingClient(ASR):
 
     def reset(self) -> None:
         """Release the decoder and its online cache."""
-        if self._session_id is not None:
-            response = self.session.delete(self.base_url + "/v1/session/" + self._session_id,
-                                           timeout=self.timeout)
-            response.raise_for_status()
-            self._session_id = None
+        with self._request_lock:
+            if self._session_id is not None:
+                response = self.session.delete(self.base_url + "/v1/session/" + self._session_id,
+                                               timeout=self.timeout)
+                response.raise_for_status()
+                self._session_id = None
 
     def clone(self) -> "X2StreamingClient":
         """Create an adapter with independent session state.
@@ -133,7 +151,8 @@ class X2StreamingClient(ASR):
 
     def close(self) -> None:
         """Release model and HTTP resources."""
-        try:
-            self.reset()
-        finally:
-            self.session.close()
+        with self._request_lock:
+            try:
+                self.reset()
+            finally:
+                self.session.close()

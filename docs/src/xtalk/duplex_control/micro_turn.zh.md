@@ -2,7 +2,7 @@
 
 ## 功能、类与核心方法
 
-MicroTurnAssembler 持有累计前缀与上次发出前缀，首次非空文本后启动时钟。_accept_asr 更新前缀、状态和版本；flush 生成不可变快照、仅发送新增后缀、等待模型完成，输入继续接收；_clock 采用官方串行 tick，shutdown 取消待处理任务。LLMAgentLoop 启动持续 ASR；声学 VADSpeechEnd 会让 ASR 定稿当前用户片段（`TurnASRPauseRequested`，保留 ASR 状态），VADSpeechStart 再恢复采集——本模块替换掉了官方 `TurnTakingManager`，它原本是这两个边界的唯一发布者。
+MicroTurnAssembler 持有累计前缀与上次发出前缀，LLMAgentLoop 启动持续 ASR 与唯一时钟。_accept_asr 更新前缀、状态和版本；flush 先同步请求 `TurnASRReadRequested`，再生成本拍快照、仅发送新增后缀、等待模型完成，音频继续接收。无新增或尚未识别首词时发空 user 文本，模型服务将其编码为 `<|no voice|>`；不新增结果轮询时钟。_clock 继续串行 tick，shutdown 取消待处理任务。直接注入文本但未启动音频会话时仍可由首条文本启动时钟。声学 VADSpeechEnd 发布 `TurnASRPauseRequested`，VADSpeechStart 再请求恢复；X2 持续接收音频，暂停不结束流。
 
 ## 使用与边界
 

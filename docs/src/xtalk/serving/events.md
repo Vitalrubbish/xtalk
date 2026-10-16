@@ -11,3 +11,5 @@ Event.__post_init__ initializes both clocks, event_type returns TYPE, and create
 ## A2/A3 update
 
 Adds DuplexMicroTurnReady carrying immutable prefix/turn/segment/request identity, delta and revision metadata.
+
+`TurnASRReadRequested` reads existing ASR output before the current snapshot. It submits no audio and does not pause or end input. Awaited dispatch ensures the prefix update completes before the snapshot.

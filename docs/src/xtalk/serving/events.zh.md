@@ -11,3 +11,5 @@ Event.__post_init__ 初始化两类时间，event_type 返回 TYPE，create_even
 ## A2/A3 更新
 
 新增 DuplexMicroTurnReady 事件，保留不可变输入窗口的 prefix/turn/segment/request、delta 和修订信息。
+
+F1 新增 `TurnASRReadRequested`，表示本拍快照前读取现有 ASR 结果。请求不携带音频，也不表示暂停或结束；以等待完成的事件分发确保 ASR 前缀更新先于本拍快照。

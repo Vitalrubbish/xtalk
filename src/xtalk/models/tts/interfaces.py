@@ -217,6 +217,15 @@ class StreamingTextTTS(ABC):
         """Stop the active synthesis session and release connection resources."""
         pass
 
+    async def cancel(self) -> None:
+        """Abort a response; implementations may override graceful-stop behavior.
+
+        Notes
+        -----
+        The default preserves the existing providers' stop semantics.
+        """
+        await self.stop()
+
     @abstractmethod
     def audio_stream(self) -> AsyncIterator[bytes]:
         """Stream generated PCM audio chunks from the active session.

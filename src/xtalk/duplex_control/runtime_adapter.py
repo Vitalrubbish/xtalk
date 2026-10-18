@@ -56,7 +56,6 @@ class DuplexRuntimeAdapter(Manager):
         self._tasks: set[asyncio.Task] = set()
         self._playback_response_id = ""
         self._playback_meta: dict[str, Any] = {}
-        self._answered_prefixes: dict[tuple[int, int], str] = {}
         # Official ``tts_speaking_flag``: `<|user finish talking|>` opens the
         # window in which speaking/interruption markers may reset audio.
         self._speaking = False
@@ -224,18 +223,13 @@ class DuplexRuntimeAdapter(Manager):
 
     async def _append_answer(self, event: DuplexMicroTurnReady, text: str, token: str) -> None:
         """Continue a response across micro-turn boundaries without restarting TTS."""
-        scope = (event.turn_id, event.segment_id)
         if not self._response_id:
-            # A final-only repeated scope must not create an identical second answer.
-            if self._answered_prefixes.get(scope) == event.text and not event.delta_text:
-                raise ProtocolParseError("duplicate_answer", token + text, "scope already answered")
             self._response_id = uuid4().hex
             self._response_text = ""
             self._response_meta = dict(request_id=event.request_id, turn_id=event.turn_id,
                 segment_id=event.segment_id, prefix_version=event.prefix_version,
                 state_token=token, reason="duplex_answer")
             self._delivering = False
-            self._answered_prefixes[scope] = event.text
             self._playback_response_id = self._response_id
             self._playback_meta = dict(self._response_meta)
             await self.event_bus.publish(TurnTTSStartRequested(session_id=self.session_id,

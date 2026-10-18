@@ -299,7 +299,7 @@ class TTSManager(Manager):
 
         if streaming_tts is not None:
             try:
-                await streaming_tts.stop()
+                await streaming_tts.cancel()
             except Exception as e:
                 logger.warning(
                     "Failed to stop streaming TTS during reset - session: %s, error: %s",

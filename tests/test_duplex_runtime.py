@@ -316,6 +316,20 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([x.text for x in self.events(TurnTTSTextAppendRequested)],
                          ['Hello', 'more'])
 
+    async def test_repeated_handover_after_thinking_preserves_generated_history(self):
+        """Protocol execution cannot veto a model decision on an unchanged prefix."""
+        adapter, _ = self.adapter(['<|user finish talking|>First.<|im_end|>',GenerationEnd('stop',(151648,1,151645))],
+            ['<|user is thinking|><|im_end|>',GenerationEnd('stop',(151649,151645))],
+            ['<|user finish talking|>Again.<|im_end|>',GenerationEnd('stop',(151648,2,151645))])
+        await self.send('q')
+        for _ in range(3):await self.assembler.flush()
+        self.assertFalse(self.events(DuplexProtocolError))
+        assistants=[turn['token_ids'] for turn in adapter.history if turn['role']=='assistant']
+        self.assertEqual(assistants,[[151648,1,151645],[151649,151645],[151648,2,151645]])
+        starts=self.events(TurnTTSStartRequested)
+        self.assertEqual(len(starts),2)
+        self.assertNotEqual(starts[0].response_id,starts[1].response_id)
+
     async def test_duplicate_request_and_shutdown_cancel_generation(self):
         """Duplicate inputs do not infer twice and shutdown releases blocked inference."""
         adapter, client = self.adapter(['<|user is talking|><|im_end|>'],

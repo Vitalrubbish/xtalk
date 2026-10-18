@@ -13,3 +13,6 @@ The interruption regression confirms that a marker resets unplayed audio only wh
 Adds user backchannel plus same-micro-turn continuation, including fragmented markers and one response/TTS stream. Waiting controls still reject missing EOS during an active answer.
 
 ScriptedClient appends a synthetic stop record when a script omits `GenerationEnd`, matching a real service that always reports generated ids.
+
+
+Issue001c：移除同前缀重复回答的语义拦截，允许模型thinking后在相同前缀再次接话，逐拍完整保存原始生成IDs；重复内容由评测判质量失败。重复request_id和过期版本仍拒绝，输出仍经唯一播放协调器。新增回归验证两次不同response_id及完整assistant历史。

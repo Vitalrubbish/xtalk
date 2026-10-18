@@ -13,3 +13,6 @@ Older prefix versions produce stale_prefix. Silent windows at the same version c
 Control tokens are applied in arrival order and the text that follows them flows to speech. An interruption that arrives before the speaking window opens leaves playback untouched.
 
 Protocol observations preserve the pre-action response ID so stop controls still correlate with their original answer.
+
+
+Issue001c：移除同前缀重复回答的语义拦截，允许模型thinking后在相同前缀再次接话，逐拍完整保存原始生成IDs；重复内容由评测判质量失败。重复request_id和过期版本仍拒绝，输出仍经唯一播放协调器。新增回归验证两次不同response_id及完整assistant历史。

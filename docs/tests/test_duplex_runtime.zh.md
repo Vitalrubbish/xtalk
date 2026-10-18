@@ -13,3 +13,6 @@ conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_dup
 新增 user backchannel + 同一 micro-turn 回答续写测试，验证 marker 分片与单一 response/TTS；控制等待状态在活动回答期间缺失 EOS 仍拒绝。
 
 ScriptedClient 在脚本片段不含 `GenerationEnd` 时补一条 stop 结束记录，与真实服务始终上报生成 id 的行为一致。
+
+
+Issue001c：移除同前缀重复回答的语义拦截，允许模型thinking后在相同前缀再次接话，逐拍完整保存原始生成IDs；重复内容由评测判质量失败。重复request_id和过期版本仍拒绝，输出仍经唯一播放协调器。新增回归验证两次不同response_id及完整assistant历史。

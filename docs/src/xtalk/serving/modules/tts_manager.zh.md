@@ -7,3 +7,6 @@ TTSManager 保存准备阶段的关联快照，只有交付请求到达才发布
 ## 核心方法
 
 _handle_turn_tts_start 保存准备响应；_handle_delivery_start 打开交付门；_correlation_kwargs 返回关联字段副本；_handle_turn_tts_append/flush 推送和结束文本；_handle_turn_tts_stop 在 reset 前保存关联并使用停止请求的 reason；reset_tts 清理任务、队列与字段。regular 与 StreamingTextTTS 继续共用交付链。
+
+
+2026-10-18：StreamingTextTTS 增加默认 cancel（兼容现有 stop）；TTSManager 的 reset/插话路径调用 cancel，正常 flush/stop 仍排空。Kokoro 重写 cancel 使旧代际 PCM 立即失效，取消不等待正常 finish。唯一播放队列及响应所有权保持不变。

@@ -12,11 +12,45 @@ import uuid
 from typing import AsyncIterator
 
 import aiohttp
+import numpy as np
 
 from ..registry import model
 from .interfaces import StreamingTextTTS, TTS
 
 LOG = logging.getLogger(__name__)
+
+
+def trim_segment_padding(pcm: bytes, text: str) -> tuple[bytes, dict[str, float]]:
+    """Remove only redundant outer silence, retaining original speech samples.
+
+    Parameters
+    ----------
+    pcm : bytes
+        Mono PCM16 at 48kHz for one completed segment.
+    text : str
+        Committed segment text, used only to retain punctuation pauses.
+
+    Returns
+    -------
+    tuple[bytes, dict[str, float]]
+        A contiguous PCM slice and its original duration and edge trim amounts.
+    """
+    samples = np.frombuffer(pcm, dtype='<i2')
+    frames = np.pad(samples, (0, -len(samples) % 480)).reshape(-1, 480)
+    rms = np.sqrt(np.mean((frames.astype(np.float64) / 32768) ** 2, axis=1))
+    active = np.flatnonzero(rms > 1e-3)
+    start, end = 0, len(samples)
+    if len(active):
+        suffix = text.rstrip()
+        tail_ms = 150 if suffix.endswith(('.', '!', '?')) else (80 if suffix.endswith((',', ';')) else 30)
+        start = max(0, int(active[0]) * 480 - 1440)
+        end = min(len(samples), (int(active[-1]) + 1) * 480 + tail_ms * 48)
+    return pcm[start * 2:end * 2], {
+        'raw_audio_seconds': len(samples) / 48000,
+        'leading_trim_seconds': start / 48000,
+        'trailing_trim_seconds': (len(samples) - end) / 48000,
+        'audio_seconds': (end - start) / 48000,
+    }
 
 
 @model
@@ -32,14 +66,14 @@ class KokoroSegmented(TTS, StreamingTextTTS):
     max_chars : int
         Hard segment size limit, at most 160 characters.
     max_wait_ms : float
-        Maximum aggregation wait from the first buffered character.
+        Complete-word aggregation deadline; unfinished words wait for input.
     """
 
     output_sample_rate = 48000
     sample_rate = 48000
 
     def __init__(self, base_url: str = 'http://127.0.0.1:8004', min_chars: int = 12,
-                 max_chars: int = 160, max_wait_ms: float = 250):
+                 max_chars: int = 160, max_wait_ms: float = 600):
         if not 1 <= min_chars <= max_chars <= 160:
             raise ValueError('Require 1 <= min_chars <= max_chars <= 160')
         if not math.isfinite(max_wait_ms) or max_wait_ms <= 0:
@@ -126,6 +160,8 @@ class KokoroSegmented(TTS, StreamingTextTTS):
                 boundary = text.rfind(' ', 0, end + 1)
                 if boundary > 0:
                     end = boundary + 1
+                else:
+                    return ''
         if end is None:
             return ''
         end = min(end, self.max_chars)
@@ -154,6 +190,7 @@ class KokoroSegmented(TTS, StreamingTextTTS):
                 if segment:
                     if not segment.strip():
                         continue
+                    request_started = time.monotonic()
                     async with self._session.post(self.base_url + '/v1/synthesize', json={
                         'generation': generation, 'sequence': sequence, 'text': segment,
                         'voice': 'af_heart'}) as response:
@@ -168,7 +205,10 @@ class KokoroSegmented(TTS, StreamingTextTTS):
                     pcm = base64.b64decode(value['pcm'], validate=True)
                     if not pcm or len(pcm) % 2:
                         raise RuntimeError('Kokoro returned empty or malformed PCM16')
-                    self._record('pcm', sequence=sequence, bytes=len(pcm))
+                    pcm, padding = trim_segment_padding(pcm, segment)
+                    self._record('pcm', sequence=sequence, bytes=len(pcm), **padding,
+                                 compute_seconds=value.get('compute_seconds'),
+                                 request_seconds=time.monotonic() - request_started)
                     for offset in range(0, len(pcm), 3840):
                         await audio.put(pcm[offset:offset + 3840])
                     sequence += 1
@@ -177,6 +217,8 @@ class KokoroSegmented(TTS, StreamingTextTTS):
                     break
                 wait = None if self._buffer_started is None else max(
                     0.001, self.max_wait_ms / 1000 - (time.monotonic() - self._buffer_started))
+                if timed_out:
+                    wait = None
                 try:
                     await asyncio.wait_for(self._wake.wait(), wait)
                 except asyncio.TimeoutError:

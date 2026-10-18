@@ -3,8 +3,9 @@ import asyncio
 import base64
 import unittest
 
+import numpy as np
 from aiohttp import web
-from xtalk.models.tts.kokoro_segmented import KokoroSegmented
+from xtalk.models.tts.kokoro_segmented import KokoroSegmented, trim_segment_padding
 
 
 class KokoroSegmentedTests(unittest.IsolatedAsyncioTestCase):
@@ -102,6 +103,55 @@ class KokoroSegmentedTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue([chunk async for chunk in self.client.audio_stream()])
         await self.client.stop()
         self.assertEqual([row['text'] for row in self.requests],['please ','confirm '])
+
+    async def test_short_sentence_arrives_before_default_deadline(self):
+        """A short incremental sentence is not chopped by the former 250ms timer."""
+        self.client.max_wait_ms = 600
+        await self.client.start()
+        for part in ('Yes, ', 'Tuesday ', 'at nine ', 'thirty ', 'works.'):
+            await self.client.append_text(part)
+            await asyncio.sleep(.07)
+        await self.client.flush()
+        self.assertTrue([chunk async for chunk in self.client.audio_stream()])
+        await self.client.stop()
+        self.assertEqual([row['text'] for row in self.requests], ['Yes, Tuesday at nine thirty works.'])
+
+    async def test_timeout_does_not_spell_an_unfinished_word(self):
+        """Do not submit thi before the next increment completes thirty."""
+        await self.client.start()
+        await self.client.append_text('thi')
+        await asyncio.sleep(.06)
+        self.assertFalse(self.requests)
+        await self.client.append_text('rty ')
+        await asyncio.wait_for(self.started.wait(), 1)
+        await self.client.flush()
+        self.assertTrue([chunk async for chunk in self.client.audio_stream()])
+        await self.client.stop()
+        self.assertEqual([row['text'] for row in self.requests], ['thirty '])
+
+    def test_padding_trim_preserves_internal_pause_and_quiet_edges(self):
+        """Keep speech and inner silence as an exact contiguous slice, with guards."""
+        quiet = np.full(480, 10, dtype='<i2')
+        speech = np.full(4800, 3000, dtype='<i2')
+        content = np.concatenate([quiet, speech, np.zeros(3840, dtype='<i2'), speech, quiet])
+        raw = np.concatenate([np.zeros(19200, dtype='<i2'), content,
+                              np.zeros(24000, dtype='<i2')]).tobytes()
+        trimmed, meta = trim_segment_padding(raw, 'A continuing clause')
+        start = round(meta['leading_trim_seconds'] * 96000)
+        end = len(raw) - round(meta['trailing_trim_seconds'] * 96000)
+        self.assertEqual(trimmed, raw[start:end])
+        self.assertIn(content.tobytes(), trimmed)
+        self.assertLess(meta['audio_seconds'], meta['raw_audio_seconds'])
+        sentence, _ = trim_segment_padding(raw, 'A complete sentence.')
+        self.assertEqual(len(sentence) - len(trimmed), 120 * 96)
+
+    def test_silent_segment_is_not_discarded_as_speech(self):
+        """All-silent output remains visible to coverage diagnostics."""
+        raw = b'\0\0' * 4800
+        trimmed, meta = trim_segment_padding(raw, 'Silent output')
+        self.assertEqual(trimmed, raw)
+        self.assertEqual(meta['leading_trim_seconds'], 0)
+        self.assertEqual(meta['trailing_trim_seconds'], 0)
 
 
 if __name__ == '__main__':

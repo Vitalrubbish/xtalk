@@ -184,8 +184,9 @@ class KokoroSegmented(TTS, StreamingTextTTS):
         try:
             while generation == self._generation:
                 self._wake.clear()
+                wait_seconds = self.max_wait_ms / 1000 * (2 if sequence else 1)
                 timed_out = (self._buffer_started is not None and
-                             time.monotonic() - self._buffer_started >= self.max_wait_ms / 1000)
+                             time.monotonic() - self._buffer_started >= wait_seconds)
                 segment = self._take(timed_out)
                 if segment:
                     if not segment.strip():
@@ -216,7 +217,7 @@ class KokoroSegmented(TTS, StreamingTextTTS):
                 if self._finalized and not self._buffer:
                     break
                 wait = None if self._buffer_started is None else max(
-                    0.001, self.max_wait_ms / 1000 - (time.monotonic() - self._buffer_started))
+                    0.001, wait_seconds - (time.monotonic() - self._buffer_started))
                 if timed_out:
                     wait = None
                 try:

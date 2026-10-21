@@ -1,6 +1,6 @@
-# DuplexCascade A1：协议与可观测性
+# DuplexCascade 协议与可观测性
 
-A1 提供完整输出协议解析、原始成功/错误事件、请求与响应关联字段传递、JSONL 时间线和 TTSStarted 交付边界。LLM/TTS/播放复用原生 manager；A1 观察函数保留完整片段语义；A2/A3 在线路径见 [Duplex 运行时](duplex_runtime.zh.md)，A4 远端验收仍待完成。
+Duplex 运行时提供完整输出协议解析、原始成功/错误事件、请求与响应关联字段传递、JSONL 时间线和 TTSStarted 交付边界。LLM/TTS/播放复用原生 manager；在线路径见 [Duplex 运行时](duplex_runtime.zh.md)。
 
 ## 配置与日志
 
@@ -39,7 +39,7 @@ A1 提供完整输出协议解析、原始成功/错误事件、请求与响应�
 ## 验证
 
 ~~~bash
-conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_protocol tests.test_duplex_observability tests.test_turn_detector_manager tests.test_llm_agent_persistent_stream tests.test_response_identity tests.test_tool_call_playback_barrier tests.test_tts_streaming_playback_alignment -q
+conda run -n interclarify-dev python -m unittest tests.test_duplex_protocol tests.test_duplex_observability tests.test_turn_detector_manager tests.test_llm_agent_persistent_stream tests.test_response_identity tests.test_tool_call_playback_barrier tests.test_tts_streaming_playback_alignment -q
 ~~~
 
-2026-10-12，本地现有 conda 环境 paratalker-dev（Python 3.11.16）中 35/35 定向测试通过。使用模拟生成与 PCM TTS 验证实际事件分发、并发响应隔离、预分配 ID、抢占、已播结算和关闭日志；静态编译与差异空白检查通过。真实模型、音频质量、同步磁盘写入开销、FDB 和长会话需要远端 conda 环境单独验收。
+本地定向测试使用模拟生成与 PCM TTS 验证实际事件分发、并发响应隔离、预分配 ID、抢占、已播结算和关闭日志；静态编译与差异空白检查通过。真实模型、音频质量、同步磁盘写入开销和长会话需要远端 conda 环境单独验收。

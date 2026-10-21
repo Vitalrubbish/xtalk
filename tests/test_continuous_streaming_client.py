@@ -1,4 +1,4 @@
-"""Contract tests for the append-only X2 ASR adapter."""
+"""Contract tests for the append-only continuous ASR transport."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import unittest
 from xtalk.duplex_control.micro_turn import MicroTurnAssembler
 from xtalk.duplex_control.model_client import GenerationEnd
 from xtalk.duplex_control.runtime_adapter import DuplexRuntimeAdapter
-from xtalk.models.asr.x2_streaming_client import X2StreamingClient
+from xtalk.models.asr.continuous_streaming_client import ContinuousStreamingASRClient
 from xtalk.models import ASR, Models
 from xtalk.serving.event_bus import EventBus, EventDispatchMode
 from xtalk.serving.events import ASRResultPartial, DuplexMicroTurnReady, LLMAgentLoop
@@ -78,13 +78,13 @@ class _HTTP:
         return None
 
 
-class X2StreamingClientTests(unittest.TestCase):
+class ContinuousStreamingASRClientTests(unittest.TestCase):
     """Protect native online request semantics."""
 
     def test_pause_hint_is_not_end_stream(self):
         """A pause preserves the stream; actual EOF closes it."""
         http = _HTTP()
-        client = X2StreamingClient(chunk_ms=80)
+        client = ContinuousStreamingASRClient(chunk_ms=80)
         client.session = http
         self.assertTrue(client.continuous_audio)
         client.recognize_stream(b"\x00\x00", is_final=True)
@@ -97,14 +97,14 @@ class X2StreamingClientTests(unittest.TestCase):
     def test_online_text_is_returned_without_prefix_filter(self):
         """The adapter applies no Qwen revision policy."""
         http = _HTTP()
-        client = X2StreamingClient()
+        client = ContinuousStreamingASRClient()
         client.session = http
         self.assertEqual(client.recognize_stream(b"x"), "rewritten but accepted")
 
     def test_empty_read_never_allocates_or_finalizes_input(self):
         """Only an existing session is queried, without posting audio or EOF."""
         http = _HTTP()
-        client = X2StreamingClient()
+        client = ContinuousStreamingASRClient()
         client.session = http
         self.assertEqual(client.recognize_stream(b""), "")
         self.assertEqual(http.n, 0)
@@ -126,7 +126,7 @@ class ContinuousLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_pause_keeps_audio_flowing_and_end_drains(self):
         """Silence remains input and only actual EOF invokes finish_stream."""
         http = _HTTP()
-        client = X2StreamingClient()
+        client = ContinuousStreamingASRClient()
         client.session = http
         consumer = AudioConsumer(EventBus(), "s", Models({ASR: client}))
         try:
@@ -170,12 +170,12 @@ class MicroTurnReadTests(unittest.IsolatedAsyncioTestCase):
     """Exercise delayed result delivery through the real micro-turn and LLM path."""
 
     async def asyncSetUp(self):
-        """Build real managers around a controlled X2 HTTP adapter."""
+        """Build real managers around a controlled continuous HTTP adapter."""
         self.bus = EventBus(enable_history=True)
         self.addAsyncCleanup(self.bus.shutdown)
         self.http = _HTTP()
         self.http.text = ''
-        self.client = X2StreamingClient()
+        self.client = ContinuousStreamingASRClient()
         self.client.session = self.http
         self.manager = ASRManager(self.bus, 's', Models({ASR: self.client}))
         self.addAsyncCleanup(self.manager.shutdown)
@@ -198,7 +198,7 @@ class MicroTurnReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await asyncio.to_thread(self.http.post_returned.wait, 1))
 
     async def test_vad_signals_never_control_continuous_input(self):
-        """Stale acoustic signals cannot pause or restart the X2 stream."""
+        """Stale acoustic signals cannot pause or restart the continuous stream."""
         from xtalk.serving.events import (
             VADSpeechEnd, VADSpeechStart, TurnASRStartRequested,
             TurnASRPauseRequested, TTSStarted, AudioFrameReceived,
@@ -208,7 +208,7 @@ class MicroTurnReadTests(unittest.IsolatedAsyncioTestCase):
         from xtalk.serving.modules.vad_manager import VADManager
         from xtalk.serving.service import Service
 
-        service = Service(models=Models({ASR: X2StreamingClient()}),
+        service = Service(models=Models({ASR: ContinuousStreamingASRClient()}),
                           service_config={'duplex_enabled': True},
                           manager_classes=[ASRManager, VADManager])
         self.assertFalse(service.service_config['acoustic_vad_enabled'])

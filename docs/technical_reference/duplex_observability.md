@@ -1,6 +1,6 @@
-# DuplexCascade A1: protocol and observability
+# DuplexCascade protocol and observability
 
-A1 provides complete-output protocol parsing, raw success/error observations, request/response correlation propagation, a JSONL timeline, and the TTSStarted delivery boundary. LLM/TTS/playback reuse native managers. A2/A3 online scheduling and execution are now documented in [Duplex runtime](duplex_runtime.md). A4 remote acceptance remains pending.
+The duplex runtime provides complete-output protocol parsing, raw success/error observations, request/response correlation propagation, a JSONL timeline, and the TTSStarted delivery boundary. LLM/TTS/playback reuse native managers. Online scheduling and execution are documented in [Duplex runtime](duplex_runtime.md).
 
 ## Configuration and timeline
 
@@ -39,7 +39,7 @@ Use Boolean true to enable automatic registration. Live sessions create session_
 ## Validation
 
 ~~~bash
-conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_protocol tests.test_duplex_observability tests.test_turn_detector_manager tests.test_llm_agent_persistent_stream tests.test_response_identity tests.test_tool_call_playback_barrier tests.test_tts_streaming_playback_alignment -q
+conda run -n interclarify-dev python -m unittest tests.test_duplex_protocol tests.test_duplex_observability tests.test_turn_detector_manager tests.test_llm_agent_persistent_stream tests.test_response_identity tests.test_tool_call_playback_barrier tests.test_tts_streaming_playback_alignment -q
 ~~~
 
-On 2026-10-12, 35/35 targeted tests passed in the existing local paratalker-dev conda environment (Python 3.11.16). Fake generation and PCM TTS exercise actual dispatch, concurrent response isolation, reserved IDs, preemption, played settlement, and shutdown logging. Compilation and whitespace checks passed. Real models, audio quality, synchronous disk overhead, FDB, and long sessions require separate remote conda acceptance.
+Local targeted tests exercise actual dispatch, concurrent response isolation, reserved IDs, preemption, played settlement, and shutdown logging with fake generation and PCM TTS. Compilation and whitespace checks also pass. Real models, audio quality, synchronous disk overhead and long sessions require separate remote conda acceptance.

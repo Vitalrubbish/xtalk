@@ -8,7 +8,7 @@ Extends the global event dataclasses. Event records wall-clock and process-monot
 
 Event.__post_init__ initializes both clocks, event_type returns TYPE, and create_event_class creates compatible subclasses. ASRResultPartial/Final represent input prefixes; LLMAgentResponseUpdate/Finish represent generated text; TTSStarted opens client delivery; ResponseUpdate/Finish represent confirmed played text. DuplexProtocolParsed/Error are protocol observations without playback or semantic actions. New fields provide defaults for native publishers.
 
-## A2/A3 update
+## Duplex update
 
 Adds DuplexMicroTurnReady carrying immutable prefix/turn/segment/request identity, delta and revision metadata.
 

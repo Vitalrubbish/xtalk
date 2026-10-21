@@ -8,6 +8,6 @@ Public protocol package entry point. It exports the input silence marker, end ma
 
 NO_VOICE, EOS, ControlToken, ParsedSystemMicroTurn, ProtocolParseError, DuplexCorrelation; serialize_user_micro_turn, parse_system_micro_turn, observe_system_micro_turn.
 
-## A2/A3 update
+## Duplex update
 
 Exports WIRE_EOS, WIRE_NO_VOICE, WIRE_CONTROLS, WireMicroTurnParser and PrefixSnapshot. A1 paper-format APIs remain available; online mode uses actual released tokenizer markers.

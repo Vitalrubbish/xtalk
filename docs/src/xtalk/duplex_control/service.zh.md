@@ -6,4 +6,4 @@ duplex_manager_classes 选择单一 assembler/adapter，保留原生 ASR、TTS�
 
 ## 使用与边界
 
-由 Service 的 duplex_enabled 布尔开关注册。原生模式保持既有配置；官方模型、长会话、音频质量与 FDB 需远端 conda 验收。
+由 Service 的 duplex_enabled 布尔开关注册。原生模式保持既有配置；官方模型、长会话、音频质量与所选评测集需远端 conda 验收。

@@ -84,8 +84,7 @@ plugins:
             'Overall Architecture': 整体架构
             'Supported Models': 支持的模型
             'ASR Design': ASR设计
-            'Local Qwen3-ASR Adapter': 本地Qwen3-ASR适配器
-            'DuplexCascade A1 Observability': DuplexCascade A1可观测性
+            'DuplexCascade Protocol and Observability': DuplexCascade协议与可观测性
             'DuplexCascade Online Runtime': DuplexCascade在线运行时
             'TTS Design': TTS设计
             'Speech Enhancer Design': 语音增强设计
@@ -132,8 +131,7 @@ nav:
       - 'Overall Architecture': technical_reference/system_design.md
       - 'Supported Models': technical_reference/supported_models.md
       - 'ASR Design': technical_reference/asr_design.md
-      - 'Local Qwen3-ASR Adapter': technical_reference/qwen3_asr_client.md
-      - 'DuplexCascade A1 Observability': technical_reference/duplex_observability.md
+      - 'DuplexCascade Protocol and Observability': technical_reference/duplex_observability.md
       - 'DuplexCascade Online Runtime': technical_reference/duplex_runtime.md
       - 'TTS Design': technical_reference/tts_design.md
       - 'Speech Enhancer Design': technical_reference/speech_enhancer_design.md

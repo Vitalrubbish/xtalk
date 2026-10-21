@@ -7,7 +7,7 @@ Verifies natural completion versus early stop and uses a real EventBus to check 
 ## Running
 
 ~~~bash
-conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_turn_detector_manager -v
+conda run -n interclarify-dev python -m unittest tests.test_turn_detector_manager -v
 ~~~
 
 Uses an existing local conda environment. Real model services and cluster integration require separate remote acceptance.

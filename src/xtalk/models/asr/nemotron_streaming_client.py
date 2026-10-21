@@ -1,12 +1,12 @@
 """Adapt the explicit Nemotron service to the existing continuous ASR path."""
 from __future__ import annotations
 
-from .x2_streaming_client import X2StreamingClient
+from .continuous_streaming_client import ContinuousStreamingASRClient
 from ..registry import model
 
 
 @model
-class NemotronStreamingClient(X2StreamingClient):
+class NemotronStreamingClient(ContinuousStreamingASRClient):
     """Reuse HTTP transport while validating native Nemotron stream identities.
 
     Parameters

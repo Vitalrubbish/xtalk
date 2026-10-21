@@ -7,7 +7,7 @@
 ## 运行
 
 ~~~bash
-conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_observability -v
+conda run -n interclarify-dev python -m unittest tests.test_duplex_observability -v
 ~~~
 
 本地使用现有 conda 环境；真实模型服务与集群链路在远端单独验收。

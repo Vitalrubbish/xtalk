@@ -75,7 +75,7 @@ class MicroTurnAssembler(Manager):
     async def _pause_audio(self, event: VADSpeechEnd) -> None:
         """Release buffered decoder text only for ASR paths using acoustic VAD.
 
-        Continuous X2 input ignores acoustic boundaries. Buffered ASR backends
+        Continuous ASR input ignores acoustic boundaries. Buffered ASR backends
         retain pause finalization without treating a pause as semantic handover.
         """
         if not self.config.get("acoustic_vad_enabled", True):

@@ -5,7 +5,7 @@
 WireMicroTurnParser and DuplexRuntimeTests cover arbitrary marker splits, control semantics, continuation, token-budget termination, first-text clock start, silence, deltas, final deduplication, slow inference, rewrites, heard facts on interruption, errors, shutdown cancellation, stale-version rejection, native TTS/playback settlement, the single service control path and the ASR segment boundaries (one pause per acoustic speech end, resume on speech start, no pause for synthetic text input or before the consumer started). Uses a real EventBus and deterministic model service.
 
 ~~~bash
-conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_runtime -v
+conda run -n interclarify-dev python -m unittest tests.test_duplex_runtime -v
 ~~~
 
 The interruption regression confirms that a marker resets unplayed audio only while the speaking window is open, that the model stream is still decoded to <|im_end|>, that generated assistant ids travel verbatim into the next prompt, and that a marker arriving before the window opens leaves playback untouched. The protocol observation keeps the raw marker. History stores user text plus assistant token ids, and `_request_history` builds the wire structure.

@@ -1,4 +1,4 @@
-"""HTTP adapter for the native append-only X2 online stream."""
+"""HTTP transport for an append-only continuous ASR service."""
 from __future__ import annotations
 
 import base64
@@ -10,13 +10,13 @@ from ..registry import model
 
 
 @model
-class X2StreamingClient(ASR):
+class ContinuousStreamingASRClient(ASR):
     """Forward PCM to one online session without revision processing.
 
     Parameters
     ----------
     base_url : str
-        Independent X2 HTTP service.
+        Independent HTTP ASR service.
     timeout : float
         Request timeout, including session warmup.
     chunk_ms : int
@@ -64,7 +64,7 @@ class X2StreamingClient(ASR):
         """Validate online text without revision filtering."""
         text = response.json()["text"]
         if not isinstance(text, str):
-            raise RuntimeError("X2 service must return text")
+            raise RuntimeError("Continuous ASR service must return text")
         return text
 
     def recognize_stream(self, audio: bytes, *, is_final: bool = False,
@@ -139,15 +139,15 @@ class X2StreamingClient(ASR):
                 response.raise_for_status()
                 self._session_id = None
 
-    def clone(self) -> "X2StreamingClient":
+    def clone(self) -> "ContinuousStreamingASRClient":
         """Create an adapter with independent session state.
 
         Returns
         -------
-        X2StreamingClient
+        ContinuousStreamingASRClient
             Independent adapter.
         """
-        return X2StreamingClient(self.base_url, self.timeout, self.chunk_ms)
+        return ContinuousStreamingASRClient(self.base_url, self.timeout, self.chunk_ms)
 
     def close(self) -> None:
         """Release model and HTTP resources."""

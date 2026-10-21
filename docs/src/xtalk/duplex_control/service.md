@@ -6,4 +6,4 @@ duplex_manager_classes selects one assembler/adapter and retains native ASR, TTS
 
 ## Usage and boundaries
 
-Registered by the Boolean duplex_enabled service switch. Native mode keeps its configuration; official weights, long sessions, audio quality and FDB require remote conda acceptance.
+Registered by the Boolean duplex_enabled service switch. Native mode keeps its configuration; official weights, long sessions, audio quality and the selected evaluation set require remote conda acceptance.

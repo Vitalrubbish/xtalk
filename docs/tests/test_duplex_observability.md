@@ -7,7 +7,7 @@ Uses fake PCM TTS and asynchronous text streams to exercise the real generation,
 ## Running
 
 ~~~bash
-conda run -n paratalker-dev env PYTHONPATH=src python -m unittest tests.test_duplex_observability -v
+conda run -n interclarify-dev python -m unittest tests.test_duplex_observability -v
 ~~~
 
 Uses an existing local conda environment. Real model services and cluster integration require separate remote acceptance.

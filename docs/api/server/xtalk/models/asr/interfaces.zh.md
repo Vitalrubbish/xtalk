@@ -140,4 +140,4 @@ Asynchronously recognize incremental audio input.
   Current recognition result.
 # 连续流接口补充
 
-`continuous_audio` 默认 false；X2 为 true，声学暂停不停止消费。`finish_stream/async_finish_stream` 表示真正流结束，与临时 is_final 提示区分；默认实现兼容原 ASR。
+`continuous_audio` 默认 false；连续 ASR 适配器为 true，声学暂停不停止消费。`finish_stream/async_finish_stream` 表示真正流结束，与临时 is_final 提示区分；默认实现兼容原 ASR。

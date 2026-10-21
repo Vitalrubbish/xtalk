@@ -1,11 +1,13 @@
-# Kokoro 文本分段客户端
+# Segmented Kokoro client
 
-`KokoroSegmented` 实现现有 TTS/StreamingTextTTS 接口，将实际增量按句界、160字符上限、600ms完整词聚合期限或finish提交；默认最小12字符。`_take` 保留每个剩余字符实际到达计时，超时只释放已有完整词；尚无词边界的残词等待下一增量或finish，不强制拼读残片。没有词边界时不承诺600ms内产生语音，160字符硬上限仍可强制切分异常长输入。日期时间与小数不因普通分段规则删除。合成串行，generation/sequence与PCM格式校验不变。
+## Purpose and types
 
-`trim_segment_padding` 只处理完整返回段：以10ms RMS、-60dBFS定位首尾活动区，前保留30ms，后按无句读/逗号分号/句末分别保留30/80/150ms。保留内部全部样本与停顿，不做拉伸或跨段混音；全部静音时保留原段并在诊断中暴露，不能视为有声成功。边距用于保护低能量起止音，真实听感仍须人工复核。
+KokoroSegmented implements TTS/StreamingTextTTS and serially synthesizes actual text increments. Defaults are max_wait_ms=300 for the first segment and independent continuation_wait_ms=1200 for later segments, with 12/160 character thresholds. clone preserves both deadlines. The user accepted a small naturalness tradeoff against 600ms and selected the current defaults.
 
-`_produce` 记录原始/交付音频时长、裁剪量、服务计算耗时及请求耗时，再按40ms包只交给既有TTSManager。timeline最多4096事件，audio_queue最多50包；append积压上限8192字符。start/clone隔离代际；flush结束输入，stop排空；cancel使旧代际失效、丢队列并释放传输，底层GPU计算可能继续。
+## Core methods
 
-600ms是最大文本聚合等待，不要求每个micro-turn单独合成或恰好产生600ms音频。首段等待、文本供给、计算耗时和播放消耗需在远端分别测量，不能用静音填充或额外启动缓冲伪造连续性。
+_take selects a segment at a sentence boundary, size limit, deadline, or finish while retaining each remaining character's arrival time. Expired text uses complete-word boundaries; unfinished words await more input or finish. A 160-character hard limit bounds unusually long words. The deadline measures aggregation; unfinished words and first audible speech can exceed 300ms.
 
-第二轮复听修复：`_produce`首段仍按max_wait_ms，后续段最多按两倍期限等待句界；句界/长度/finish仍可提前提交，减少已有语音播放时对长句的中途截断。不改变播放速率或另加启动缓冲。
+_produce validates generation/sequence and PCM format, records aggregation/request/compute time and raw/delivered duration, then sends 40ms packets through the existing TTSManager. bind_response adds diagnostic session/response identity. trim_segment_padding finds outer activity with 10ms RMS at -60dBFS, retains 30ms leading guards and 30/80/150ms trailing guards by punctuation, and preserves interior samples and pauses. Silent segments remain auditable.
+
+start/clone isolate generations; append backlog is limited to 8192 characters, timeline to 4096 events, and the audio queue to 50 packets. flush closes text input and stop drains audio. cancel invalidates old PCM and clears transport/queues; underlying GPU computation may continue. Playback ownership remains unchanged.

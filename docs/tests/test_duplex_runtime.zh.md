@@ -16,3 +16,5 @@ ScriptedClient 在脚本片段不含 `GenerationEnd` 时补一条 stop 结束记
 
 
 Issue001c：移除同前缀重复回答的语义拦截，允许模型thinking后在相同前缀再次接话，逐拍完整保存原始生成IDs；重复内容由评测判质量失败。重复request_id和过期版本仍拒绝，输出仍经唯一播放协调器。新增回归验证两次不同response_id及完整assistant历史。
+
+发布前补充缓存客户端释放超时回归，确认Python3.10下错误不会中断会话关闭；本地模拟异步超时，无模型或GPU。

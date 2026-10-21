@@ -185,6 +185,9 @@ class TTSManager(Manager):
 
     async def _start_streaming_tts(self, tts_model: StreamingTextTTS) -> bool:
         """Start a live text-streaming TTS session and its audio reader."""
+        from xtalk.models.tts.kokoro_segmented import KokoroSegmented
+        if isinstance(tts_model, KokoroSegmented):
+            tts_model.bind_response(self.session_id, self._response_id or "")
         try:
             await tts_model.start()
         except Exception as e:

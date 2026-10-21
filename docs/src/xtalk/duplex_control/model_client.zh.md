@@ -1,11 +1,11 @@
 # model_client.py
 
-## 功能、类与核心方法
+## 功能与类
 
-DuplexModelClient 使用 aiohttp 把 micro-turn 历史发送到 /generate，历史在 user 文本与既往返回的 assistant token id 之间交替，读取逐行 NDJSON 并保留 special token。GenerationEnd 保存 stop/length 原因与实际生成的 token id，防止把官方 max_new_tokens 截断伪造为 EOS。stream 传递 HTTP、超时与模型错误；会话取消关闭连接。
+DuplexModelClient通过aiohttp提交完整micro-turn历史并读取NDJSON，保留special token和实际生成ID。GenerationEnd保存stop/length原因、token_ids及独立的服务耗时/缓存metrics，避免把长度截断伪造为EOS。
 
-## 使用与边界
+## 核心方法
 
-由 Service 的 duplex_enabled 布尔开关注册。原生模式保持既有配置；官方模型、长会话、音频质量与 FDB 需远端 conda 验收。
+stream提交history、max_new_tokens、session_id、request_id及use_cache，发布带单调时钟的请求诊断；按text增量和GenerationEnd输出，传播HTTP、协议和模型错误。构造器支持显式会话身份与缓存诊断开关；线上由运行适配器默认开启KV复用。
 
-损坏 NDJSON 归为模型服务错误，运行时停止未播输出并留下错误证据。
+release在推理停止后请求DELETE /cache/{session_id}，超时或传输错误交服务TTL回收。Python3.10使用asyncio.TimeoutError捕获异步超时，保持会话关闭完成。取消会关闭连接；缓存按会话隔离，历史仍完整提交。

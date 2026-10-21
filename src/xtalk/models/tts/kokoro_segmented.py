@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from collections import deque
 import logging
 import math
@@ -66,18 +67,25 @@ class KokoroSegmented(TTS, StreamingTextTTS):
     max_chars : int
         Hard segment size limit, at most 160 characters.
     max_wait_ms : float
-        Complete-word aggregation deadline; unfinished words wait for input.
+        First-segment aggregation deadline; unfinished words wait for input.
+    continuation_wait_ms : float
+        Independent later-segment deadline, defaulting to 1200ms.
     """
 
     output_sample_rate = 48000
     sample_rate = 48000
 
     def __init__(self, base_url: str = 'http://127.0.0.1:8004', min_chars: int = 12,
-                 max_chars: int = 160, max_wait_ms: float = 600):
+                 max_chars: int = 160, max_wait_ms: float = 300,
+                 continuation_wait_ms: float = 1200):
         if not 1 <= min_chars <= max_chars <= 160:
             raise ValueError('Require 1 <= min_chars <= max_chars <= 160')
         if not math.isfinite(max_wait_ms) or max_wait_ms <= 0:
             raise ValueError('max_wait_ms must be positive and finite')
+        if not math.isfinite(continuation_wait_ms) or continuation_wait_ms <= 0:
+            raise ValueError('continuation_wait_ms must be positive and finite')
+        self.continuation_wait_ms = continuation_wait_ms
+        self.session_id, self.response_id = '', ''
         self.base_url = base_url.rstrip('/')
         self.min_chars, self.max_chars, self.max_wait_ms = min_chars, max_chars, max_wait_ms
         self._worker = None
@@ -94,10 +102,23 @@ class KokoroSegmented(TTS, StreamingTextTTS):
     def _record(self, kind, **fields):
         """Keep response-local diagnostics and log identities with monotonic time."""
         value = {'kind': kind, 'generation': self._generation,
-                 'at_monotonic': time.monotonic(), **fields}
+                 'at_monotonic': time.monotonic(), 'session_id': self.session_id,
+                 'response_id': self.response_id, **fields}
         if len(self.timeline) < 4096:
             self.timeline.append(value)
-        LOG.info('kokoro_client %s', value)
+        LOG.info('latency_tts %s', json.dumps(value))
+
+    def bind_response(self, session_id: str, response_id: str) -> None:
+        """Bind diagnostic identity without changing synthesis ownership.
+
+        Parameters
+        ----------
+        session_id : str
+            Owning session identity.
+        response_id : str
+            Existing playback response identity.
+        """
+        self.session_id, self.response_id = session_id, response_id
 
     async def start(self) -> None:
         """Start one response generation; no parallel player or synthesis owner."""
@@ -184,7 +205,7 @@ class KokoroSegmented(TTS, StreamingTextTTS):
         try:
             while generation == self._generation:
                 self._wake.clear()
-                wait_seconds = self.max_wait_ms / 1000 * (2 if sequence else 1)
+                wait_seconds = (self.continuation_wait_ms if sequence else self.max_wait_ms) / 1000
                 timed_out = (self._buffer_started is not None and
                              time.monotonic() - self._buffer_started >= wait_seconds)
                 segment = self._take(timed_out)
@@ -192,6 +213,7 @@ class KokoroSegmented(TTS, StreamingTextTTS):
                     if not segment.strip():
                         continue
                     request_started = time.monotonic()
+                    self._record('request', sequence=sequence, text=segment)
                     async with self._session.post(self.base_url + '/v1/synthesize', json={
                         'generation': generation, 'sequence': sequence, 'text': segment,
                         'voice': 'af_heart'}) as response:
@@ -332,4 +354,5 @@ class KokoroSegmented(TTS, StreamingTextTTS):
         KokoroSegmented
             Session-safe client.
         """
-        return KokoroSegmented(self.base_url, self.min_chars, self.max_chars, self.max_wait_ms)
+        return KokoroSegmented(self.base_url, self.min_chars, self.max_chars, self.max_wait_ms,
+                               self.continuation_wait_ms)

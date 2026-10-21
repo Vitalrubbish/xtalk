@@ -1,11 +1,13 @@
-# Kokoro 文本分段客户端
+# Kokoro文本分段客户端
 
-`KokoroSegmented` 实现现有 TTS/StreamingTextTTS 接口，将实际增量按句界、160字符上限、600ms完整词聚合期限或finish提交；默认最小12字符。`_take` 保留每个剩余字符实际到达计时，超时只释放已有完整词；尚无词边界的残词等待下一增量或finish，不强制拼读残片。没有词边界时不承诺600ms内产生语音，160字符硬上限仍可强制切分异常长输入。日期时间与小数不因普通分段规则删除。合成串行，generation/sequence与PCM格式校验不变。
+## 功能与类
 
-`trim_segment_padding` 只处理完整返回段：以10ms RMS、-60dBFS定位首尾活动区，前保留30ms，后按无句读/逗号分号/句末分别保留30/80/150ms。保留内部全部样本与停顿，不做拉伸或跨段混音；全部静音时保留原段并在诊断中暴露，不能视为有声成功。边距用于保护低能量起止音，真实听感仍须人工复核。
+KokoroSegmented实现TTS/StreamingTextTTS接口，接收真实增量文本并串行提交Kokoro。默认首段max_wait_ms=300、后续独立continuation_wait_ms=1200，最小12/最大160字符；clone保留这两个独立期限。用户已接受300ms自然度略逊600ms但整体差异不大，选择当前默认路线。
 
-`_produce` 记录原始/交付音频时长、裁剪量、服务计算耗时及请求耗时，再按40ms包只交给既有TTSManager。timeline最多4096事件，audio_queue最多50包；append积压上限8192字符。start/clone隔离代际；flush结束输入，stop排空；cancel使旧代际失效、丢队列并释放传输，底层GPU计算可能继续。
+## 核心方法
 
-600ms是最大文本聚合等待，不要求每个micro-turn单独合成或恰好产生600ms音频。首段等待、文本供给、计算耗时和播放消耗需在远端分别测量，不能用静音填充或额外启动缓冲伪造连续性。
+_take在句界、长度上限、期限或finish时取段，保留剩余字符的实际到达计时；超时优先完整词，残词等后续增量或finish，异常长词仍受160字符硬限。期限表示聚合等待，不能保证残词或首可听在300ms内完成。
 
-第二轮复听修复：`_produce`首段仍按max_wait_ms，后续段最多按两倍期限等待句界；句界/长度/finish仍可提前提交，减少已有语音播放时对长句的中途截断。不改变播放速率或另加启动缓冲。
+_produce校验generation/sequence及PCM格式，按段记录聚合/请求/计算耗时和原始/交付时长，再切40ms包交既有TTSManager。bind_response仅绑定session/response诊断身份。trim_segment_padding以10ms RMS、-60dBFS定位首尾活动区，前保留30ms、后按句读保留30/80/150ms；原段内部样本与停顿保留，全静音段保持可审计。
+
+start/clone隔离代际，append积压限制8192字符；timeline最多4096事件、音频队列最多50包。flush结束文本、stop排空；cancel失效旧代际并清理队列和传输，底层GPU计算可能继续。唯一播放所有权不变。

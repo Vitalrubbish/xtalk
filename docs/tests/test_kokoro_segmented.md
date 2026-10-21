@@ -1,5 +1,5 @@
-# Kokoro 分段及取消测试
+# Segmented Kokoro and cancellation tests
 
-`KokoroSegmentedTests` 使用真实aiohttp假合成服务，检查finish前的有界提交、文本及日期时间保留、长度/序号、取消代际和旧PCM隔离，以及剩余字符真实到达计时。
+KokoroSegmentedTests uses a deterministic aiohttp synthesis peer to check submission before finish, text/date/time preservation, size/sequence bounds, cancellation isolation, actual character arrival clocks, complete words, and padding trim. Trim regressions retain internal pauses, quiet-speech guards, and punctuation tails.
 
-003d回归覆盖首尾静音裁剪只取原PCM连续子区间、不裁内部停顿、句末边距及低能量音保护；补充thi/rty残词跨超时仍合成完整thirty的回归；600ms预算允许短句完整到达，句界和finish不必等满预算。接口测试不代替真实权重的耗时、播放供给和人工听感，真实模型只在远端conda作业执行。
+IndependentDeadlineTests covers independent 300ms/1200ms defaults, invalid values, cloning, and separate first/continuation deadlines. Direct execution and unittest discovery both run all 11 tests. Interface tests complement remote conda measurements of real-model timing, audio supply, and human naturalness review.

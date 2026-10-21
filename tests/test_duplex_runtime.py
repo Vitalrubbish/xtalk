@@ -502,3 +502,17 @@ class DuplexRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.events(LLMAgentResponseFinish)[0].text, 'Hello world')
         self.assertFalse(self.events(TurnTTSStopRequested))
         self.assertFalse(self.events(DuplexProtocolError))
+
+
+class DuplexCacheReleaseTests(unittest.IsolatedAsyncioTestCase):
+    """Keep cache transport timeout cleanup compatible with Python 3.10."""
+
+    async def test_release_timeout_defers_to_server_expiry(self):
+        """A transport timeout must preserve successful session teardown."""
+        from unittest.mock import patch
+        from xtalk.duplex_control.model_client import DuplexModelClient
+        client = DuplexModelClient('http://127.0.0.1:1',session_id='session',use_cache=True)
+        with patch('xtalk.duplex_control.model_client.aiohttp.ClientSession',
+                   side_effect=asyncio.TimeoutError):
+            with self.assertLogs('xtalk.duplex_control.model_client',level='WARNING'):
+                await client.release()

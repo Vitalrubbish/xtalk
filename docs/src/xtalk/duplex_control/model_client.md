@@ -1,11 +1,11 @@
 # model_client.py
 
-## Purpose, classes, and core methods
+## Purpose and types
 
-DuplexModelClient posts the micro-turn history to /generate with aiohttp and reads NDJSON while preserving special tokens. The history alternates user text with the assistant token ids returned by previous calls. GenerationEnd preserves the stop/length reason and the exact generated ids instead of inventing EOS at the official token limit. stream propagates HTTP, timeout and model errors; cancellation closes the connection.
+DuplexModelClient posts complete micro-turn histories with aiohttp and reads NDJSON while preserving special tokens and generated IDs. GenerationEnd carries the stop/length reason, token_ids, and separate server timing/cache metrics. A token-budget ending retains its actual generated IDs.
 
-## Usage and boundaries
+## Core methods
 
-Registered by the Boolean duplex_enabled service switch. Native mode keeps its configuration; official weights, long sessions, audio quality and FDB require remote conda acceptance.
+stream submits history, max_new_tokens, session_id, request_id, and use_cache, logs an identified monotonic request timestamp, and yields text increments plus GenerationEnd. HTTP, protocol, and model errors propagate. The constructor accepts explicit session identity and a diagnostic cache switch; the runtime adapter enables KV reuse by default.
 
-Malformed NDJSON becomes a model-service error; execution stops unplayed output and records evidence.
+release requests DELETE /cache/{session_id} after inference stops. Transport errors and timeouts defer cleanup to server expiry. Catching asyncio.TimeoutError preserves teardown on Python 3.10. Cancellation closes the connection. Caches remain session-isolated and every request retains its complete history.

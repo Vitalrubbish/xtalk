@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import time
 import aiohttp
 from contextlib import aclosing
 from typing import Any
@@ -42,6 +45,7 @@ class DuplexRuntimeAdapter(Manager):
             self.config.get("duplex_model_url", "http://127.0.0.1:8006"),
             int(self.config.get("duplex_max_new_tokens", 64)),
             float(self.config.get("duplex_timeout_seconds", 30)),
+            session_id=session_id, use_cache=bool(self.config.get("duplex_kv_cache_enabled", True)),
         )
         self.history: list[dict[str, Any]] = []
         self.heard: dict[str, str] = {}
@@ -89,7 +93,9 @@ class DuplexRuntimeAdapter(Manager):
                 token_ids: tuple[int, ...] = ()
                 observed_response_id = self._response_id or self._playback_response_id
                 try:
-                    stream = self.client.stream(self._request_history())
+                    stream = (self.client.stream(self._request_history(), request_id=event.request_id)
+                              if isinstance(self.client, DuplexModelClient)
+                              else self.client.stream(self._request_history()))
                     async with aclosing(stream):
                         async for chunk in stream:
                             if isinstance(chunk, GenerationEnd):
@@ -234,6 +240,9 @@ class DuplexRuntimeAdapter(Manager):
             self._playback_meta = dict(self._response_meta)
             await self.event_bus.publish(TurnTTSStartRequested(session_id=self.session_id,
                 response_id=self._response_id, **self._response_meta), mode=EventDispatchMode.WAIT_UNTIL_COMPLETE)
+        logging.getLogger(__name__).info("latency_answer %s", json.dumps({
+            "session_id": self.session_id, "request_id": event.request_id,
+            "response_id": self._response_id, "at_monotonic": time.monotonic(), "text": text}))
         self._response_text += text
         await self.event_bus.publish(LLMAgentResponseUpdate(session_id=self.session_id,
             response_id=self._response_id, text=self._response_text, **self._response_meta),
@@ -313,3 +322,5 @@ class DuplexRuntimeAdapter(Manager):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self._stop_answer("shutdown")
+        if isinstance(self.client, DuplexModelClient):
+            await self.client.release()

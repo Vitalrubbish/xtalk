@@ -1,18 +1,15 @@
 # runtime_adapter.py
 
-## Purpose, classes, and core methods
+## Purpose and state
 
-DuplexRuntimeAdapter is the sole online protocol executor. It stores micro-turn history as user text plus the exact assistant token ids returned by the model service, together with answer identity, generated text and separate heard facts. _handle_micro_turn serializes inference, decodes every response to im_end and records protocol evidence; _append_user sends deltas and repairs revised user prefixes; _request_history builds the wire history that the service flattens into official ChatML. _append_answer keeps one answer/TTS stream and filters periods for speech only; thinking flushes through _finish_answer. _apply_control executes every decoded control token in arrival order and observes each one with its pre-action response ID, so repeated or adjacent markers stay valid. finish talking opens the speaking window; user is talking and user interruption reset unplayed output through _reset_speaking only while that window is open, mirroring the released tts_speaking_flag. Plain continuation and user backchannel retain the stream. _heard records monotonic playback confirmations; shutdown cancels inference before stopping output. ASR final never independently invokes the model; duplicate requests are rejected.
+DuplexRuntimeAdapter is the sole online protocol executor. It serializes micro-turns and stores user text deltas, exact assistant token IDs, answer identities, and separate heard facts. Session KV reuse defaults to enabled; an explicit diagnostic setting can disable it. Inference arbitration and playback ownership remain shared.
 
-## Usage and boundaries
+## Core methods
 
-Registered by the Boolean duplex_enabled service switch. Native mode keeps its configuration; official weights, long sessions, audio quality and FDB require remote conda acceptance.
+_handle_micro_turn submits identified histories, consumes the complete generation stream, and rejects duplicate requests or stale prefixes. _append_user handles deltas and ASR rewrites; _request_history preserves raw IDs. _apply_control executes markers in arrival order. finish talking opens the speaking window; talking/interruption stop unplayed output while that window is open. User backchannels and ordinary continuation retain the stream.
 
-Older prefix versions produce stale_prefix. Silent windows at the same version can continue an answer; ASR arriving during inference is consumed at the next call, matching official serial generation.
+_append_answer preserves response_id and the TTS session across micro-turns, appends text through the existing playback chain, removes periods from the synthesis copy, and logs request/answer identity. _finish_answer flushes on thinking; _stop_answer stops unplayed content; _heard records monotonic playback confirmations. shutdown cancels inference, stops output, then releases the session cache.
 
-Control tokens are applied in arrival order and the text that follows them flows to speech. An interruption that arrives before the speaking window opens leaves playback untouched.
+## Boundaries
 
-Protocol observations preserve the pre-action response ID so stop controls still correlate with their original answer.
-
-
-Issue001c：移除同前缀重复回答的语义拦截，允许模型thinking后在相同前缀再次接话，逐拍完整保存原始生成IDs；重复内容由评测判质量失败。重复request_id和过期版本仍拒绝，输出仍经唯一播放协调器。新增回归验证两次不同response_id及完整assistant历史。
+ASR final independently updates input; the next scheduled call consumes ASR arriving during inference. The model may answer again on an unchanged prefix after thinking; complete generated history remains intact and quality evaluation checks repetition. System backchannels remain disabled. The existing user-backchannel marker describes user behavior.

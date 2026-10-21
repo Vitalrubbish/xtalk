@@ -1,12 +1,11 @@
 # tts_manager.py
 
-## 功能、类与核心方法
+## 功能与类
 
-TTSManager 保存准备阶段的关联快照，只有交付请求到达才发布 TTSStarted。A1 将关联字段带入首句、TTSStarted、TTSChunkReady、TTSFinished 和停止事件；reset_tts 清理旧字段，防止下一响应继承来源。音频队列和背压逻辑保持原样。
+TTSManager保存准备响应的关联快照，在交付请求到达后发布TTSStarted，将request/response等来源字段传入首句、音频块、结束和停止事件。Regular与StreamingTextTTS共用现有交付队列和背压，不增加播放所有者。
 
 ## 核心方法
 
-_handle_turn_tts_start 保存准备响应；_handle_delivery_start 打开交付门；_correlation_kwargs 返回关联字段副本；_handle_turn_tts_append/flush 推送和结束文本；_handle_turn_tts_stop 在 reset 前保存关联并使用停止请求的 reason；reset_tts 清理任务、队列与字段。regular 与 StreamingTextTTS 继续共用交付链。
+_handle_turn_tts_start准备响应；_start_streaming_tts在Kokoro启动前用bind_response绑定session/response诊断身份；_handle_delivery_start打开交付门。_correlation_kwargs复制关联字段，append/flush处理器追加及结束文本；_handle_turn_tts_stop保留停止原因和身份后重置。
 
-
-2026-10-18：StreamingTextTTS 增加默认 cancel（兼容现有 stop）；TTSManager 的 reset/插话路径调用 cancel，正常 flush/stop 仍排空。Kokoro 重写 cancel 使旧代际 PCM 立即失效，取消不等待正常 finish。唯一播放队列及响应所有权保持不变。
+reset_tts清理任务、队列及旧字段，插话/重置调用cancel，正常flush/stop排空音频。Kokoro取消立即隔离旧代际，服务计算能否即时停止单独测量。

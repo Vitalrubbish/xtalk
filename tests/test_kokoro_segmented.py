@@ -154,5 +154,58 @@ class KokoroSegmentedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meta['trailing_trim_seconds'], 0)
 
 
+class IndependentDeadlineTests(unittest.IsolatedAsyncioTestCase):
+    """Check first and continuation policy without depending on GPU timing."""
+
+    async def test_independent_configuration_and_clone(self):
+        client = KokoroSegmented(max_wait_ms=300, continuation_wait_ms=1200)
+        cloned = client.clone()
+        self.assertEqual((cloned.max_wait_ms, cloned.continuation_wait_ms), (300, 1200))
+        self.assertEqual(KokoroSegmented().max_wait_ms, 300)
+        self.assertEqual(KokoroSegmented(max_wait_ms=20).continuation_wait_ms, 1200)
+        for value in (0, -1, float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                KokoroSegmented(continuation_wait_ms=value)
+
+    async def test_first_deadline_does_not_shorten_continuation(self):
+        client = KokoroSegmented(max_wait_ms=20, continuation_wait_ms=180)
+        times = []
+        original = client._take
+        def take(timed_out):
+            result = original(timed_out)
+            if result:
+                times.append(asyncio.get_running_loop().time())
+            return result
+        client._take = take
+        # A local HTTP peer keeps the production worker scheduling intact.
+        async def synthesize(request):
+            body = await request.json()
+            return web.json_response({**body, 'sample_rate':48000, 'channels':1,
+                'format':'pcm_s16le', 'pcm':base64.b64encode(b'\x01\x02'*960).decode()})
+        app = web.Application()
+        app.router.add_post('/v1/synthesize', synthesize)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 0)
+        await site.start()
+        client.base_url = f'http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}'
+        try:
+            await client.start()
+            await client.append_text('first ')
+            await asyncio.sleep(.07)
+            await client.append_text('second ')
+            await asyncio.sleep(.08)
+            self.assertEqual(len(times), 1)
+            await asyncio.sleep(.16)
+            self.assertEqual(len(times), 2)
+            self.assertGreater(times[1] - times[0], .15)
+            await client.flush()
+            self.assertTrue([x async for x in client.audio_stream()])
+            await client.stop()
+        finally:
+            await client.cancel()
+            await runner.cleanup()
+
+
 if __name__ == '__main__':
     unittest.main()
